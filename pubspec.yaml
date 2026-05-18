@@ -1,0 +1,63 @@
+name: runwar_app
+description: RunWar — territory running game. Invitation only.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # HTTP
+  http: ^1.2.1
+
+  # Fonts
+  google_fonts: ^6.2.1
+
+  # State
+  flutter_riverpod: ^2.5.1
+
+  # Share referral link
+  share_plus: ^9.0.0
+
+  # Copy to clipboard (built into Flutter via Clipboard)
+  # url_launcher for deeplinks
+  url_launcher: ^6.3.0
+
+  # — PoC foundation (Spec 1) —
+
+  # SQLite local-first persistence
+  sqflite: ^2.3.3
+  path: ^1.9.0
+
+  # Map rendering (declared now; tiles rendered in sibling spec)
+  flutter_map: ^6.1.0
+  latlong2: ^0.9.0
+
+  # GPS (declared now; tracking in sibling spec)
+  geolocator: ^11.0.0
+
+  # Profile customization (declared now; UI in sibling spec)
+  flutter_colorpicker: ^1.1.0
+
+  # Local notifications (declared now; payloads in sibling spec)
+  flutter_local_notifications: ^17.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/icon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#08060F"
+  adaptive_icon_foreground: "assets/icons/icon.png"
+
+flutter:
+  uses-material-design: true

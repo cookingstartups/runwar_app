@@ -1,0 +1,132 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../providers/auth_provider.dart';
+import '../../theme.dart';
+import 'signup_screen.dart';
+import 'forgot_password_screen.dart';
+
+class LoginScreen extends ConsumerStatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends ConsumerState<LoginScreen> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (email.isEmpty || password.isEmpty) return;
+    await ref.read(authProvider.notifier).signIn(email, password);
+    // On success authProvider state is updated with the new user.
+    // The root _RouteGuard (POC-013) watches authProvider and rebuilds to
+    // the destination screen. No Navigator call here.
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(authProvider);
+    final loading = state.isLoading;
+    final errorText = state.error;
+
+    return Scaffold(
+      backgroundColor: kBg,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 48),
+              Text('LOG IN', style: displayStyle(size: 40)),
+              const SizedBox(height: 8),
+              Text(
+                'Welcome back, soldier.',
+                style: bodyStyle(size: 14, color: kFgMuted),
+              ),
+              const SizedBox(height: 40),
+              TextField(
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
+                autocorrect: false,
+                textInputAction: TextInputAction.next,
+                onChanged: (_) =>
+                    ref.read(authProvider.notifier).clearError(),
+                decoration: const InputDecoration(
+                  labelText: 'EMAIL',
+                  hintText: 'you@example.com',
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _passwordController,
+                obscureText: true,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => loading ? null : _submit(),
+                onChanged: (_) =>
+                    ref.read(authProvider.notifier).clearError(),
+                decoration: const InputDecoration(
+                  labelText: 'PASSWORD',
+                ),
+              ),
+              if (errorText != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  errorText,
+                  style: bodyStyle(size: 13, color: kDanger),
+                ),
+              ],
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: loading ? null : _submit,
+                child: loading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: kBg,
+                        ),
+                      )
+                    : const Text('LOG IN'),
+              ),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const SignUpScreen(),
+                  ),
+                ),
+                child: Text(
+                  'Create account',
+                  style: bodyStyle(size: 14, color: kAccent),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const ForgotPasswordScreen(),
+                  ),
+                ),
+                child: Text(
+                  'Forgot password?',
+                  style: bodyStyle(size: 14, color: kFgMuted),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
