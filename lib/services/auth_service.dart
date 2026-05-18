@@ -49,7 +49,7 @@ class AuthService {
   /// Special case: admin@test.com / 123456 seeds a demo user with territory on
   /// first login (no prior sign-up required).
   Future<Map<String, dynamic>?> signIn(String email, String password) async {
-    if (email == 'admin@test.com' && password == '123456') {
+    if (email == 'demo@user.com' && password == '123456') {
       return _signInDemo();
     }
     final db = DatabaseService.instance.db;
@@ -71,7 +71,7 @@ class AuthService {
   }
 
   static const String _demoId = '00000000-demo-demo-demo-000000000000';
-  static const String _demoEmail = 'admin@test.com';
+  static const String _demoEmail = 'demo@user.com';
 
   Future<Map<String, dynamic>> _signInDemo() async {
     final db = DatabaseService.instance.db;
