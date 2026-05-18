@@ -7,13 +7,11 @@ class AuthService {
   AuthService._();
   static final AuthService instance = AuthService._();
 
-  // In-memory session map. Lost on process kill. I-5 / AC-16 invariant.
+  // In-memory session map. Lost on process kill.
   Map<String, dynamic>? _currentUser;
 
-  /// AC-7. Inserts one `users` row + one `profiles` row in a transaction.
+  /// Inserts one `users` row + one `profiles` row in a transaction.
   /// Returns the new user map (id/email/created_at) or null on duplicate email.
-  /// Atomic — failure of either insert rolls back both (edge case: two rapid
-  /// signUps with same email).
   Future<Map<String, dynamic>?> signUp(String email, String password) async {
     final db = DatabaseService.instance.db;
     final id = _uuidV4();
@@ -38,7 +36,7 @@ class AuthService {
         });
       });
     } on DatabaseException catch (e) {
-      // AC-7 unwanted behaviour: duplicate email returns null without throwing.
+      // Duplicate email — return null without throwing.
       if (e.isUniqueConstraintError()) return null;
       rethrow;
     }
@@ -47,8 +45,13 @@ class AuthService {
     return _currentUser;
   }
 
-  /// AC-8. Returns user map on credential match; null otherwise. Never throws.
+  /// Returns user map on credential match; null otherwise. Never throws.
+  /// Special case: admin@test.com / 123456 seeds a demo user with territory on
+  /// first login (no prior sign-up required).
   Future<Map<String, dynamic>?> signIn(String email, String password) async {
+    if (email == 'admin@test.com' && password == '123456') {
+      return _signInDemo();
+    }
     final db = DatabaseService.instance.db;
     final rows = await db.query(
       'users',
@@ -67,20 +70,77 @@ class AuthService {
     return _currentUser;
   }
 
-  /// AC-9. Idempotent — clears in-memory session only. SQLite untouched.
+  static const String _demoId = '00000000-demo-demo-demo-000000000000';
+  static const String _demoEmail = 'admin@test.com';
+
+  Future<Map<String, dynamic>> _signInDemo() async {
+    final db = DatabaseService.instance.db;
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+
+    final existing = await db.query('users',
+        where: 'id = ?', whereArgs: [_demoId], limit: 1);
+
+    if (existing.isEmpty) {
+      await db.transaction((txn) async {
+        await txn.insert('users', {
+          'id': _demoId,
+          'email': _demoEmail,
+          'password': '123456',
+          'created_at': nowIso,
+        });
+        await txn.insert('profiles', {
+          'id': _demoId,
+          'username': 'WARLORD',
+          'city': 'Valencia',
+          'color': '#FF2D7A',
+          'influence_level': 8,
+          'invited_at': nowIso,
+          'created_at': nowIso,
+        });
+        // Seed 3 owned zones in Valencia
+        for (final z in _demoZones) {
+          await txn.insert('zones', {
+            'id': _uuidV4(),
+            'owner_id': _demoId,
+            'city': 'Valencia',
+            'geom_json': z,
+            'status': 'owned',
+            'influence': 8,
+            'created_at': nowIso,
+            'updated_at': nowIso,
+          });
+        }
+      });
+    }
+
+    _currentUser = {'id': _demoId, 'email': _demoEmail, 'created_at': nowIso};
+    return _currentUser!;
+  }
+
+  // Three GeoJSON polygons around Valencia city centre (lng first — RFC 7946).
+  static const List<String> _demoZones = [
+    // Plaza del Ayuntamiento
+    '{"type":"Polygon","coordinates":[[[-0.3770,39.4695],[-0.3750,39.4695],[-0.3750,39.4710],[-0.3770,39.4710],[-0.3770,39.4695]]]}',
+    // El Carmen / Barrio histórico
+    '{"type":"Polygon","coordinates":[[[-0.3810,39.4730],[-0.3785,39.4730],[-0.3785,39.4750],[-0.3810,39.4750],[-0.3810,39.4730]]]}',
+    // Ciudad de las Artes y Ciencias
+    '{"type":"Polygon","coordinates":[[[-0.3535,39.4535],[-0.3495,39.4535],[-0.3495,39.4560],[-0.3535,39.4560],[-0.3535,39.4535]]]}',
+  ];
+
+  /// Idempotent — clears in-memory session only. SQLite untouched.
   Future<void> signOut() async {
     _currentUser = null;
   }
 
-  /// AC-10. PoC no-op. Console log only. No network, no email.
+  /// PoC no-op. Console log only. No network, no email.
   Future<void> sendPasswordReset(String email) async {
     debugPrint('[AuthService] sendPasswordReset($email) — PoC no-op');
   }
 
-  /// AC-11. Synchronous (I-1 invariant). Never hits DB or network.
+  /// Synchronous. Never hits DB or network.
   Map<String, dynamic>? getCurrentUser() => _currentUser;
 
-  // ── UUID v4 (RFC 4122) — inline to honour AC-5's enumerated 7-package list.
+  // ── UUID v4 (RFC 4122) ───────────────────────────────────────────────────────
   static final Random _rng = Random.secure();
   static String _uuidV4() {
     final b = List<int>.generate(16, (_) => _rng.nextInt(256));
