@@ -11,6 +11,7 @@ import '../providers/profile_provider.dart';
 import '../providers/zones_provider.dart';
 import '../providers/run_recorder_provider.dart';
 import '../services/run_recorder_service.dart';
+import '../services/simulation_service.dart';
 import '../services/territory_service.dart';
 import '../theme.dart';
 
@@ -130,10 +131,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return Scaffold(
       backgroundColor: kBg,
       body: zonesAsync.when(
-        loading: () => _buildMap(context, center, const [], showError: false),
-        error: (e, _) => _buildMap(context, center, const [], showError: true),
-        data: (rows) =>
-            _buildMap(context, center, _parseEmission(rows), showError: false),
+        loading: () =>
+            _buildMap(context, center, const [], showError: false, city: city),
+        error: (e, _) =>
+            _buildMap(context, center, const [], showError: true, city: city),
+        data: (rows) => _buildMap(context, center, _parseEmission(rows),
+            showError: false, city: city),
       ),
       // FAB always visible regardless of GPS/zone state.
       floatingActionButton: _buildFab(context, city),
@@ -260,11 +263,23 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  void _toggleSimulation(String city) {
+    final sim = SimulationService.instance;
+    if (sim.isRunning.value) {
+      sim.stop();
+    } else {
+      sim.start(
+        onZoneChange: (c) => ref.invalidate(zonesProvider(c)),
+      );
+    }
+  }
+
   Widget _buildMap(
     BuildContext context,
     LatLng center,
     List<_ParsedZone> parsed, {
     required bool showError,
+    String city = '',
   }) {
     return Stack(
       children: [
@@ -340,13 +355,51 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ),
             ),
           ),
+        // Simulation toggle — top-right corner.
+        if (city.isNotEmpty)
+          Positioned(
+            top: 48,
+            right: 12,
+            child: ValueListenableBuilder<bool>(
+              valueListenable: SimulationService.instance.isRunning,
+              builder: (context, running, _) => GestureDetector(
+                onTap: () => _toggleSimulation(city),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: kSurface.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: running ? kAccent : kBorder,
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        running ? Icons.pause : Icons.play_arrow,
+                        size: 14,
+                        color: running ? kAccent : kFgMuted,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        running ? 'SIM' : 'SIM',
+                        style: monoStyle().copyWith(fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
 
   /// Builds the list of Polygon widgets for the PolygonLayer.
-  /// Owned zones use owner color at 25% fill / solid stroke;
-  /// disputed zones use amber at 15% fill / dashed stroke.
+  /// Owned zones: fill opacity and stroke width scale with influence (1–15).
+  /// Disputed zones: amber at fixed 15% fill regardless of influence.
   List<Polygon> _buildPolygons(List<_ParsedZone> parsed) {
     final out = <Polygon>[];
     for (final z in parsed) {
@@ -355,12 +408,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ref.watch(profileCacheProvider(z.ownerId)).valueOrNull;
         final ownerColor =
             _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
+        final t = (z.influence.clamp(1, 15) / 15.0);
+        final fillAlpha = 0.07 + t * 0.55;
+        final strokeWidth = 1.0 + t * 2.0;
         out.add(Polygon(
           points: z.points,
-          isFilled: true, // §3.5: must set explicitly in flutter_map 6.x
-          color: ownerColor.withValues(alpha: 0.25),
+          isFilled: true,
+          color: ownerColor.withValues(alpha: fillAlpha),
           borderColor: ownerColor,
-          borderStrokeWidth: 1.5,
+          borderStrokeWidth: strokeWidth,
           isDotted: false,
         ));
       } else if (z.status == 'disputed') {
