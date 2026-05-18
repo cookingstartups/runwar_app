@@ -1,0 +1,132 @@
+import 'dart:async';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
+
+enum RecorderState { idle, recording, awaitingClaim }
+
+enum LoopResult { valid, invalid, notRecording }
+
+class RunRecorderService {
+  RunRecorderService._();
+  static final RunRecorderService instance = RunRecorderService._();
+
+  final ValueNotifier<RecorderState> stateNotifier =
+      ValueNotifier(RecorderState.idle);
+
+  // trackVersion increments on every track mutation (append / clear).
+  // Used by RunRecorderNotifier to rebuild MapScreen for live polyline
+  // without exposing the mutable list directly.
+  final ValueNotifier<int> trackVersion = ValueNotifier(0);
+
+  final List<LatLng> _track = <LatLng>[];
+  DateTime? _startedAt;
+  DateTime? _closedAt;
+  StreamSubscription<Position>? _posSub;
+
+  List<LatLng> get track => List.unmodifiable(_track);
+  List<LatLng> get trackSnapshot => List.unmodifiable(_track);
+  DateTime? get startedAt => _startedAt;
+  DateTime? get closedAt => _closedAt;
+
+  static const double _minPerimeterM = 200;
+  static const double _maxReturnGapM = 100;
+  static const int _minElapsedSec = 60;
+  static const double _earthRadiusM = 6371008.8;
+
+  Future<void> startRun() async {
+    if (stateNotifier.value == RecorderState.recording) return;
+    _track.clear();
+    _startedAt = DateTime.now().toUtc();
+    _closedAt = null;
+    trackVersion.value++;
+    _posSub = Geolocator.getPositionStream(
+      locationSettings:
+          const LocationSettings(accuracy: LocationAccuracy.high),
+    ).listen(_onPosition, onError: (_) {});
+    stateNotifier.value = RecorderState.recording;
+  }
+
+  void _onPosition(Position pos) {
+    if (stateNotifier.value != RecorderState.recording) return;
+    // Defensive guard: discard non-finite coordinates.
+    if (pos.latitude.isNaN || pos.longitude.isNaN) return;
+    if (pos.latitude.isInfinite || pos.longitude.isInfinite) return;
+    _track.add(LatLng(pos.latitude, pos.longitude));
+    trackVersion.value++;
+  }
+
+  Future<LoopResult> stopRun() async {
+    final s = stateNotifier.value;
+    if (s == RecorderState.idle || s == RecorderState.awaitingClaim) {
+      return LoopResult.notRecording;
+    }
+    await _posSub?.cancel();
+    _posSub = null;
+    _closedAt = DateTime.now().toUtc();
+
+    final perimeter = _trackPerimeter();
+    final returnGap = _track.length >= 2
+        ? _haversine(_track.first, _track.last)
+        : double.infinity;
+    final elapsed = (_startedAt == null)
+        ? 0
+        : _closedAt!.difference(_startedAt!).inSeconds;
+
+    final valid = perimeter >= _minPerimeterM &&
+        returnGap <= _maxReturnGapM &&
+        elapsed > _minElapsedSec;
+
+    if (valid) {
+      stateNotifier.value = RecorderState.awaitingClaim;
+      return LoopResult.valid;
+    }
+    _clearTrackInternal();
+    stateNotifier.value = RecorderState.idle;
+    return LoopResult.invalid;
+  }
+
+  /// Force-close — bypasses loop-closure thresholds.
+  void forceClose() {
+    if (stateNotifier.value != RecorderState.recording) return;
+    _posSub?.cancel();
+    _posSub = null;
+    _closedAt = DateTime.now().toUtc();
+    stateNotifier.value = RecorderState.awaitingClaim;
+  }
+
+  /// Discard current run and reset to idle.
+  void discardRun() {
+    _posSub?.cancel();
+    _posSub = null;
+    _clearTrackInternal();
+    stateNotifier.value = RecorderState.idle;
+  }
+
+  void _clearTrackInternal() {
+    _track.clear();
+    _startedAt = null;
+    _closedAt = null;
+    trackVersion.value++;
+  }
+
+  double _trackPerimeter() {
+    if (_track.length < 2) return 0;
+    var sum = 0.0;
+    for (var i = 0; i < _track.length - 1; i++) {
+      sum += _haversine(_track[i], _track[i + 1]);
+    }
+    return sum;
+  }
+
+  double _haversine(LatLng a, LatLng b) {
+    final p1 = a.latitude * math.pi / 180.0;
+    final p2 = b.latitude * math.pi / 180.0;
+    final dp = (b.latitude - a.latitude) * math.pi / 180.0;
+    final dl = (b.longitude - a.longitude) * math.pi / 180.0;
+    final h = math.sin(dp / 2) * math.sin(dp / 2) +
+        math.cos(p1) * math.cos(p2) * math.sin(dl / 2) * math.sin(dl / 2);
+    return 2 * _earthRadiusM * math.asin(math.min(1.0, math.sqrt(h)));
+  }
+}

@@ -73,7 +73,7 @@ ThemeData buildTheme() {
         borderSide: const BorderSide(color: kDanger),
       ),
       hintStyle: const TextStyle(color: kFgFaint, fontSize: 14),
-      labelStyle: TextStyle(
+      labelStyle: const TextStyle(
         fontFamily: 'monospace',
         fontSize: 10,
         letterSpacing: 2.0,

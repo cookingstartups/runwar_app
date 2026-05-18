@@ -5,6 +5,7 @@ import 'theme.dart';
 import 'services/database_service.dart';
 import 'providers/auth_provider.dart';
 import 'providers/profile_provider.dart';
+import 'providers/run_recorder_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/intro_screen.dart';
 import 'screens/request_access_screen.dart';
@@ -17,6 +18,7 @@ import 'screens/main_shell.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
+    await initLocalNotifications();
     await DatabaseService.instance.init();
   } catch (e) {
     runApp(_InitErrorApp(error: e.toString()));
@@ -60,8 +62,8 @@ class RunWarApp extends StatelessWidget {
 }
 
 /// Route guard — watches [authProvider] and [profileGateProvider] reactively.
-/// Re-evaluates on every auth state change without requiring an app restart
-/// (AC-22). Logic mirrors the Spec 1 FutureBuilder-based _resolve():
+/// Re-evaluates on every auth state change without requiring an app restart.
+/// Logic mirrors the Spec 1 FutureBuilder-based _resolve():
 ///   user == null          → LoginScreen
 ///   invited_at == null    → WaitlistGateScreen
 ///   username == ''        → OnboardingFlow

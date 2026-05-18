@@ -87,9 +87,9 @@ class _SplashScreenState extends State<SplashScreen>
                   const SizedBox(height: 12),
 
                   // Tagline
-                  Text(
+                  const Text(
                     'INVITATION ONLY',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 11,
                       letterSpacing: 4.0,

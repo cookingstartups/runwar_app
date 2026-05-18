@@ -9,24 +9,27 @@ import 'package:latlong2/latlong.dart';
 import '../providers/auth_provider.dart';
 import '../providers/profile_provider.dart';
 import '../providers/zones_provider.dart';
+import '../providers/run_recorder_provider.dart';
+import '../services/run_recorder_service.dart';
+import '../services/territory_service.dart';
 import '../theme.dart';
 
-// ── City center lookup (AC-4, §3.4) ─────────────────────────────────────────
+// ── City center lookup ───────────────────────────────────────────────────────
 
 const Map<String, LatLng> _kCityCenter = {
   'Valencia': LatLng(39.4699, -0.3763),
   'Madrid': LatLng(40.4168, -3.7038),
 };
-const LatLng _kDefaultCenter = LatLng(40.0, -3.0); // AC-4 fallback: central Iberian Peninsula
+const LatLng _kDefaultCenter = LatLng(40.0, -3.0); // fallback: central Iberian Peninsula
 const double _kInitialZoom = 13.0;
 
-// ── Tile configuration (AC-4) ────────────────────────────────────────────────
+// ── Tile configuration ────────────────────────────────────────────────────────
 
 const String _kTileUrl =
     'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 const List<String> _kTileSubdomains = ['a', 'b', 'c', 'd'];
 
-// ── Zone styling (AC-6) ──────────────────────────────────────────────────────
+// ── Zone styling ──────────────────────────────────────────────────────────────
 
 const Color _kGpsDotColor = Color(0xFF4A9EFF); // blue GPS dot (brief spec)
 const Color _kDisputedColor = Color(0xFFC8973A); // amber for disputed zones
@@ -65,7 +68,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   void initState() {
     super.initState();
-    // AC-5, I-7: request permission once at mount; use addPostFrameCallback
+    // request permission once at mount; use addPostFrameCallback
     // so the OS dialog appears after the first frame paints.
     WidgetsBinding.instance.addPostFrameCallback((_) => _initLocation());
   }
@@ -88,7 +91,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       });
     }
     // denied / deniedForever / unableToDetermine → no stream, no dot, no SnackBar
-    // (AC-5 silent degradation).
   }
 
   @override
@@ -111,7 +113,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Widget build(BuildContext context) {
     final (:city, :center) = _resolveCenter();
 
-    // AC-4 unwanted: city == '' → empty zone layer, no DB query.
+    // Listen for awaitingClaim state transition and show claim bottom sheet.
+    ref.listen<RecorderState>(runRecorderProvider, (prev, next) {
+      if (next == RecorderState.awaitingClaim &&
+          prev != RecorderState.awaitingClaim &&
+          context.mounted) {
+        _showClaimSheet(context, city);
+      }
+    });
+
+    // city == '' → empty zone layer, no DB query.
     final zonesAsync = city.isEmpty
         ? const AsyncValue<List<Map<String, dynamic>>>.data([])
         : ref.watch(zonesProvider(city));
@@ -124,16 +135,129 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         data: (rows) =>
             _buildMap(context, center, _parseEmission(rows), showError: false),
       ),
-      // AC-8: FAB always visible regardless of GPS/zone state.
-      floatingActionButton: FloatingActionButton(
+      // FAB always visible regardless of GPS/zone state.
+      floatingActionButton: _buildFab(context, city),
+    );
+  }
+
+  Widget _buildFab(BuildContext context, String city) {
+    final recState = ref.watch(runRecorderProvider);
+    final isRecording = recState == RecorderState.recording;
+    return GestureDetector(
+      onLongPress: isRecording
+          ? () => ref.read(runRecorderProvider.notifier).forceClose()
+          : null,
+      child: FloatingActionButton(
         backgroundColor: kAccent,
         foregroundColor: kBg,
-        onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('GPS recording coming soon')),
-        ),
-        child: const Icon(Icons.play_arrow),
+        onPressed: () => _onFabTap(context, recState, city),
+        child: Icon(isRecording ? Icons.stop : Icons.play_arrow),
       ),
     );
+  }
+
+  Future<void> _onFabTap(
+      BuildContext context, RecorderState s, String city) async {
+    final notifier = ref.read(runRecorderProvider.notifier);
+    if (s == RecorderState.idle) {
+      // Verify permission before startRun.
+      final perm = await Geolocator.checkPermission();
+      final canRecord = perm == LocationPermission.whileInUse ||
+          perm == LocationPermission.always;
+      if (!canRecord) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Location permission required to record runs')),
+        );
+        return;
+      }
+      await notifier.start();
+    } else if (s == RecorderState.recording) {
+      final result = await notifier.stop();
+      if (!context.mounted) return;
+      if (result == LoopResult.invalid) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content:
+              Text('Loop too short or not closed — try again'),
+        ));
+      }
+      // LoopResult.valid → awaitingClaim state triggers the bottom sheet
+      // via the ref.listen handler in build().
+    }
+    // s == awaitingClaim → sheet is isDismissible:false; tap ignored.
+  }
+
+  Future<void> _showClaimSheet(BuildContext context, String city) async {
+    final auth = ref.read(authProvider);
+    final userId = auth.user?['id'] as String?;
+    if (userId == null) {
+      ref.read(runRecorderProvider.notifier).discard();
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: kSurface,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('CLAIM TERRITORY?', style: displayStyle(size: 22)),
+              const SizedBox(height: 8),
+              Text(
+                'Your run loop will be submitted as a territory claim.',
+                style: bodyStyle(size: 13, color: kFgMuted),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kAccent,
+                  foregroundColor: kBg,
+                  minimumSize: const Size(double.infinity, 48),
+                ),
+                onPressed: () async {
+                  final outcome = await ref
+                      .read(runRecorderProvider.notifier)
+                      .confirmClaim(userId, city);
+                  if (!sheetCtx.mounted) return;
+                  Navigator.of(sheetCtx).pop();
+                  if (!context.mounted) return;
+                  _showResultSnack(context, outcome);
+                },
+                child: const Text('CONFIRM CLAIM'),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: kBorder),
+                  minimumSize: const Size(double.infinity, 48),
+                ),
+                onPressed: () {
+                  ref.read(runRecorderProvider.notifier).discard();
+                  Navigator.of(sheetCtx).pop();
+                },
+                child: const Text('DISCARD'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showResultSnack(BuildContext context, ClaimOutcome outcome) {
+    final msg = switch (outcome.result) {
+      TerritoryResult.claimed => 'Territory claimed!',
+      TerritoryResult.conquered => 'Zone conquered!',
+      TerritoryResult.disputed => 'Zone disputed!',
+      TerritoryResult.failed => 'Could not claim zone — try again',
+    };
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   Widget _buildMap(
@@ -149,7 +273,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           options: MapOptions(
             initialCenter: center,
             initialZoom: _kInitialZoom,
-            // AC-7: map-level tap → ray-cast hit-test (I-6).
+            // map-level tap → ray-cast hit-test.
             onTap: (TapPosition tapPos, LatLng latLng) =>
                 _handleMapTap(context, latLng, parsed),
           ),
@@ -161,9 +285,27 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
               userAgentPackageName: 'app.runwar.runwar_app',
             ),
-            // AC-6: zone polygon layer.
+            // zone polygon layer.
             PolygonLayer(polygons: _buildPolygons(parsed)),
-            // AC-5: GPS dot rendered only when position is available.
+            // Live track polyline while recording.
+            Consumer(builder: (context, watchRef, _) {
+              final recState = watchRef.watch(runRecorderProvider);
+              // Watch the version tick so the polyline rebuilds on every GPS append.
+              watchRef.watch(runRecorderTrackVersionProvider);
+              if (recState != RecorderState.recording) {
+                return const SizedBox.shrink();
+              }
+              final track = RunRecorderService.instance.trackSnapshot;
+              if (track.length < 2) return const SizedBox.shrink();
+              return PolylineLayer(polylines: [
+                Polyline(
+                  points: track,
+                  color: kAccent,
+                  strokeWidth: 4,
+                ),
+              ]);
+            }),
+            // GPS dot rendered only when position is available.
             if (_currentPosition != null)
               CircleLayer(circles: [
                 CircleMarker(
@@ -180,7 +322,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ]),
           ],
         ),
-        // AC-18: error banner above map; does not block FAB or tiles.
+        // error banner above map; does not block FAB or tiles.
         if (showError)
           Positioned(
             top: 16,
@@ -203,9 +345,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   /// Builds the list of Polygon widgets for the PolygonLayer.
-  /// AC-6: owned zones use owner color at 25% fill / solid stroke;
-  ///        disputed zones use amber at 15% fill / dashed stroke.
-  /// I-3: profileCacheProvider supplies owner color — no direct DB query here.
+  /// Owned zones use owner color at 25% fill / solid stroke;
+  /// disputed zones use amber at 15% fill / dashed stroke.
   List<Polygon> _buildPolygons(List<_ParsedZone> parsed) {
     final out = <Polygon>[];
     for (final z in parsed) {
@@ -236,7 +377,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return out;
   }
 
-  /// AC-7: handle a map tap — ray-cast to find zone, then show bottom sheet.
+  /// Handles a map tap — ray-cast to find zone, then show bottom sheet.
   Future<void> _handleMapTap(
     BuildContext context,
     LatLng latLng,
@@ -253,7 +394,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _showZoneSheet(context, displayName, z.status, z.influence);
   }
 
-  /// AC-7: modal bottom sheet with zone details.
+  /// Modal bottom sheet with zone details.
   void _showZoneSheet(
     BuildContext context,
     String username,
@@ -288,7 +429,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 // ── File-private helpers ─────────────────────────────────────────────────────
 
 /// Parses a GeoJSON Polygon string into an outer ring of LatLng points.
-/// Returns null on any malformed input (AC-6 silent skip).
+/// Returns null on any malformed input (silent skip).
 /// GeoJSON coordinate order is [lng, lat]; LatLng takes (lat, lng) — swap.
 List<LatLng>? _parseZoneGeom(String geomJson) {
   try {
@@ -313,7 +454,7 @@ List<LatLng>? _parseZoneGeom(String geomJson) {
 }
 
 /// Builds a list of _ParsedZone from a raw zones emission.
-/// Silently skips any row whose geom_json cannot be parsed (AC-6).
+/// Silently skips any row whose geom_json cannot be parsed.
 List<_ParsedZone> _parseEmission(List<Map<String, dynamic>> rows) {
   final out = <_ParsedZone>[];
   for (final r in rows) {
@@ -333,7 +474,7 @@ List<_ParsedZone> _parseEmission(List<Map<String, dynamic>> rows) {
 }
 
 /// Ray-casting point-in-polygon test. Returns first matching zone or null.
-/// Used by MapOptions.onTap (I-6 — no GestureDetector on polygons).
+/// Used by MapOptions.onTap (no GestureDetector on polygons).
 _ParsedZone? _zoneAtPoint(LatLng tap, List<_ParsedZone> zones) {
   for (final z in zones) {
     if (_pointInRing(tap, z.points)) return z;
