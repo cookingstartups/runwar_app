@@ -11,6 +11,7 @@ import '../providers/profile_provider.dart';
 import '../providers/zones_provider.dart';
 import '../providers/run_recorder_provider.dart';
 import '../services/run_recorder_service.dart';
+import '../services/rival_mover_service.dart';
 import '../services/simulation_service.dart';
 import '../services/territory_service.dart';
 import '../theme.dart';
@@ -265,12 +266,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   void _toggleSimulation(String city) {
     final sim = SimulationService.instance;
+    final mover = RivalMoverService.instance;
     if (sim.isRunning.value) {
       sim.stop();
+      mover.stop();
     } else {
-      sim.start(
-        onZoneChange: (c) => ref.invalidate(zonesProvider(c)),
-      );
+      sim.start(onZoneChange: (c) => ref.invalidate(zonesProvider(c)));
+      mover.start();
     }
   }
 
@@ -302,6 +304,57 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
             // zone polygon layer.
             PolygonLayer(polygons: _buildPolygons(parsed)),
+            // Animated rival runner dots.
+            ValueListenableBuilder<Map<String, LatLng>>(
+              valueListenable: RivalMoverService.instance.positions,
+              builder: (_, positions, __) {
+                if (positions.isEmpty) return const SizedBox.shrink();
+                return MarkerLayer(
+                  markers: positions.entries.map((e) {
+                    final info = RivalMoverService.rivalInfo[e.key];
+                    final color = _hexToColor(info?['color'] ?? '#FF7A00');
+                    final name = info?['name'] ?? '';
+                    return Marker(
+                      point: e.value,
+                      width: 70,
+                      height: 40,
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: color,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 1.5),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: color.withValues(alpha: 0.6),
+                                  blurRadius: 6,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            name,
+                            style: TextStyle(
+                              color: color,
+                              fontSize: 7,
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.bold,
+                              shadows: const [
+                                Shadow(color: Colors.black, blurRadius: 4),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                );
+              },
+            ),
             // Live track polyline while recording.
             Consumer(builder: (context, watchRef, _) {
               final recState = watchRef.watch(runRecorderProvider);
@@ -408,9 +461,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ref.watch(profileCacheProvider(z.ownerId)).valueOrNull;
         final ownerColor =
             _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
-        final t = (z.influence.clamp(1, 15) / 15.0);
-        final fillAlpha = 0.07 + t * 0.55;
-        final strokeWidth = 1.0 + t * 2.0;
+        final level = z.influence.clamp(1, 15);
+        final fillAlpha = 0.0633 * level;        // 6.33% … 95%
+        final strokeWidth = 1.0 + (level / 15.0) * 2.0;
         out.add(Polygon(
           points: z.points,
           isFilled: true,

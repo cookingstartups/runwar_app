@@ -147,6 +147,15 @@ class AuthService {
     // Ruzafa Sur — conquered from RUZAFA_KID
     {'owner': _demoId, 'status': 'owned', 'influence': 6,
      'geom': '{"type":"Polygon","coordinates":[[[-0.3724,39.4618],[-0.3705,39.4615],[-0.3694,39.4620],[-0.3692,39.4632],[-0.3700,39.4640],[-0.3718,39.4642],[-0.3727,39.4636],[-0.3724,39.4618]]]}'},
+    // Xàtiva corridor — EW along C/ Xàtiva toward train station
+    {'owner': _demoId, 'status': 'owned', 'influence': 7,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3818,39.4660],[-0.3790,39.4656],[-0.3768,39.4658],[-0.3755,39.4663],[-0.3755,39.4670],[-0.3768,39.4675],[-0.3790,39.4677],[-0.3818,39.4673],[-0.3818,39.4660]]]}'},
+    // Mercado Central district
+    {'owner': _demoId, 'status': 'owned', 'influence': 7,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3800,39.4725],[-0.3782,39.4722],[-0.3770,39.4728],[-0.3768,39.4738],[-0.3775,39.4746],[-0.3795,39.4748],[-0.3808,39.4742],[-0.3810,39.4730],[-0.3800,39.4725]]]}'},
+    // Jardines del Real — NS park corridor northeast
+    {'owner': _demoId, 'status': 'owned', 'influence': 5,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3682,39.4765],[-0.3668,39.4762],[-0.3658,39.4768],[-0.3655,39.4782],[-0.3660,39.4800],[-0.3672,39.4805],[-0.3685,39.4800],[-0.3688,39.4782],[-0.3685,39.4768],[-0.3682,39.4765]]]}'},
 
     // ── RUZAFA_KID — southern runner ─────────────────────────────────────────
     // Ruzafa Central

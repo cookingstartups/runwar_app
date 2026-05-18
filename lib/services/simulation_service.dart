@@ -142,7 +142,17 @@ class SimulationService {
         return;
       }
       final z = rows.first;
-      if (z['owner_id'] == rival && z['status'] == 'owned') continue;
+      if (z['owner_id'] == rival && z['status'] == 'owned') {
+        // Runner passing through their own zone — elevate influence (max 15).
+        final inf = (z['influence'] as int?) ?? 1;
+        if (inf < 15) {
+          await db.update('zones',
+              {'influence': inf + 1, 'updated_at': now},
+              where: 'id = ?', whereArgs: [spec['id']]);
+          _onZoneChange?.call('Valencia');
+        }
+        return;
+      }
       if (z['owner_id'] != rival && z['status'] == 'owned') {
         // Start a dispute
         await db.update('zones',
