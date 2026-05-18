@@ -128,9 +128,9 @@ class AuthService {
 
   static const List<Map<String, dynamic>> _allDemoUsers = [
     {'id': _demoId,  'email': _demoEmail,        'username': 'WARLORD',    'color': '#FF2D7A', 'influence': 8},
-    {'id': _r1,      'email': 'r1@runwar.demo',  'username': 'RUZAFA_KID', 'color': '#FF8500', 'influence': 5},
-    {'id': _r2,      'email': 'r2@runwar.demo',  'username': 'BEACH_RAT',  'color': '#00CFFF', 'influence': 6},
-    {'id': _r3,      'email': 'r3@runwar.demo',  'username': 'NORTE',      'color': '#39FF6B', 'influence': 4},
+    {'id': _r1,      'email': 'r1@runwar.demo',  'username': 'NIÑO RATA',   'color': '#FF8500', 'influence': 5},
+    {'id': _r2,      'email': 'r2@runwar.demo',  'username': 'TU EX',      'color': '#00CFFF', 'influence': 6},
+    {'id': _r3,      'email': 'r3@runwar.demo',  'username': 'CHAVO DEL 8','color': '#39FF6B', 'influence': 4},
   ];
 
   static const List<Map<String, dynamic>> _allDemoZones = [

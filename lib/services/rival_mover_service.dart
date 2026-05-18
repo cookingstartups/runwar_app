@@ -15,9 +15,9 @@ class RivalMoverService {
 
   // Rival display info (matches demo world seed)
   static const rivalInfo = <String, Map<String, String>>{
-    _r1: {'name': 'RUZAFA_KID', 'color': '#FF8500'},
-    _r2: {'name': 'BEACH_RAT',  'color': '#00CFFF'},
-    _r3: {'name': 'NORTE',      'color': '#39FF6B'},
+    _r1: {'name': 'NIÑO RATA',   'color': '#FF8500'},
+    _r2: {'name': 'TU EX',       'color': '#00CFFF'},
+    _r3: {'name': 'CHAVO DEL 8', 'color': '#39FF6B'},
   };
 
   // GPS routes through real Valencia streets (lat, lng).
