@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:sqflite/sqflite.dart';
 import 'database_service.dart';
 import 'zones_service.dart';
 
@@ -16,6 +18,19 @@ class TerritoryService {
   TerritoryService._();
   static final TerritoryService instance = TerritoryService._();
 
+  static const bool kDemoMode = true;
+
+  /// Grace period before decay starts: 15s demo, 72h production.
+  static Duration get kDecayGracePeriod =>
+      kDemoMode ? const Duration(seconds: 15) : const Duration(hours: 72);
+
+  /// How often decay runs: 15s demo, 24h production.
+  static Duration get kDecayInterval =>
+      kDemoMode ? const Duration(seconds: 15) : const Duration(hours: 24);
+
+  /// Influence lost per day from inactivity.
+  static const double kDecayPerDay = 14.0 / 365.0;
+
   Future<ClaimOutcome> evaluateClaim(
     String userId,
     String city,
@@ -28,11 +43,15 @@ class TerritoryService {
     final rivals = await ZonesService.instance.fetchZonesByCity(city);
     final newBBox = _bbox(track);
     final conqueredIds = <String>[];
-    final disputedIds = <String>[];
+    final defendedIds = <String>[];
+    final ownedOverlapIds = <String>[];
+
+    // Zones requiring instant intersection transfer: (rivalRow, intersection pts).
+    final intersectJobs = <(Map<String, Object?>, List<LatLng>)>[];
 
     for (final r in rivals) {
       final rivalOwnerId = r['owner_id'] as String?;
-      if (rivalOwnerId == null || rivalOwnerId == userId) continue;
+      if (rivalOwnerId == null) continue;
 
       final geom = r['geom_json'];
       if (geom is! String) continue;
@@ -42,87 +61,496 @@ class TerritoryService {
       final rivalBBox = _bbox(rivalPoints);
       if (!_bboxesIntersect(newBBox, rivalBBox)) continue;
 
-      // Full-containment test — conquest priority
+      if (rivalOwnerId == userId) {
+        if ((r['status'] as String?) == 'disputed') {
+          var anyOverlap = false;
+          for (final v in rivalPoints) {
+            if (_pointInRing(v, track)) { anyOverlap = true; break; }
+          }
+          if (!anyOverlap) {
+            for (final v in track) {
+              if (_pointInRing(v, rivalPoints)) { anyOverlap = true; break; }
+            }
+          }
+          if (anyOverlap) {
+            defendedIds.add(r['id'] as String);
+            continue;
+          }
+        }
+        ownedOverlapIds.add(r['id'] as String);
+        continue;
+      }
+
+      // Full containment → direct conquest.
       var allInside = true;
       for (final v in rivalPoints) {
-        if (!_pointInRing(v, track)) {
-          allInside = false;
-          break;
-        }
+        if (!_pointInRing(v, track)) { allInside = false; break; }
       }
       if (allInside) {
         conqueredIds.add(r['id'] as String);
         continue;
       }
 
-      // Partial overlap test — vertex-exchange
-      var anyOverlap = false;
-      for (final v in rivalPoints) {
-        if (_pointInRing(v, track)) {
-          anyOverlap = true;
-          break;
-        }
-      }
-      if (!anyOverlap) {
-        for (final v in track) {
-          if (_pointInRing(v, rivalPoints)) {
-            anyOverlap = true;
-            break;
-          }
-        }
-      }
-      if (anyOverlap) {
-        disputedIds.add(r['id'] as String);
+      // Partial overlap → compute intersection for instant transfer.
+      final intersection = _sutherlandHodgman(rivalPoints, track);
+      if (intersection.length >= 3) {
+        intersectJobs.add((r, intersection));
       }
     }
 
     final db = DatabaseService.instance.db;
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
-    return db.transaction<ClaimOutcome>((txn) async {
+    final outcome = await db.transaction<ClaimOutcome>((txn) async {
+      // Full conquests.
       for (final id in conqueredIds) {
         await txn.update(
           'zones',
           {
             'owner_id': userId,
-            'influence': 1,
+            'influence': 1.0,
             'status': 'owned',
+            'contested_by_id': null,
+            'last_active_at': nowIso,
             'updated_at': nowIso,
           },
           where: 'id = ?',
           whereArgs: [id],
         );
       }
-      for (final id in disputedIds) {
+
+      // Instant intersection transfers: carve intersection out of rival zone.
+      for (final (rivalRow, intersection) in intersectJobs) {
+        final rivalId = rivalRow['id'] as String;
+        final rivalOwnerId = rivalRow['owner_id'] as String;
+        final rivalGeom = rivalRow['geom_json'] as String;
+        final rivalPoints = _parseRing(rivalGeom)!;
+
+        // Remainder = rival points not inside the intersection.
+        final remainder = rivalPoints
+            .where((pt) => !_pointInRing(pt, intersection))
+            .toList();
+
+        if (remainder.length >= 3) {
+          final remainderHull = _convexHull(remainder);
+          if (remainderHull.length >= 3) {
+            await txn.update(
+              'zones',
+              {
+                'geom_json': _encodePolygon(remainderHull),
+                'dispute_at': nowIso,
+                'updated_at': nowIso,
+              },
+              where: 'id = ?',
+              whereArgs: [rivalId],
+            );
+          } else {
+            await txn.delete('zones', where: 'id = ?', whereArgs: [rivalId]);
+          }
+        } else {
+          // Rival loses the whole zone.
+          await txn.delete('zones', where: 'id = ?', whereArgs: [rivalId]);
+        }
+
+        // New zone for attacker from the intersection polygon.
+        final newId = _uuidV4();
+        await txn.insert('zones', {
+          'id': newId,
+          'owner_id': userId,
+          'city': rivalRow['city'] as String,
+          'geom_json': _encodePolygon(intersection),
+          'influence': 1.0,
+          'status': 'owned',
+          'contested_by_id': null,
+          'created_at': nowIso,
+          'updated_at': nowIso,
+          'credits_earned': 0.0,
+          'last_income_at': null,
+          'last_active_at': nowIso,
+          'dispute_at': nowIso,
+          'parent_id': rivalId,
+        });
+
+        debugPrint('[Territory] instant transfer $rivalId → $newId ($rivalOwnerId→$userId)');
+        conqueredIds.add(newId);
+      }
+
+      // Defended zones.
+      for (final id in defendedIds) {
         await txn.update(
           'zones',
-          {'status': 'disputed', 'updated_at': nowIso},
+          {
+            'status': 'owned',
+            'contested_by_id': null,
+            'updated_at': nowIso,
+          },
           where: 'id = ?',
           whereArgs: [id],
         );
       }
-      if (conqueredIds.isEmpty && disputedIds.isEmpty) {
+
+      final hasActivity = conqueredIds.isNotEmpty ||
+          intersectJobs.isNotEmpty ||
+          defendedIds.isNotEmpty;
+
+      if (!hasActivity) {
         final newId = _uuidV4();
         await txn.insert('zones', {
           'id': newId,
           'owner_id': userId,
           'city': city,
           'geom_json': _encodePolygon(track),
-          'influence': 1,
+          'influence': 1.0,
           'status': 'owned',
+          'contested_by_id': null,
           'created_at': nowIso,
           'updated_at': nowIso,
+          'credits_earned': 0.0,
+          'last_income_at': null,
+          'last_active_at': nowIso,
+          'dispute_at': null,
+          'parent_id': null,
         });
         return ClaimOutcome(TerritoryResult.claimed, newId);
       }
+
       if (conqueredIds.isNotEmpty) {
         return ClaimOutcome(TerritoryResult.conquered, conqueredIds.first);
       }
-      return ClaimOutcome(TerritoryResult.disputed, disputedIds.first);
+      if (defendedIds.isNotEmpty) {
+        return ClaimOutcome(TerritoryResult.claimed, defendedIds.first);
+      }
+      return ClaimOutcome(TerritoryResult.disputed, null);
     });
+
+    if (outcome.result != TerritoryResult.failed) {
+      await _mergeAdjacentZones(userId, city);
+    }
+    return outcome;
   }
 
-  // ── helpers ──────────────────────────────────────────────────────────────
+  // ── Daily decay ───────────────────────────────────────────────────────────
+
+  /// Call once on app open. Reads `prefs.last_decay_at` and skips if not due.
+  Future<void> runDailyDecayIfDue(String city) async {
+    final db = DatabaseService.instance.db;
+
+    final prefRows = await db.query(
+      'prefs',
+      where: 'key = ?',
+      whereArgs: ['last_decay_at'],
+    );
+
+    final lastDecayStr =
+        prefRows.isNotEmpty ? prefRows.first['value'] as String? : null;
+    final lastDecay =
+        lastDecayStr != null ? DateTime.tryParse(lastDecayStr) : null;
+    final now = DateTime.now().toUtc();
+
+    if (lastDecay != null && now.difference(lastDecay) < kDecayInterval) {
+      return;
+    }
+
+    await _applyDecay(city, now);
+
+    await db.insert(
+      'prefs',
+      {'key': 'last_decay_at', 'value': now.toIso8601String()},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> _applyDecay(String city, DateTime now) async {
+    final db = DatabaseService.instance.db;
+    final nowIso = now.toIso8601String();
+
+    final owned = await db.query(
+      'zones',
+      where: "city = ? AND status = 'owned'",
+      whereArgs: [city],
+    );
+    if (owned.isEmpty) return;
+
+    var decayed = 0;
+    for (final z in owned) {
+      final lastActiveStr = z['last_active_at'] as String?;
+      final lastActive =
+          lastActiveStr != null ? DateTime.tryParse(lastActiveStr) : null;
+
+      final inGracePeriod = lastActive != null &&
+          now.difference(lastActive) < kDecayGracePeriod;
+      if (inGracePeriod) continue;
+
+      final currentInf = (z['influence'] as num).toDouble();
+      if (currentInf <= 1.0) continue;
+
+      final newInf = (currentInf - kDecayPerDay).clamp(1.0, 15.0);
+      await db.update(
+        'zones',
+        {'influence': newInf, 'updated_at': nowIso},
+        where: 'id = ?',
+        whereArgs: [z['id']],
+      );
+      decayed++;
+    }
+
+    if (decayed > 0) {
+      debugPrint('[Territory] decay applied to $decayed zones in $city');
+    }
+  }
+
+  // ── Passive income ────────────────────────────────────────────────────────
+
+  /// Accumulate credits for owned zones. Call periodically (e.g. every 60
+  /// simulation ticks, or on app open alongside decay).
+  Future<void> accruePassiveIncome(String city) async {
+    final db = DatabaseService.instance.db;
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+
+    final owned = await db.query(
+      'zones',
+      where: "city = ? AND status = 'owned'",
+      whereArgs: [city],
+    );
+
+    for (final z in owned) {
+      final lastStr = z['last_income_at'] as String?;
+      final last = lastStr != null ? DateTime.tryParse(lastStr) : null;
+      final now = DateTime.now().toUtc();
+      final elapsedHours =
+          last != null ? now.difference(last).inSeconds / 3600.0 : 0.0;
+      if (elapsedHours < 0.001) continue;
+
+      final influence = (z['influence'] as num).toDouble();
+      final pts = _parseRing(z['geom_json'] as String);
+      if (pts == null) continue;
+      final areaKm2 = _polygonAreaKm2(pts);
+      final earned = influence * areaKm2 * elapsedHours;
+      final current = (z['credits_earned'] as num?)?.toDouble() ?? 0.0;
+
+      await db.update(
+        'zones',
+        {
+          'credits_earned': current + earned,
+          'last_income_at': nowIso,
+        },
+        where: 'id = ?',
+        whereArgs: [z['id']],
+      );
+    }
+  }
+
+  // ── Zone merging ──────────────────────────────────────────────────────────
+
+  Future<void> _mergeAdjacentZones(String userId, String city) async {
+    final db = DatabaseService.instance.db;
+    final ownedRows = await db.query(
+      'zones',
+      where: "owner_id = ? AND city = ? AND status = 'owned'",
+      whereArgs: [userId, city],
+    );
+    if (ownedRows.length < 2) return;
+
+    final zones = <({
+      String id,
+      List<LatLng> pts,
+      double inf,
+      double minLat,
+      double maxLat,
+      double minLng,
+      double maxLng
+    })>[];
+    for (final r in ownedRows) {
+      final pts = _parseRing(r['geom_json'] as String);
+      if (pts == null || pts.length < 3) continue;
+      final bb = _bbox(pts);
+      zones.add((
+        id: r['id'] as String,
+        pts: pts,
+        inf: (r['influence'] as num?)?.toDouble() ?? 1.0,
+        minLat: bb.minLat,
+        maxLat: bb.maxLat,
+        minLng: bb.minLng,
+        maxLng: bb.maxLng,
+      ));
+    }
+    if (zones.length < 2) return;
+
+    const kProximityDeg = 0.0015;
+    final parent = List<int>.generate(zones.length, (i) => i);
+
+    int find(int i) {
+      while (parent[i] != i) {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+      }
+      return i;
+    }
+
+    void union(int a, int b) {
+      final ra = find(a), rb = find(b);
+      if (ra != rb) parent[ra] = rb;
+    }
+
+    for (var i = 0; i < zones.length; i++) {
+      for (var j = i + 1; j < zones.length; j++) {
+        final a = zones[i], b = zones[j];
+        final touching = !(a.maxLat + kProximityDeg < b.minLat ||
+            a.minLat - kProximityDeg > b.maxLat ||
+            a.maxLng + kProximityDeg < b.minLng ||
+            a.minLng - kProximityDeg > b.maxLng);
+        if (touching) union(i, j);
+      }
+    }
+
+    final groups = <int, List<int>>{};
+    for (var i = 0; i < zones.length; i++) {
+      groups.putIfAbsent(find(i), () => []).add(i);
+    }
+
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+
+    for (final group in groups.values) {
+      if (group.length < 2) continue;
+
+      final allPts = <LatLng>[];
+      var totalInf = 0.0;
+      for (final idx in group) {
+        allPts.addAll(zones[idx].pts);
+        totalInf += zones[idx].inf;
+      }
+      final avgInf = (totalInf / group.length).clamp(1.0, 15.0);
+      final hull = _convexHull(allPts);
+      if (hull.length < 3) continue;
+
+      final keepId = zones[group.first].id;
+      for (final idx in group.skip(1)) {
+        await db.delete('zones', where: 'id = ?', whereArgs: [zones[idx].id]);
+      }
+      await db.update(
+        'zones',
+        {
+          'geom_json': _encodePolygon(hull),
+          'influence': avgInf,
+          'updated_at': nowIso,
+        },
+        where: 'id = ?',
+        whereArgs: [keepId],
+      );
+      debugPrint(
+          '[Territory] merged ${group.length} zones for $userId → hull ${hull.length} pts, inf $avgInf');
+    }
+  }
+
+  // ── Sutherland-Hodgman polygon clipping ──────────────────────────────────
+
+  static List<LatLng> _sutherlandHodgman(
+      List<LatLng> subject, List<LatLng> clip) {
+    var output = List<LatLng>.from(subject);
+    if (output.isEmpty) return output;
+    final n = clip.length;
+    for (var i = 0; i < n; i++) {
+      if (output.isEmpty) break;
+      final input = List<LatLng>.from(output);
+      output.clear();
+      final edgeA = clip[i];
+      final edgeB = clip[(i + 1) % n];
+      for (var j = 0; j < input.length; j++) {
+        final current = input[j];
+        final prev = input[(j + input.length - 1) % input.length];
+        final currentInside = _isInsideEdge(current, edgeA, edgeB);
+        final prevInside = _isInsideEdge(prev, edgeA, edgeB);
+        if (currentInside) {
+          if (!prevInside) {
+            final inter = _lineIntersect(prev, current, edgeA, edgeB);
+            if (inter != null) output.add(inter);
+          }
+          output.add(current);
+        } else if (prevInside) {
+          final inter = _lineIntersect(prev, current, edgeA, edgeB);
+          if (inter != null) output.add(inter);
+        }
+      }
+    }
+    return output;
+  }
+
+  static bool _isInsideEdge(LatLng p, LatLng a, LatLng b) {
+    return (b.longitude - a.longitude) * (p.latitude - a.latitude) -
+            (b.latitude - a.latitude) * (p.longitude - a.longitude) >=
+        0;
+  }
+
+  static LatLng? _lineIntersect(
+      LatLng p1, LatLng p2, LatLng p3, LatLng p4) {
+    final d1lat = p2.latitude - p1.latitude;
+    final d1lng = p2.longitude - p1.longitude;
+    final d2lat = p4.latitude - p3.latitude;
+    final d2lng = p4.longitude - p3.longitude;
+    final denom = d1lat * d2lng - d1lng * d2lat;
+    if (denom.abs() < 1e-10) return null;
+    final t = ((p3.latitude - p1.latitude) * d2lng -
+            (p3.longitude - p1.longitude) * d2lat) /
+        denom;
+    return LatLng(p1.latitude + t * d1lat, p1.longitude + t * d1lng);
+  }
+
+  // ── Polygon area (Shoelace → km²) ────────────────────────────────────────
+
+  static double _polygonAreaKm2(List<LatLng> pts) {
+    double area = 0;
+    final n = pts.length;
+    for (var i = 0; i < n; i++) {
+      final j = (i + 1) % n;
+      area += pts[i].longitude * pts[j].latitude;
+      area -= pts[j].longitude * pts[i].latitude;
+    }
+    area = area.abs() / 2.0;
+    final centerLat =
+        pts.map((p) => p.latitude).reduce((a, b) => a + b) / n;
+    final cosLat = math.cos(centerLat * math.pi / 180);
+    return area * 111.32 * 111.32 * cosLat;
+  }
+
+  // ── Convex hull (Graham scan) ─────────────────────────────────────────────
+
+  static List<LatLng> _convexHull(List<LatLng> pts) {
+    if (pts.length <= 2) return pts;
+    final sorted = List<LatLng>.from(pts)
+      ..sort((a, b) {
+        final c = a.longitude.compareTo(b.longitude);
+        return c != 0 ? c : a.latitude.compareTo(b.latitude);
+      });
+
+    final lower = <LatLng>[];
+    for (final p in sorted) {
+      while (lower.length >= 2 &&
+          _cross(lower[lower.length - 2], lower.last, p) <= 0) {
+        lower.removeLast();
+      }
+      lower.add(p);
+    }
+
+    final upper = <LatLng>[];
+    for (final p in sorted.reversed) {
+      while (upper.length >= 2 &&
+          _cross(upper[upper.length - 2], upper.last, p) <= 0) {
+        upper.removeLast();
+      }
+      upper.add(p);
+    }
+
+    return [
+      ...lower.sublist(0, lower.length - 1),
+      ...upper.sublist(0, upper.length - 1),
+    ];
+  }
+
+  static double _cross(LatLng o, LatLng a, LatLng b) =>
+      (a.longitude - o.longitude) * (b.latitude - o.latitude) -
+      (a.latitude - o.latitude) * (b.longitude - o.longitude);
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   static String _encodePolygon(List<LatLng> ring) {
     final closed =

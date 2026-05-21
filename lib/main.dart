@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'theme.dart';
 import 'services/database_service.dart';
+import 'services/territory_service.dart';
 import 'providers/auth_provider.dart';
 import 'providers/profile_provider.dart';
 import 'providers/run_recorder_provider.dart';
@@ -20,6 +21,7 @@ Future<void> main() async {
   try {
     await initLocalNotifications();
     await DatabaseService.instance.init();
+    await TerritoryService.instance.runDailyDecayIfDue('Valencia');
   } catch (e) {
     runApp(_InitErrorApp(error: e.toString()));
     return;
