@@ -121,6 +121,24 @@ const PowerDef kPowerSiege = PowerDef(
   icon: Icons.whatshot,
 );
 
+/// HYPERSONIC — while active, every 1000m run in a consistent direction extends
+/// your claimed zone 2× in that direction. Direction is computed from the
+/// net displacement vector of each 1000m segment.
+/// Example: running 1km north → zone boundary pushes 2km north from your start point.
+const PowerDef kPowerHypersonic = PowerDef(
+  id: 'hypersonic',
+  name: 'HYPERSONIC',
+  description:
+      'Every 1000m you run, your lasso territory extends 2× in that direction. '
+      'The harder you run in one direction, the further your empire stretches.',
+  tier: PowerTier.epic,
+  category: PowerCategory.attack,
+  creditCost: 1600,
+  maxCharges: 1,
+  duration: Duration(minutes: 30),
+  icon: Icons.multiple_stop,
+);
+
 // ── DEFENSE POWERS ────────────────────────────────────────────────────────────
 
 /// SHIELD — your zones are immune to influence loss for 30 minutes.
@@ -298,6 +316,7 @@ const List<PowerDef> kAllPowers = [
   kPowerRush,
   kPowerBlitz,
   kPowerSiege,
+  kPowerHypersonic,
   kPowerShield,
   kPowerFortify,
   kPowerCitadel,
