@@ -31,7 +31,7 @@ class RunRecorderService {
   DateTime? get closedAt => _closedAt;
 
   static const double _minPerimeterM = 200;
-  static const double _maxReturnGapM = 100;
+  static const double _maxReturnGapM = 250;
   static const int _minElapsedSec = 60;
   static const double _earthRadiusM = 6371008.8;
 
