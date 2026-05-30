@@ -311,6 +311,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           options: MapOptions(
             initialCenter: center,
             initialZoom: _kInitialZoom,
+            maxZoom: 18,
+            minZoom: 10,
             interactionOptions: const InteractionOptions(
               flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
             ),

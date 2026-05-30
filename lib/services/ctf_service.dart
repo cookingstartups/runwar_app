@@ -54,12 +54,14 @@ class CtfService {
   Stream<List<CtfEvent>> get activeEvents => _controller.stream;
 
   Future<void> init() async {
+    debugPrint('[CtfService] init called — isConnected=${SupabaseService.instance.isConnected}');
     if (!SupabaseService.instance.isConnected) return;
     await _loadConfig();
     await _initNotifications();
     _subscribe();
     // Load any currently active events.
     await _fetchAndEmit();
+    debugPrint('[CtfService] init complete — radius=${_notifRadiusKm}km notifInit=$_notifInit');
   }
 
   Future<void> _loadConfig() async {
@@ -87,7 +89,8 @@ class CtfService {
       final androidImpl = _notifications
           .resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>();
-      await androidImpl?.requestNotificationsPermission();
+      final granted = await androidImpl?.requestNotificationsPermission();
+      debugPrint('[CtfService] notification permission granted=$granted');
       await androidImpl?.createNotificationChannel(
         const AndroidNotificationChannel(
           _channelId,
@@ -110,6 +113,7 @@ class CtfService {
           schema: 'public',
           table: 'ctf_events',
           callback: (payload) async {
+            debugPrint('[CtfService] INSERT received: ${payload.newRecord}');
             final row = payload.newRecord;
             if (row['is_active'] == true) {
               final event = CtfEvent.fromMap(row);
@@ -119,9 +123,7 @@ class CtfService {
           },
         )
         .subscribe((status, error) {
-          if (error != null) {
-            debugPrint('[CtfService] subscribe error: $error');
-          }
+          debugPrint('[CtfService] channel status=$status error=$error');
         });
   }
 
@@ -158,6 +160,7 @@ class CtfService {
   }
 
   Future<void> _fireNotification(CtfEvent event) async {
+    debugPrint('[CtfService] _fireNotification called — notifInit=$_notifInit event=${event.id}');
     if (!_notifInit) return;
     try {
       await _notifications.show(
