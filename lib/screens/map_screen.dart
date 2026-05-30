@@ -848,7 +848,7 @@ class _FogPainter extends CustomPainter {
     canvas.drawRect(
       Offset.zero & size,
       Paint()
-        ..color = const Color(0xCC08060F) // ~80% opacity
+        ..color = const Color(0xEE08060F) // ~93% opacity
         ..style = PaintingStyle.fill,
     );
 

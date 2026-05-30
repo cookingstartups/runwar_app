@@ -77,6 +77,7 @@ class CtfService {
   bool _notifInit = false;
   double _notifRadiusKm = 100;
   double _captureThresholdM = 50.0;
+  String? _playerId;
 
   final _joinedEventIds = <String>{};
   final _captureAttemptedIds = <String>{};
@@ -92,13 +93,15 @@ class CtfService {
   /// Pre-announced events (is_active=false, pre_announced=true) not yet joined.
   Stream<List<CtfEvent>> get pendingEvents => _pendingController.stream;
 
-  Future<void> init() async {
+  Future<void> init({String? playerId}) async {
     if (_serviceInited) return;
     _serviceInited = true;
-    debugPrint('[CtfService] init called — isConnected=${SupabaseService.instance.isConnected}');
+    _playerId = playerId;
+    debugPrint('[CtfService] init called — isConnected=${SupabaseService.instance.isConnected} playerId=$playerId');
     if (!SupabaseService.instance.isConnected) return;
     await _loadConfig();
     await _initNotifications();
+    await _loadJoinedEvents();
     _subscribe();
     await _fetchAndEmit();
     await _fetchAndEmitPending();
@@ -123,6 +126,23 @@ class CtfService {
       }
     } catch (e) {
       debugPrint('[CtfService] config load error: $e');
+    }
+  }
+
+  Future<void> _loadJoinedEvents() async {
+    if (_playerId == null) return;
+    try {
+      final rows = await SupabaseService.instance.supabase
+          .from('ctf_participants')
+          .select('event_id')
+          .eq('player_id', _playerId!);
+      for (final row in (rows as List<dynamic>)) {
+        final id = (row as Map<String, dynamic>)['event_id'] as String?;
+        if (id != null) _joinedEventIds.add(id);
+      }
+      debugPrint('[CtfService] loaded ${_joinedEventIds.length} joined events');
+    } catch (e) {
+      debugPrint('[CtfService] _loadJoinedEvents error: $e');
     }
   }
 
@@ -192,6 +212,14 @@ class CtfService {
             // Stage 2: is_active just flipped → fire "FLAG DROPPED".
             if (old['is_active'] == false && row['is_active'] == true) {
               await _maybeFireDroppedNotification(event);
+            }
+
+            // Stage 3: winner_id just set → broadcast capture to all participants.
+            if (old['winner_id'] == null && row['winner_id'] != null) {
+              await _maybeFireCapturedNotification(
+                event,
+                row['winner_id'] as String,
+              );
             }
 
             await _fetchAndEmit();
@@ -277,6 +305,34 @@ class CtfService {
       id: event.hashCode,
       title: '🚩 FLAG DROPPED in ${event.city}!',
       body: 'Race to the pin — capture it within $minsLeft min. Reward: 500 credits + SHIELD.',
+    );
+  }
+
+  /// Fires to every participant who has this event in _joinedEventIds.
+  /// Fetches the winner's username from the players table.
+  Future<void> _maybeFireCapturedNotification(
+    CtfEvent event,
+    String winnerId,
+  ) async {
+    if (!_joinedEventIds.contains(event.id)) return;
+    String winnerName = 'A WARLORD';
+    try {
+      final rows = await SupabaseService.instance.supabase
+          .from('players')
+          .select('username')
+          .eq('id', winnerId)
+          .limit(1);
+      final list = rows as List<dynamic>;
+      if (list.isNotEmpty) {
+        winnerName = (list.first as Map<String, dynamic>)['username'] as String? ?? winnerName;
+      }
+    } catch (e) {
+      debugPrint('[CtfService] winner lookup error: $e');
+    }
+    await _showNotification(
+      id: event.hashCode ^ 2,
+      title: '🏆 FLAG CAPTURED in ${event.city}!',
+      body: '$winnerName snatched the flag. Better luck next time.',
     );
   }
 
