@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "646002557080",
+    "project_id": "runwar-fe299",
+    "storage_bucket": "runwar-fe299.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:646002557080:android:0c133529a99e98f7bad0ed",
+        "android_client_info": {
+          "package_name": "com.cookingstartups.runwar"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCefSMlYdWyd9ZOmiFBuSXGzYkgOY2Dqow"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
