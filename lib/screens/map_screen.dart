@@ -26,8 +26,8 @@ const Map<String, LatLng> _kCityCenter = {
   'Valencia': LatLng(39.4699, -0.3763),
   'Madrid': LatLng(40.4168, -3.7038),
 };
-const LatLng _kDefaultCenter = LatLng(40.0, -3.0); // fallback: central Iberian Peninsula
-const double _kInitialZoom = 13.0;
+const LatLng _kDefaultCenter = LatLng(40.4168, -3.7038); // Madrid
+const double _kInitialZoom = 16.0;
 
 // ── Tile configuration ────────────────────────────────────────────────────────
 
@@ -70,6 +70,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   final MapController _mapController = MapController();
   StreamSubscription<Position>? _posSub;
   Position? _currentPosition;
+  bool _centeredOnGps = false;
   @override
   void initState() {
     super.initState();
@@ -78,7 +79,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     };
     // request permission once at mount; use addPostFrameCallback
     // so the OS dialog appears after the first frame paints.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initLocation());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initLocation();
+      CtfService.instance.refresh();
+    });
   }
 
   Future<void> _initLocation() async {
@@ -96,6 +100,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       ).listen((pos) {
         if (!mounted) return;
         setState(() => _currentPosition = pos);
+        if (!_centeredOnGps) {
+          _centeredOnGps = true;
+          _mapController.move(
+            LatLng(pos.latitude, pos.longitude),
+            _kInitialZoom,
+          );
+        }
+        CtfService.instance.checkCaptureProximity(pos.latitude, pos.longitude);
       });
     }
     // denied / deniedForever / unableToDetermine → no stream, no dot, no SnackBar
@@ -225,8 +237,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               : null,
           child: FloatingActionButton(
             heroTag: 'run_rec',
-            backgroundColor: kAccent,
-            foregroundColor: kBg,
+            backgroundColor: (hasGps || isRecording) ? kAccent : kSurface,
+            foregroundColor: (hasGps || isRecording) ? kBg : kFgMuted,
             onPressed: () => _onFabTap(context, recState, city),
             child: Icon(isRecording ? Icons.stop : Icons.play_arrow),
           ),
@@ -248,6 +260,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
               content: Text('Location permission required to record runs')),
+        );
+        return;
+      }
+      if (_currentPosition == null) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Waiting for GPS fix — step outside and try again')),
         );
         return;
       }
@@ -438,6 +458,49 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
           ],
         ),
+        // Pre-announce CTF banner — shown when there are pending events to join.
+        if (SupabaseService.instance.isConnected)
+          StreamBuilder<List<CtfEvent>>(
+            stream: CtfService.instance.pendingEvents,
+            builder: (_, snap) {
+              final pending = snap.data ?? [];
+              if (pending.isEmpty) return const SizedBox.shrink();
+              final first = pending.first;
+              return Positioned(
+                top: 48,
+                left: 16,
+                right: 16,
+                child: GestureDetector(
+                  onTap: () => _showCtfSheet(first),
+                  child: Material(
+                    color: const Color(0xFFCC2200).withOpacity(0.92),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      child: Row(
+                        children: [
+                          const Text('🔔', style: TextStyle(fontSize: 18)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'CTF incoming in ${first.city} — tap to join',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontFamily: 'monospace',
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right, color: Colors.white70, size: 20),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
         // error banner above map; does not block FAB or tiles.
         if (showError)
           Positioned(
@@ -546,6 +609,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   void _showCtfSheet(CtfEvent event) {
     final minsLeft = event.expiresAt.difference(DateTime.now()).inMinutes;
+    final thresholdM = CtfService.instance.captureThresholdM.toInt();
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF1A1A2E),
@@ -557,28 +621,72 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('🚩 CAPTURE THE FLAG', style: TextStyle(color: Colors.redAccent, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
+            const Text('🚩 CAPTURE THE FLAG',
+                style: TextStyle(
+                    color: Colors.redAccent,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'monospace')),
             const SizedBox(height: 8),
-            Text('$minsLeft minutes remaining', style: const TextStyle(color: Colors.white70)),
+            if (event.isActive)
+              Text('$minsLeft minutes remaining',
+                  style: const TextStyle(color: Colors.white70))
+            else
+              const Text('Flag drops soon — join now to see it on the map',
+                  style: TextStyle(color: Colors.white70),
+                  textAlign: TextAlign.center),
             const SizedBox(height: 8),
-            const Text('Walk to the flag pin and claim it within 50m.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 12)),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                onPressed: () async {
-                  Navigator.of(context).pop();
-                  final joined = await CtfService.instance.joinEvent(event.id);
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Text(joined ? 'You joined the CTF! Race to the pin.' : 'Could not join CTF.'),
-                    backgroundColor: joined ? Colors.redAccent : Colors.grey,
-                  ));
-                },
-                child: const Text('JOIN CTF', style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
+            if (event.isJoined && event.isActive) ...[
+              Text(
+                'You\'re racing — capture auto-triggers at ${thresholdM}m',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xFF4AFF91), fontSize: 13),
               ),
-            ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E3A2F)),
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('CLOSE',
+                      style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
+                ),
+              ),
+            ] else ...[
+              Text(
+                event.isJoined
+                    ? 'You\'re registered — flag pin will appear when it drops'
+                    : 'Join now to see the flag pin when it drops',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+              const SizedBox(height: 16),
+              if (!event.isJoined)
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.redAccent),
+                    onPressed: () async {
+                      Navigator.of(context).pop();
+                      final joined =
+                          await CtfService.instance.joinEvent(event.id);
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(joined
+                            ? 'You joined the CTF! Race to the pin when it drops.'
+                            : 'Could not join CTF — try again.'),
+                        backgroundColor:
+                            joined ? Colors.redAccent : Colors.grey,
+                      ));
+                    },
+                    child: const Text('JOIN CTF',
+                        style: TextStyle(
+                            color: Colors.white, fontFamily: 'monospace')),
+                  ),
+                ),
+            ],
           ],
         ),
       ),

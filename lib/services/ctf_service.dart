@@ -15,6 +15,9 @@ class CtfEvent {
     required this.position,
     required this.expiresAt,
     this.startsAt,
+    this.isActive = false,
+    this.preAnnounced = false,
+    this.isJoined = false,
   });
 
   final String id;
@@ -22,8 +25,14 @@ class CtfEvent {
   final LatLng position;
   final DateTime expiresAt;
   final DateTime? startsAt;
+  final bool isActive;
+  final bool preAnnounced;
 
-  factory CtfEvent.fromMap(Map<String, dynamic> m) => CtfEvent(
+  /// Set externally by CtfService based on _joinedEventIds — not from DB.
+  final bool isJoined;
+
+  factory CtfEvent.fromMap(Map<String, dynamic> m, {bool isJoined = false}) =>
+      CtfEvent(
         id: m['id'] as String,
         city: m['city'] as String? ?? 'Valencia',
         position: LatLng(
@@ -35,6 +44,9 @@ class CtfEvent {
         startsAt: m['starts_at'] != null
             ? DateTime.tryParse(m['starts_at'] as String)
             : null,
+        isActive: m['is_active'] as bool? ?? false,
+        preAnnounced: m['pre_announced'] as bool? ?? false,
+        isJoined: isJoined,
       );
 }
 
@@ -46,42 +58,68 @@ class CtfEvent {
 ///
 /// Legacy events (starts_at IS NULL, is_active=true on INSERT) skip Stage 1.
 /// Notification radius gated by app_config.ctf_notification_radius_km (default 100 km).
+///
+/// Join mechanic:
+///   - Players can JOIN a pre-announced event via joinEvent(eventId).
+///   - Only joined players see the active flag pin on the map (activeEvents stream).
+///   - pendingEvents stream emits pre-announced events the player has NOT yet joined.
+///   - Auto-capture: checkCaptureProximity(lat, lng) auto-calls claimWin when within threshold.
 class CtfService {
   CtfService._();
   static final CtfService instance = CtfService._();
 
   RealtimeChannel? _channel;
   final _controller = StreamController<List<CtfEvent>>.broadcast();
+  final _pendingController = StreamController<List<CtfEvent>>.broadcast();
   final _notifications = FlutterLocalNotificationsPlugin();
 
+  bool _serviceInited = false;
   bool _notifInit = false;
   double _notifRadiusKm = 100;
+  double _captureThresholdM = 50.0;
+
+  final _joinedEventIds = <String>{};
+  final _captureAttemptedIds = <String>{};
+
+  /// Track last emitted active events for proximity checks.
+  List<CtfEvent> _lastActiveEvents = [];
 
   static const _channelId = 'runwar_ctf';
   static const _channelName = 'CTF Events';
 
   Stream<List<CtfEvent>> get activeEvents => _controller.stream;
 
+  /// Pre-announced events (is_active=false, pre_announced=true) not yet joined.
+  Stream<List<CtfEvent>> get pendingEvents => _pendingController.stream;
+
   Future<void> init() async {
+    if (_serviceInited) return;
+    _serviceInited = true;
     debugPrint('[CtfService] init called — isConnected=${SupabaseService.instance.isConnected}');
     if (!SupabaseService.instance.isConnected) return;
     await _loadConfig();
     await _initNotifications();
     _subscribe();
     await _fetchAndEmit();
-    debugPrint('[CtfService] init complete — radius=${_notifRadiusKm}km notifInit=$_notifInit');
+    await _fetchAndEmitPending();
+    debugPrint('[CtfService] init complete — radius=${_notifRadiusKm}km captureThreshold=${_captureThresholdM}m notifInit=$_notifInit');
   }
 
   Future<void> _loadConfig() async {
     try {
       final rows = await SupabaseService.instance.supabase
           .from('app_config')
-          .select('value')
-          .eq('key', 'ctf_notification_radius_km')
-          .maybeSingle();
-      if (rows != null) {
-        final raw = rows['value'] as String?;
-        if (raw != null) _notifRadiusKm = double.tryParse(raw) ?? 100;
+          .select('key, value')
+          .inFilter('key', ['ctf_notification_radius_km', 'ctf_capture_threshold_m']);
+      for (final row in (rows as List<dynamic>)) {
+        final key = row['key'] as String?;
+        final raw = row['value'] as String?;
+        if (raw == null) continue;
+        if (key == 'ctf_notification_radius_km') {
+          _notifRadiusKm = double.tryParse(raw) ?? 100;
+        } else if (key == 'ctf_capture_threshold_m') {
+          _captureThresholdM = double.tryParse(raw) ?? 50.0;
+        }
       }
     } catch (e) {
       debugPrint('[CtfService] config load error: $e');
@@ -130,6 +168,7 @@ class CtfService {
               await _maybeFireDroppedNotification(event);
             }
             await _fetchAndEmit();
+            await _fetchAndEmitPending();
           },
         )
         // ── UPDATE: pg_cron flips pre_announced or is_active ─────────────────
@@ -156,6 +195,7 @@ class CtfService {
             }
 
             await _fetchAndEmit();
+            await _fetchAndEmitPending();
           },
         )
         .subscribe((status, error) {
@@ -169,14 +209,42 @@ class CtfService {
           .from('ctf_events')
           .select()
           .eq('is_active', true)
-          .gt('expires_at', DateTime.now().toIso8601String());
+          .gt('expires_at', DateTime.now().toUtc().toIso8601String());
 
       final events = (rows as List<dynamic>)
-          .map((r) => CtfEvent.fromMap(r as Map<String, dynamic>))
+          .map((r) {
+            final m = r as Map<String, dynamic>;
+            final joined = _joinedEventIds.contains(m['id'] as String?);
+            return CtfEvent.fromMap(m, isJoined: joined);
+          })
+          .where((e) => _joinedEventIds.contains(e.id))
           .toList();
+
+      _lastActiveEvents = events;
       _controller.add(events);
     } catch (e) {
       debugPrint('[CtfService] fetch error: $e');
+    }
+  }
+
+  /// Fetches pre-announced events the player has not yet joined.
+  Future<void> _fetchAndEmitPending() async {
+    try {
+      final rows = await SupabaseService.instance.supabase
+          .from('ctf_events')
+          .select()
+          .eq('is_active', false)
+          .eq('pre_announced', true)
+          .gt('expires_at', DateTime.now().toUtc().toIso8601String());
+
+      final events = (rows as List<dynamic>)
+          .map((r) => CtfEvent.fromMap(r as Map<String, dynamic>))
+          .where((e) => !_joinedEventIds.contains(e.id))
+          .toList();
+
+      _pendingController.add(events);
+    } catch (e) {
+      debugPrint('[CtfService] pending fetch error: $e');
     }
   }
 
@@ -241,12 +309,24 @@ class CtfService {
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
+  Future<void> refresh() async {
+    await _fetchAndEmit();
+    await _fetchAndEmitPending();
+  }
+
   Future<bool> joinEvent(String eventId) async {
     if (!SupabaseService.instance.isConnected) return false;
     try {
       final response = await SupabaseService.instance.supabase.functions
           .invoke(SupabaseConfig.fnCtfJoin, body: {'event_id': eventId});
-      return response.data?['joined'] == true;
+      final joined = response.data?['joined'] == true;
+      if (joined) {
+        _joinedEventIds.add(eventId);
+        // Refresh both streams: active may now include this event, pending removes it.
+        await _fetchAndEmit();
+        await _fetchAndEmitPending();
+      }
+      return joined;
     } catch (e) {
       debugPrint('[CtfService] joinEvent error: $e');
       return false;
@@ -271,9 +351,31 @@ class CtfService {
     }
   }
 
+  /// Auto-capture: called on every GPS update from MapScreen.
+  /// For each active joined event, if the player is within [_captureThresholdM],
+  /// calls claimWin automatically. Guard prevents duplicate calls per session.
+  Future<void> checkCaptureProximity(double lat, double lng) async {
+    final events = _lastActiveEvents;
+    for (final event in events) {
+      if (!event.isJoined) continue;
+      if (_captureAttemptedIds.contains(event.id)) continue;
+      final distM =
+          _haversineKm(lat, lng, event.position.latitude, event.position.longitude) *
+              1000;
+      if (distM <= _captureThresholdM) {
+        _captureAttemptedIds.add(event.id); // add BEFORE await to prevent races
+        debugPrint('[CtfService] Auto-capture attempt for ${event.id} at ${distM.toStringAsFixed(1)}m');
+        await claimWin(event.id, LatLng(lat, lng));
+      }
+    }
+  }
+
+  double get captureThresholdM => _captureThresholdM;
+
   Future<void> dispose() async {
     await _channel?.unsubscribe();
     await _controller.close();
+    await _pendingController.close();
   }
 }
 
