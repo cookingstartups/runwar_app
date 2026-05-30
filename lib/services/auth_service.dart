@@ -136,7 +136,7 @@ class AuthService {
     return _currentUser;
   }
 
-  static const String _demoId = '3510bc04-8b4c-4d1d-8a5c-250875ae2c30'; // WARLORD
+  static const String _demoId    = '3510bc04-8b4c-4d1d-8a5c-250875ae2c30'; // WARLORD
   static const String _demoEmail = 'demo@user.com';
 
   /// Called once from main.dart after DB init. Idempotent — safe to call

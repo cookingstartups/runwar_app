@@ -193,13 +193,27 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
     final zonesAsync = ref.watch(zonesProvider(city));
 
+    // Build the same revealed-area circles used by _FogLayer so we can
+    // hide zones and CTF pins that sit entirely inside unexplored fog.
+    final runPoints = ref
+        .watch(userRunPointsProvider((userId: userId, city: city)))
+        .valueOrNull ?? const [];
+    final fogCenters = <({LatLng point, double radiusM})>[
+      for (final pt in runPoints) (point: pt, radiusM: 5000),
+      if (_currentPosition != null)
+        (
+          point: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+          radiusM: 1000,
+        ),
+    ];
+
     final mapBody = zonesAsync.when(
       loading: () => _buildMap(context, center, const [],
-          showError: false, city: city, userId: userId),
+          showError: false, city: city, userId: userId, fogCenters: fogCenters),
       error: (e, _) => _buildMap(context, center, const [],
-          showError: true, city: city, userId: userId),
+          showError: true, city: city, userId: userId, fogCenters: fogCenters),
       data: (rows) => _buildMap(context, center, _parseEmission(rows),
-          showError: false, city: city, userId: userId),
+          showError: false, city: city, userId: userId, fogCenters: fogCenters),
     );
 
     return Scaffold(
@@ -324,7 +338,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool showError,
     String city = '',
     String userId = '',
+    List<({LatLng point, double radiusM})> fogCenters = const [],
   }) {
+    // Only render zones whose centroid is inside a revealed fog circle.
+    final visibleZones = fogCenters.isEmpty
+        ? parsed
+        : parsed.where((z) => _isRevealedByFog(_centroid(z.points), fogCenters)).toList();
     return Stack(
       children: [
         FlutterMap(
@@ -339,7 +358,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
             // map-level tap → ray-cast hit-test.
             onTap: (TapPosition tapPos, LatLng latLng) =>
-                _handleMapTap(context, latLng, parsed),
+                _handleMapTap(context, latLng, visibleZones),
           ),
           children: [
             TileLayer(
@@ -349,8 +368,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
               userAgentPackageName: 'app.runwar.runwar_app',
             ),
-            // zone polygon layer.
-            PolygonLayer(polygons: _buildPolygons(parsed)),
+            // zone polygon layer — fog-gated.
+            PolygonLayer(polygons: _buildPolygons(visibleZones)),
             // Live Supabase presence markers (real players).
             if (SupabaseService.instance.isConnected)
               StreamBuilder<List<PlayerPresence>>(
@@ -429,12 +448,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   borderStrokeWidth: 2,
                 ),
               ]),
-            // CTF flag pins from active Supabase events.
+            // CTF flag pins — fog-gated: only render if the pin is revealed.
             if (SupabaseService.instance.isConnected)
               StreamBuilder<List<CtfEvent>>(
                 stream: CtfService.instance.activeEvents,
                 builder: (_, snap) {
-                  final events = snap.data ?? [];
+                  final all = snap.data ?? [];
+                  final events = fogCenters.isEmpty
+                      ? all
+                      : all.where((e) => _isRevealedByFog(e.position, fogCenters)).toList();
                   if (events.isEmpty) return const SizedBox.shrink();
                   return MarkerLayer(
                     markers: events.map((e) {
@@ -778,6 +800,41 @@ Color _hexToColor(String hex) {
   } catch (_) {
     return kAccent;
   }
+}
+
+// ── Fog visibility helpers ───────────────────────────────────────────────────
+
+/// Returns the centroid of a polygon ring (average of all vertices).
+LatLng _centroid(List<LatLng> pts) {
+  if (pts.isEmpty) return const LatLng(0, 0);
+  final lat = pts.fold(0.0, (s, p) => s + p.latitude) / pts.length;
+  final lng = pts.fold(0.0, (s, p) => s + p.longitude) / pts.length;
+  return LatLng(lat, lng);
+}
+
+/// Haversine distance in metres between two lat/lng points.
+double _haversineM(LatLng a, LatLng b) {
+  const R = 6371000.0;
+  final dLat = (b.latitude - a.latitude) * math.pi / 180;
+  final dLng = (b.longitude - a.longitude) * math.pi / 180;
+  final s = math.sin(dLat / 2) * math.sin(dLat / 2) +
+      math.cos(a.latitude * math.pi / 180) *
+          math.cos(b.latitude * math.pi / 180) *
+          math.sin(dLng / 2) *
+          math.sin(dLng / 2);
+  return 2 * R * math.asin(math.sqrt(s));
+}
+
+/// True if [point] falls inside at least one revealed fog circle.
+/// If [centers] is empty (no runs, no GPS) every point is hidden — fail-closed.
+bool _isRevealedByFog(
+  LatLng point,
+  List<({LatLng point, double radiusM})> centers,
+) {
+  for (final c in centers) {
+    if (_haversineM(point, c.point) <= c.radiusM) return true;
+  }
+  return false;
 }
 
 // ── Countdown badge ───────────────────────────────────────────────────────────
