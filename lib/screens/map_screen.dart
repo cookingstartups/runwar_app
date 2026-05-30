@@ -14,7 +14,9 @@ import '../providers/simulation_provider.dart';
 import '../providers/zones_provider.dart';
 import '../providers/run_recorder_provider.dart';
 import '../services/run_recorder_service.dart';
+import '../services/realtime_presence_service.dart';
 import '../services/rival_mover_service.dart';
+import '../services/supabase_service.dart';
 import '../services/territory_service.dart';
 import '../services/world_reset_service.dart';
 import '../theme.dart';
@@ -437,6 +439,51 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 );
               },
             ),
+            // Live Supabase presence markers (real players, not bots).
+            if (SupabaseService.instance.isConnected)
+              StreamBuilder<List<PlayerPresence>>(
+                stream: RealtimePresenceService.instance.playersStream,
+                builder: (_, snap) {
+                  final players = snap.data ?? [];
+                  if (players.isEmpty) return const SizedBox.shrink();
+                  return MarkerLayer(
+                    markers: players.map((p) {
+                      final color = _hexToColor(p.color);
+                      return Marker(
+                        point: p.position,
+                        width: 70,
+                        height: 40,
+                        child: Column(
+                          children: [
+                            Container(
+                              width: 9,
+                              height: 9,
+                              decoration: BoxDecoration(
+                                color: color,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 1.5),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              p.displayName,
+                              style: TextStyle(
+                                color: color,
+                                fontSize: 7,
+                                fontFamily: 'monospace',
+                                fontWeight: FontWeight.bold,
+                                shadows: const [
+                                  Shadow(color: Colors.black, blurRadius: 4),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  );
+                },
+              ),
             // Live track polyline while recording.
             Consumer(builder: (context, watchRef, _) {
               final recState = watchRef.watch(runRecorderProvider);

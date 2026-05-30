@@ -5,6 +5,7 @@ import 'theme.dart';
 import 'services/database_service.dart';
 import 'services/supabase_service.dart';
 import 'services/auth_service.dart';
+import 'services/realtime_presence_service.dart';
 import 'services/territory_service.dart';
 import 'providers/auth_provider.dart';
 import 'providers/profile_provider.dart';
@@ -25,7 +26,15 @@ Future<void> main() async {
     await DatabaseService.instance.init();
     // Supabase init must run before runApp so isConnected is ready for providers.
     await SupabaseService.instance.init();
-    await AuthService.instance.signInAnonymously();
+    final user = await AuthService.instance.signInAnonymously();
+    if (SupabaseService.instance.isConnected) {
+      final uid = (user['supabase_uid'] as String?) ?? (user['id'] as String);
+      RealtimePresenceService.instance.init(
+        playerId: uid,
+        displayName: (user['username'] as String?) ?? 'RUNNER',
+        color: (user['color'] as String?) ?? '#FF7A00',
+      );
+    }
     await TerritoryService.instance.runDailyDecayIfDue('Valencia');
   } catch (e) {
     runApp(_InitErrorApp(error: e.toString()));
