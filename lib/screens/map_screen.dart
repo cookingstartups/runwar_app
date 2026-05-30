@@ -169,12 +169,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
     }
 
-    // Listen for awaitingClaim state transition and show claim bottom sheet.
+    // Auto-claim immediately when lasso closes — no button press required.
     ref.listen<RecorderState>(runRecorderProvider, (prev, next) {
       if (next == RecorderState.awaitingClaim &&
           prev != RecorderState.awaitingClaim &&
           context.mounted) {
-        _showClaimSheet(context, city);
+        _autoClaim(context, city);
       }
     });
 
@@ -267,66 +267,23 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     // s == awaitingClaim → sheet is isDismissible:false; tap ignored.
   }
 
-  Future<void> _showClaimSheet(BuildContext context, String city) async {
+  Future<void> _autoClaim(BuildContext context, String city) async {
     final auth = ref.read(authProvider);
     final userId = auth.user?['id'] as String?;
     if (userId == null) {
       ref.read(runRecorderProvider.notifier).discard();
       return;
     }
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: kSurface,
-      isDismissible: false,
-      enableDrag: false,
-      builder: (sheetCtx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('CLAIM TERRITORY?', style: displayStyle(size: 22)),
-              const SizedBox(height: 8),
-              Text(
-                'Your run loop will be submitted as a territory claim.',
-                style: bodyStyle(size: 13, color: kFgMuted),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kAccent,
-                  foregroundColor: kBg,
-                  minimumSize: const Size(double.infinity, 48),
-                ),
-                onPressed: () async {
-                  final outcome = await ref
-                      .read(runRecorderProvider.notifier)
-                      .confirmClaim(userId, city);
-                  if (!sheetCtx.mounted) return;
-                  Navigator.of(sheetCtx).pop();
-                  if (!context.mounted) return;
-                  _showResultSnack(context, outcome);
-                },
-                child: const Text('CONFIRM CLAIM'),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: kBorder),
-                  minimumSize: const Size(double.infinity, 48),
-                ),
-                onPressed: () {
-                  ref.read(runRecorderProvider.notifier).discard();
-                  Navigator.of(sheetCtx).pop();
-                },
-                child: const Text('DISCARD'),
-              ),
-            ],
-          ),
-        ),
-      ),
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Claiming territory…'), duration: Duration(seconds: 10)),
     );
+    final outcome = await ref
+        .read(runRecorderProvider.notifier)
+        .confirmClaim(userId, city);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    _showResultSnack(context, outcome);
   }
 
   void _showResultSnack(BuildContext context, ClaimOutcome outcome) {
