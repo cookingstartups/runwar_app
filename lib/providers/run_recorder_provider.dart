@@ -86,6 +86,14 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         closedAt: closedAt,
         zoneId: outcome.affectedZoneId!,
       );
+      // Fire-and-forget: upload GPS samples to Supabase (needed by earn_superpower).
+      unawaited(_uploadGpsSamples(
+        runId: runId,
+        userId: userId,
+        track: track,
+        startedAt: startedAt,
+        closedAt: closedAt,
+      ));
       // Fire-and-forget: check if this run earned a SHIELD superpower.
       unawaited(SuperpowerService.instance.checkAndEarn(runId: runId));
       if (outcome.result == TerritoryResult.disputed) {
@@ -98,6 +106,48 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
 
     svc.discardRun();
     return outcome;
+  }
+
+  /// Batch-uploads GPS track points to Supabase gps_samples.
+  /// Timestamps are interpolated linearly between startedAt and closedAt.
+  /// Fire-and-forget — never throws to caller.
+  Future<void> _uploadGpsSamples({
+    required String runId,
+    required String userId,
+    required List<LatLng> track,
+    required DateTime startedAt,
+    required DateTime closedAt,
+  }) async {
+    if (!SupabaseService.instance.isConnected) return;
+    if (track.isEmpty) return;
+    try {
+      final durationMs =
+          closedAt.millisecondsSinceEpoch - startedAt.millisecondsSinceEpoch;
+      final rows = track.asMap().entries.map((e) {
+        final offsetMs = track.length == 1
+            ? 0
+            : (durationMs * e.key / (track.length - 1)).round();
+        final ts = startedAt
+            .add(Duration(milliseconds: offsetMs))
+            .toUtc()
+            .toIso8601String();
+        return {
+          'run_id': runId,
+          'player_id': userId,
+          'lat': e.value.latitude,
+          'lng': e.value.longitude,
+          'ts': ts,
+          'is_mocked': false,
+        };
+      }).toList();
+
+      await SupabaseService.instance.supabase
+          .from('gps_samples')
+          .insert(rows);
+      debugPrint('[RunRecorder] uploaded ${rows.length} gps_samples for run $runId');
+    } catch (e) {
+      debugPrint('[RunRecorder] gps_samples upload failed: $e');
+    }
   }
 
   Future<void> _insertRun({
