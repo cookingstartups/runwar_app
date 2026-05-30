@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_service.dart';
+import 'realtime_presence_service.dart';
 import '../config/supabase_config.dart';
 
 class CtfEvent {
@@ -32,7 +34,8 @@ class CtfEvent {
 }
 
 /// Listens to ctf_events Realtime channel.
-/// Fires a local notification when a new flag spawns.
+/// Fires a local notification when a new flag spawns within the configured
+/// radius (app_config.ctf_notification_radius_km, default 100 km).
 /// Exposes [activeEvents] stream for the map to render CTF pins.
 class CtfService {
   CtfService._();
@@ -43,6 +46,8 @@ class CtfService {
   final _notifications = FlutterLocalNotificationsPlugin();
 
   bool _notifInit = false;
+  double _notifRadiusKm = 100; // default, overridden by app_config on init
+
   static const _channelId = 'runwar_ctf';
   static const _channelName = 'CTF Events';
 
@@ -50,10 +55,27 @@ class CtfService {
 
   Future<void> init() async {
     if (!SupabaseService.instance.isConnected) return;
+    await _loadConfig();
     await _initNotifications();
     _subscribe();
     // Load any currently active events.
     await _fetchAndEmit();
+  }
+
+  Future<void> _loadConfig() async {
+    try {
+      final rows = await SupabaseService.instance.supabase
+          .from('app_config')
+          .select('value')
+          .eq('key', 'ctf_notification_radius_km')
+          .maybeSingle();
+      if (rows != null) {
+        final raw = rows['value'] as String?;
+        if (raw != null) _notifRadiusKm = double.tryParse(raw) ?? 100;
+      }
+    } catch (e) {
+      debugPrint('[CtfService] config load error: $e (using default $_notifRadiusKm km)');
+    }
   }
 
   Future<void> _initNotifications() async {
@@ -65,6 +87,7 @@ class CtfService {
       final androidImpl = _notifications
           .resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>();
+      await androidImpl?.requestNotificationsPermission();
       await androidImpl?.createNotificationChannel(
         const AndroidNotificationChannel(
           _channelId,
@@ -90,7 +113,7 @@ class CtfService {
             final row = payload.newRecord;
             if (row['is_active'] == true) {
               final event = CtfEvent.fromMap(row);
-              await _fireNotification(event);
+              await _maybeFireNotification(event);
             }
             await _fetchAndEmit();
           },
@@ -100,6 +123,21 @@ class CtfService {
             debugPrint('[CtfService] subscribe error: $error');
           }
         });
+  }
+
+  /// Fires the notification only if the player is within [_notifRadiusKm].
+  Future<void> _maybeFireNotification(CtfEvent event) async {
+    final playerPos = RealtimePresenceService.instance.currentPosition;
+    if (playerPos != null) {
+      final distKm = _haversineKm(
+        playerPos.latitude, playerPos.longitude,
+        event.position.latitude, event.position.longitude,
+      );
+      debugPrint('[CtfService] CTF event ${event.id} — player is ${distKm.toStringAsFixed(1)} km away (radius: ${_notifRadiusKm} km)');
+      if (distKm > _notifRadiusKm) return;
+    }
+    // No GPS fix yet → fire anyway (fail-open so first-launch testers aren't silenced).
+    await _fireNotification(event);
   }
 
   Future<void> _fetchAndEmit() async {
@@ -125,7 +163,7 @@ class CtfService {
       await _notifications.show(
         event.hashCode,
         '🚩 FLAG DROPPED in ${event.city}!',
-        'Race to the pin — 30 min to capture it. Reward: 500 credits + BLITZ.',
+        'Race to the pin — capture it within ${event.expiresAt.difference(DateTime.now()).inMinutes} min. Reward: 500 credits + SHIELD.',
         const NotificationDetails(
           android: AndroidNotificationDetails(
             _channelId,
@@ -154,7 +192,7 @@ class CtfService {
     }
   }
 
-  /// Call when user physically reaches the pin (≤50m).
+  /// Call when user physically reaches the pin (≤50 m).
   Future<bool> claimWin(String eventId, LatLng playerPosition) async {
     if (!SupabaseService.instance.isConnected) return false;
     try {
@@ -177,4 +215,16 @@ class CtfService {
     await _channel?.unsubscribe();
     await _controller.close();
   }
+}
+
+// Haversine distance in km.
+double _haversineKm(double lat1, double lng1, double lat2, double lng2) {
+  const R = 6371.0;
+  final dLat = (lat2 - lat1) * math.pi / 180;
+  final dLng = (lng2 - lng1) * math.pi / 180;
+  final a = math.pow(math.sin(dLat / 2), 2) +
+      math.cos(lat1 * math.pi / 180) *
+          math.cos(lat2 * math.pi / 180) *
+          math.pow(math.sin(dLng / 2), 2);
+  return R * 2 * math.asin(math.sqrt(a));
 }

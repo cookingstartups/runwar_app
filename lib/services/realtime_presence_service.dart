@@ -50,6 +50,9 @@ class RealtimePresenceService {
 
   Stream<List<PlayerPresence>> get playersStream => _controller.stream;
 
+  /// Last known GPS position for this player. Null until first GPS fix.
+  LatLng? get currentPosition => _currentPosition;
+
   String? _myPlayerId;
   String? _myDisplayName;
   String? _myColor;
