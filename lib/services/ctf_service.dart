@@ -203,18 +203,21 @@ class CtfService {
             final event = CtfEvent.fromMap(row);
 
             // Stage 1: pre_announced just flipped → fire 1-hour warning.
-            if (old['pre_announced'] == false &&
+            // Use != true (not == false) so null oldRecord still triggers.
+            if (old['pre_announced'] != true &&
                 row['pre_announced'] == true &&
                 row['is_active'] == false) {
               await _maybeFirePreAnnouncementNotification(event);
             }
 
             // Stage 2: is_active just flipped → fire "FLAG DROPPED".
-            if (old['is_active'] == false && row['is_active'] == true) {
+            // Use != true so null oldRecord (no REPLICA IDENTITY) still triggers.
+            if (old['is_active'] != true && row['is_active'] == true) {
               await _maybeFireDroppedNotification(event);
             }
 
             // Stage 3: winner_id just set → broadcast capture to all participants.
+            // Guard with old value to avoid re-firing on subsequent updates.
             if (old['winner_id'] == null && row['winner_id'] != null) {
               await _maybeFireCapturedNotification(
                 event,
