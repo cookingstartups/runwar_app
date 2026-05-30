@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../services/ctf_service.dart';
 import '../theme.dart';
 import 'map_screen.dart';
 import 'profile_screen.dart';
@@ -14,13 +13,6 @@ class MainShell extends ConsumerStatefulWidget {
 
 class _MainShellState extends ConsumerState<MainShell> {
   int _selectedIndex = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    // Init CTF subscription once the user is authenticated and in the shell.
-    CtfService.instance.init();
-  }
 
   @override
   Widget build(BuildContext context) {

@@ -6,6 +6,7 @@ import 'services/database_service.dart';
 import 'services/supabase_service.dart';
 import 'services/auth_service.dart';
 import 'services/realtime_presence_service.dart';
+import 'services/ctf_service.dart';
 import 'services/territory_service.dart';
 import 'providers/auth_provider.dart';
 import 'providers/profile_provider.dart';
@@ -27,6 +28,7 @@ Future<void> main() async {
     // Supabase init must run before runApp so isConnected is ready for providers.
     await SupabaseService.instance.init();
     final user = await AuthService.instance.signInAnonymously();
+    debugPrint('[main] isConnected=${SupabaseService.instance.isConnected} session=${SupabaseService.instance.supabase.auth.currentSession?.user.id}');
     if (SupabaseService.instance.isConnected) {
       final uid = (user['supabase_uid'] as String?) ?? (user['id'] as String);
       RealtimePresenceService.instance.init(
@@ -34,6 +36,7 @@ Future<void> main() async {
         displayName: (user['username'] as String?) ?? 'RUNNER',
         color: (user['color'] as String?) ?? '#FF7A00',
       );
+      await CtfService.instance.init();
     }
     await TerritoryService.instance.runDailyDecayIfDue('Valencia');
   } catch (e) {
