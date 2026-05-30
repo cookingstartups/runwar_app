@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,12 +9,14 @@ import 'package:latlong2/latlong.dart';
 
 import '../providers/auth_provider.dart';
 import '../providers/profile_provider.dart';
+import '../providers/runs_provider.dart';
+import '../providers/simulation_provider.dart';
 import '../providers/zones_provider.dart';
 import '../providers/run_recorder_provider.dart';
 import '../services/run_recorder_service.dart';
 import '../services/rival_mover_service.dart';
-import '../services/simulation_service.dart';
 import '../services/territory_service.dart';
+import '../services/world_reset_service.dart';
 import '../theme.dart';
 
 // ── City center lookup ───────────────────────────────────────────────────────
@@ -66,7 +69,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   final MapController _mapController = MapController();
   StreamSubscription<Position>? _posSub;
   Position? _currentPosition;
-
   @override
   void initState() {
     super.initState();
@@ -93,6 +95,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       });
     }
     // denied / deniedForever / unableToDetermine → no stream, no dot, no SnackBar
+    // Auto-start time-lapse so bots visibly populate the world on first open.
+    ref.read(simProvider.notifier).startTimeLapse();
   }
 
   @override
@@ -114,6 +118,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   Widget build(BuildContext context) {
     final (:city, :center) = _resolveCenter();
+    final auth = ref.watch(authProvider);
+    final userId = (auth.user?['id'] as String?) ?? '';
+
+    // Show spinner while profile is resolving.
+    if (city.isEmpty) {
+      return const Scaffold(
+        backgroundColor: kBg,
+        body: Center(
+          child: CircularProgressIndicator(color: kAccent, strokeWidth: 2),
+        ),
+      );
+    }
 
     // Listen for awaitingClaim state transition and show claim bottom sheet.
     ref.listen<RecorderState>(runRecorderProvider, (prev, next) {
@@ -124,22 +140,55 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       }
     });
 
-    // city == '' → empty zone layer, no DB query.
-    final zonesAsync = city.isEmpty
-        ? const AsyncValue<List<Map<String, dynamic>>>.data([])
-        : ref.watch(zonesProvider(city));
+    final zonesAsync = ref.watch(zonesProvider(city));
+    final simState = ref.watch(simProvider);
+
+    final mapBody = zonesAsync.when(
+      loading: () => _buildMap(context, center, const [],
+          showError: false, city: city, userId: userId),
+      error: (e, _) => _buildMap(context, center, const [],
+          showError: true, city: city, userId: userId),
+      data: (rows) => _buildMap(context, center, _parseEmission(rows),
+          showError: false, city: city, userId: userId),
+    );
 
     return Scaffold(
       backgroundColor: kBg,
-      body: zonesAsync.when(
-        loading: () =>
-            _buildMap(context, center, const [], showError: false, city: city),
-        error: (e, _) =>
-            _buildMap(context, center, const [], showError: true, city: city),
-        data: (rows) => _buildMap(context, center, _parseEmission(rows),
-            showError: false, city: city),
-      ),
-      // FAB always visible regardless of GPS/zone state.
+      body: Stack(children: [
+        mapBody,
+        // Simulation button lives at Scaffold level — outside the map's
+        // gesture tree — so taps are never absorbed by FlutterMap.
+        Positioned(
+          bottom: 100,
+          left: 16,
+          child: GestureDetector(
+            onTap: () => _toggleSimulation(city),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: simState.isRunning
+                    ? const Color(0xFFFF7A00).withValues(alpha: 0.25)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFFF7A00), width: 1.5),
+              ),
+              child: Text(
+                simState.isRunning
+                    ? '⏩ SIMULATING…'
+                    : (simState.timeLapseComplete ? '▶ REPLAY' : '▶ START SIM'),
+                style: TextStyle(
+                  fontFamily: 'BebasNeue',
+                  fontSize: 13,
+                  color: simState.isRunning
+                      ? Colors.white
+                      : const Color(0xFFFF7A00),
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ]),
       floatingActionButton: _buildFab(context, city),
     );
   }
@@ -147,16 +196,39 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Widget _buildFab(BuildContext context, String city) {
     final recState = ref.watch(runRecorderProvider);
     final isRecording = recState == RecorderState.recording;
-    return GestureDetector(
-      onLongPress: isRecording
-          ? () => ref.read(runRecorderProvider.notifier).forceClose()
-          : null,
-      child: FloatingActionButton(
-        backgroundColor: kAccent,
-        foregroundColor: kBg,
-        onPressed: () => _onFabTap(context, recState, city),
-        child: Icon(isRecording ? Icons.stop : Icons.play_arrow),
-      ),
+    final hasGps = _currentPosition != null;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // ── Locate button — centres map on player's GPS position ──
+        FloatingActionButton.small(
+          heroTag: 'locate',
+          backgroundColor: kSurface,
+          foregroundColor: hasGps ? kFg : kFgMuted,
+          onPressed: hasGps
+              ? () => _mapController.move(
+                    LatLng(_currentPosition!.latitude,
+                        _currentPosition!.longitude),
+                    _kInitialZoom,
+                  )
+              : null,
+          child: const Icon(Icons.my_location, size: 20),
+        ),
+        const SizedBox(height: 12),
+        // ── Run recording FAB ──────────────────────────────────────
+        GestureDetector(
+          onLongPress: isRecording
+              ? () => ref.read(runRecorderProvider.notifier).forceClose()
+              : null,
+          child: FloatingActionButton(
+            heroTag: 'run_rec',
+            backgroundColor: kAccent,
+            foregroundColor: kBg,
+            onPressed: () => _onFabTap(context, recState, city),
+            child: Icon(isRecording ? Icons.stop : Icons.play_arrow),
+          ),
+        ),
+      ],
     );
   }
 
@@ -265,15 +337,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   void _toggleSimulation(String city) {
-    final sim = SimulationService.instance;
-    final mover = RivalMoverService.instance;
-    if (sim.isRunning.value) {
-      sim.stop();
-      mover.stop();
-    } else {
-      sim.start(onZoneChange: (c) => ref.invalidate(zonesProvider(c)));
-      mover.start();
-    }
+    final notifier = ref.read(simProvider.notifier);
+    notifier.resetTimeLapse();
+    notifier.startTimeLapse();
   }
 
   Widget _buildMap(
@@ -282,6 +348,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     List<_ParsedZone> parsed, {
     required bool showError,
     String city = '',
+    String userId = '',
   }) {
     return Stack(
       children: [
@@ -290,6 +357,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           options: MapOptions(
             initialCenter: center,
             initialZoom: _kInitialZoom,
+            interactionOptions: const InteractionOptions(
+              flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+            ),
             // map-level tap → ray-cast hit-test.
             onTap: (TapPosition tapPos, LatLng latLng) =>
                 _handleMapTap(context, latLng, parsed),
@@ -304,6 +374,25 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
             // zone polygon layer.
             PolygonLayer(polygons: _buildPolygons(parsed)),
+            // Bot running tails — coloured polylines drawn below the dot markers.
+            ValueListenableBuilder<Map<String, List<LatLng>>>(
+              valueListenable: RivalMoverService.instance.tails,
+              builder: (_, tailMap, __) {
+                final polylines = tailMap.entries
+                    .where((e) => e.value.length >= 2)
+                    .map((e) {
+                      final info = RivalMoverService.rivalInfo[e.key];
+                      final color = _hexToColor(info?['color'] ?? '#FF7A00');
+                      return Polyline(
+                        points: e.value,
+                        strokeWidth: 3.0,
+                        color: color.withValues(alpha: 0.55),
+                      );
+                    })
+                    .toList();
+                return PolylineLayer(polylines: polylines);
+              },
+            ),
             // Animated rival runner dots.
             ValueListenableBuilder<Map<String, LatLng>>(
               valueListenable: RivalMoverService.instance.positions,
@@ -321,18 +410,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       child: Column(
                         children: [
                           Container(
-                            width: 14,
-                            height: 14,
+                            width: 7,
+                            height: 7,
                             decoration: BoxDecoration(
                               color: color,
                               shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 1.5),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: color.withValues(alpha: 0.6),
-                                  blurRadius: 6,
-                                ),
-                              ],
                             ),
                           ),
                           const SizedBox(height: 2),
@@ -388,7 +470,28 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   borderStrokeWidth: 2,
                 ),
               ]),
+            // Fog-of-war overlay — drawn last so it sits above all map layers.
+            _FogLayer(
+              userId: userId,
+              city: city,
+              currentPosition: _currentPosition,
+            ),
           ],
+        ),
+        // Overlays above map — must be listed after FlutterMap in the Stack.
+        Positioned(
+          top: 8,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: _CountdownBadge(city: city),
+          ),
+        ),
+        const Positioned(
+          top: 48,
+          left: 16,
+          right: 16,
+          child: _EventBanner(),
         ),
         // error banner above map; does not block FAB or tiles.
         if (showError)
@@ -404,44 +507,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 child: Text(
                   'Could not load zone data',
                   style: bodyStyle(size: 13, color: kFg),
-                ),
-              ),
-            ),
-          ),
-        // Simulation toggle — top-right corner.
-        if (city.isNotEmpty)
-          Positioned(
-            top: 48,
-            right: 12,
-            child: ValueListenableBuilder<bool>(
-              valueListenable: SimulationService.instance.isRunning,
-              builder: (context, running, _) => GestureDetector(
-                onTap: () => _toggleSimulation(city),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: kSurface.withValues(alpha: 0.9),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: running ? kAccent : kBorder,
-                      width: 1,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        running ? Icons.pause : Icons.play_arrow,
-                        size: 14,
-                        color: running ? kAccent : kFgMuted,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        running ? 'SIM' : 'SIM',
-                        style: monoStyle().copyWith(fontSize: 10),
-                      ),
-                    ],
-                  ),
                 ),
               ),
             ),
@@ -618,4 +683,201 @@ Color _hexToColor(String hex) {
   } catch (_) {
     return kAccent;
   }
+}
+
+// ── Countdown badge ───────────────────────────────────────────────────────────
+
+class _CountdownBadge extends StatelessWidget {
+  final String city;
+  const _CountdownBadge({required this.city});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<Duration>(
+      stream: WorldResetService.instance.countdown(city),
+      builder: (context, snap) {
+        final d = snap.data;
+        if (d == null || d == Duration.zero) return const SizedBox.shrink();
+        final h = d.inHours.toString().padLeft(2, '0');
+        final m = (d.inMinutes % 60).toString().padLeft(2, '0');
+        final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.65),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            'RESET IN $h:$m:$s',
+            style: const TextStyle(
+              fontFamily: 'SpaceGrotesk',
+              fontSize: 12,
+              color: Colors.white70,
+              letterSpacing: 1.2,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Event banner ──────────────────────────────────────────────────────────────
+
+class _EventBanner extends ConsumerStatefulWidget {
+  const _EventBanner();
+  @override
+  ConsumerState<_EventBanner> createState() => _EventBannerState();
+}
+
+class _EventBannerState extends ConsumerState<_EventBanner> {
+  String? _text;
+  Timer? _fadeTimer;
+
+  @override
+  void dispose() {
+    _fadeTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(
+      simProvider.select((s) => s.latestEvent),
+      (_, event) {
+        if (event == null) return;
+        _fadeTimer?.cancel();
+        setState(() => _text = event);
+        _fadeTimer = Timer(const Duration(milliseconds: 2500), () {
+          if (mounted) setState(() => _text = null);
+        });
+      },
+    );
+
+    if (_text == null) return const SizedBox.shrink();
+    return AnimatedOpacity(
+      opacity: 1.0,
+      duration: const Duration(milliseconds: 400),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.75),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            _text!,
+            style: const TextStyle(
+              fontFamily: 'SpaceGrotesk',
+              fontSize: 13,
+              color: Colors.white,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Fog-of-war overlay ────────────────────────────────────────────────────────
+
+/// Map layer drawn on top of all other layers.
+/// Covers the entire viewport with a dark overlay. Visibility holes are punched:
+///   • Along the player's past run tracks (400 m radius per sampled point).
+///   • At the live GPS position (500 m radius).
+/// Full fog is shown until the player's first run or GPS fix.
+class _FogLayer extends ConsumerWidget {
+  final String userId;
+  final String city;
+  final Position? currentPosition;
+
+  const _FogLayer({
+    required this.userId,
+    required this.city,
+    required this.currentPosition,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final camera = MapCamera.of(context);
+    final runPoints = ref
+        .watch(userRunPointsProvider((userId: userId, city: city)))
+        .valueOrNull ?? const [];
+
+    final centers = <({LatLng point, double radiusM})>[];
+
+    // Past run tracks → 5 km visibility around each sampled position.
+    for (final pt in runPoints) {
+      centers.add((point: pt, radiusM: 5000));
+    }
+
+    // Live GPS → 1 km immediate visibility even before any run is saved.
+    if (currentPosition != null) {
+      centers.add((
+        point: LatLng(currentPosition!.latitude, currentPosition!.longitude),
+        radiusM: 1000,
+      ));
+    }
+
+    // Cap for performance (200 holes is plenty for any realistic run history).
+    final capped = centers.length > 200 ? centers.sublist(0, 200) : centers;
+
+    return CustomPaint(
+      painter: _FogPainter(camera: camera, centers: capped),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _FogPainter extends CustomPainter {
+  final MapCamera camera;
+  final List<({LatLng point, double radiusM})> centers;
+
+  const _FogPainter({required this.camera, required this.centers});
+
+  static double _metersPerPixel(double latDeg, double zoom) =>
+      156543.03392 * math.cos(latDeg * math.pi / 180.0) / math.pow(2, zoom);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.saveLayer(Offset.zero & size, Paint());
+
+    // Dark fog covering the entire map.
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..color = const Color(0xCC08060F) // ~80% opacity
+        ..style = PaintingStyle.fill,
+    );
+
+    // Punch circular holes using dstOut blend mode.
+    for (final c in centers) {
+      final screenPt = camera.latLngToScreenPoint(c.point);
+      final mpp = _metersPerPixel(c.point.latitude, camera.zoom);
+      final radiusPx = (c.radiusM / mpp).clamp(20.0, 4000.0);
+      final center = Offset(screenPt.x.toDouble(), screenPt.y.toDouble());
+
+      // Feathered gradient so the edge blends softly (300 m blend zone).
+      final blendFraction = (1 - (300 / c.radiusM).clamp(0.0, 0.35));
+      final gradient = RadialGradient(
+        colors: const [Colors.black, Colors.black, Colors.transparent],
+        stops: [0.0, blendFraction, 1.0],
+      );
+      canvas.drawCircle(
+        center,
+        radiusPx,
+        Paint()
+          ..blendMode = BlendMode.dstOut
+          ..shader = gradient.createShader(
+            Rect.fromCircle(center: center, radius: radiusPx),
+          ),
+      );
+    }
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_FogPainter old) => true;
 }

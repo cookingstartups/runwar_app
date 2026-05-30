@@ -5,6 +5,8 @@ import 'package:latlong2/latlong.dart';
 import 'package:sqflite/sqflite.dart';
 import 'database_service.dart';
 import 'zones_service.dart';
+import 'supabase_service.dart';
+import '../config/supabase_config.dart';
 
 enum TerritoryResult { claimed, conquered, disputed, failed }
 
@@ -19,6 +21,55 @@ class TerritoryService {
   static final TerritoryService instance = TerritoryService._();
 
   static const bool kDemoMode = true;
+
+  // ── Supabase Edge Function path ───────────────────────────────────────────
+
+  /// Call when Supabase is connected. Delegates claim validation to the
+  /// claim_territory Edge Function (speed gate, teleport check, lasso, H3).
+  /// Falls back to null on any error so the caller can retry locally.
+  Future<ClaimOutcome?> claimViaEdgeFunction(
+    List<LatLng> track,
+    String city,
+  ) async {
+    if (!SupabaseService.instance.isConnected) return null;
+
+    final coords =
+        track.map((p) => [p.longitude, p.latitude]).toList();
+    final geoJson = {
+      'type': 'LineString',
+      'coordinates': coords,
+    };
+
+    try {
+      final response =
+          await SupabaseService.instance.supabase.functions.invoke(
+        SupabaseConfig.fnClaimTerritory,
+        body: {
+          'track': geoJson,
+          'city': city,
+        },
+      );
+
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null) return null;
+
+      final result = data['result'] as String?;
+      final zoneId = data['zone_id'] as String?;
+
+      return ClaimOutcome(
+        switch (result) {
+          'claimed' => TerritoryResult.claimed,
+          'conquered' => TerritoryResult.conquered,
+          'disputed' => TerritoryResult.disputed,
+          _ => TerritoryResult.failed,
+        },
+        zoneId,
+      );
+    } catch (e) {
+      debugPrint('[TerritoryService] claimViaEdgeFunction error: $e');
+      return null;
+    }
+  }
 
   /// Grace period before decay starts: 15s demo, 72h production.
   static Duration get kDecayGracePeriod =>

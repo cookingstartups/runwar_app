@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 import '../services/run_recorder_service.dart';
 import '../services/territory_service.dart';
+import '../services/supabase_service.dart';
 import '../services/database_service.dart';
+import 'runs_provider.dart';
 import 'zones_provider.dart';
 
 final runRecorderProvider =
@@ -58,7 +60,16 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     final startedAt = svc.startedAt;
     final closedAt = svc.closedAt ?? DateTime.now().toUtc();
 
-    final outcome =
+    // Try server-side claim first (anti-cheat, Realtime sync).
+    // Falls back to local evaluation when offline.
+    ClaimOutcome? outcome;
+    if (SupabaseService.instance.isConnected) {
+      outcome = await TerritoryService.instance.claimViaEdgeFunction(
+        track,
+        city,
+      );
+    }
+    outcome ??=
         await TerritoryService.instance.evaluateClaim(userId, city, track);
 
     if (outcome.result != TerritoryResult.failed &&
@@ -77,6 +88,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         unawaited(_NotificationGateway.fireDispute(city));
       }
       _ref.invalidate(zonesProvider(city));
+      _ref.invalidate(userRunPointsProvider((userId: userId, city: city)));
     }
 
     svc.discardRun();

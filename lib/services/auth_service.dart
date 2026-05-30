@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'database_service.dart';
+import 'supabase_service.dart';
 
 class AuthService {
   AuthService._();
@@ -9,6 +10,72 @@ class AuthService {
 
   // In-memory session map. Lost on process kill.
   Map<String, dynamic>? _currentUser;
+
+  /// Anonymous sign-in for PoC alpha testers.
+  /// Uses Supabase anonymous auth when connected; falls back to a local UUID.
+  /// Creates SQLite user+profile with invited_at set so the route guard passes.
+  /// Idempotent — safe to call on every app launch.
+  Future<Map<String, dynamic>> signInAnonymously() async {
+    final db = DatabaseService.instance.db;
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+
+    // Get (or create) the Supabase anonymous session.
+    final supabaseUid = await SupabaseService.instance.signIn();
+
+    // Use Supabase UID when connected; otherwise generate a stable local UUID.
+    final localId = supabaseUid ?? _uuidV4();
+
+    // Check if this device already has a local profile.
+    final existing = await db.query(
+      'users',
+      where: 'id = ?',
+      whereArgs: [localId],
+      limit: 1,
+    );
+
+    if (existing.isNotEmpty) {
+      _currentUser = {
+        'id': localId,
+        'email': existing.first['email'] as String? ?? '',
+        'created_at': existing.first['created_at'] as String? ?? nowIso,
+        if (supabaseUid != null) 'supabase_uid': supabaseUid,
+      };
+      return _currentUser!;
+    }
+
+    // First launch — create user + profile.
+    final shortId = localId.replaceAll('-', '').substring(0, 6).toUpperCase();
+    final username = 'RUNNER-$shortId';
+    final email = '${localId.substring(0, 8)}@runwar.anon';
+
+    await db.transaction((txn) async {
+      await txn.insert('users', {
+        'id': localId,
+        'email': email,
+        'password': '',
+        'created_at': nowIso,
+      });
+      await txn.insert('profiles', {
+        'id': localId,
+        'username': username,
+        'city': 'Valencia',
+        'color': '#FF7A00',
+        'influence_level': 1,
+        'invited_at': nowIso, // bypasses waitlist gate for PoC
+        'is_tester': 1,
+        'created_at': nowIso,
+      });
+    });
+
+    _currentUser = {
+      'id': localId,
+      'email': email,
+      'created_at': nowIso,
+      if (supabaseUid != null) 'supabase_uid': supabaseUid,
+    };
+    debugPrint('[AuthService] anonymous sign-in complete: $username ($localId)');
+    return _currentUser!;
+  }
 
   /// Inserts one `users` row + one `profiles` row in a transaction.
   /// Returns the new user map (id/email/created_at) or null on duplicate email.
@@ -32,6 +99,7 @@ class AuthService {
           'color': '#FF7A00',
           'influence_level': 1,
           'invited_at': null,
+          'is_tester': 0,
           'created_at': nowIso,
         });
       });
@@ -97,6 +165,7 @@ class AuthService {
             'color': u['color'],
             'influence_level': u['influence'],
             'invited_at': nowIso,
+            'is_tester': 0,
             'created_at': nowIso,
           });
         }
@@ -116,21 +185,77 @@ class AuthService {
       });
     }
 
+    // Seed WARLORD's historical runs separately so it also runs for existing
+    // installs where zones are already seeded but the runs table was added later.
+    final existingRuns = await db.query('runs',
+        where: 'user_id = ?', whereArgs: [_demoId], limit: 1);
+    if (existingRuns.isEmpty) {
+      for (final r in _demoRuns) {
+        await db.insert('runs', {
+          'id': _uuidV4(),
+          'user_id': _demoId,
+          'city': 'Valencia',
+          'track_json': r,
+          'started_at': nowIso,
+          'closed_at': nowIso,
+          'zone_id': null,
+          'created_at': nowIso,
+        });
+      }
+    }
+
     _currentUser = {'id': _demoId, 'email': _demoEmail, 'created_at': nowIso};
     return _currentUser!;
   }
+
+  // WARLORD's pre-seeded run tracks — one loop per territory cluster.
+  // Coordinates: [lng, lat] per RFC 7946.
+  static const List<String> _demoRuns = [
+    // City centre loop — Ayuntamiento + El Carmen + Mercado Central
+    '{"type":"LineString","coordinates":[[-0.3780,39.4690],[-0.3765,39.4688],[-0.3748,39.4692],[-0.3744,39.4703],[-0.3748,39.4714],[-0.3762,39.4718],[-0.3780,39.4752],[-0.3800,39.4753],[-0.3820,39.4745],[-0.3820,39.4728],[-0.3808,39.4722],[-0.3790,39.4719],[-0.3775,39.4723],[-0.3768,39.4735],[-0.3775,39.4748],[-0.3795,39.4750],[-0.3808,39.4743],[-0.3810,39.4730],[-0.3800,39.4726]]}',
+    // Xàtiva corridor + Ruzafa Sur
+    '{"type":"LineString","coordinates":[[-0.3820,39.4660],[-0.3800,39.4656],[-0.3775,39.4655],[-0.3755,39.4660],[-0.3755,39.4672],[-0.3768,39.4677],[-0.3728,39.4616],[-0.3710,39.4613],[-0.3694,39.4619],[-0.3692,39.4631],[-0.3700,39.4642],[-0.3720,39.4644],[-0.3728,39.4636]]}',
+    // Jardines del Real — north corridor
+    '{"type":"LineString","coordinates":[[-0.3688,39.4762],[-0.3675,39.4759],[-0.3660,39.4760],[-0.3654,39.4770],[-0.3654,39.4784],[-0.3660,39.4800],[-0.3672,39.4807],[-0.3685,39.4806],[-0.3690,39.4795],[-0.3690,39.4778],[-0.3688,39.4762]]}',
+    // Ciudad de las Artes — southeast
+    '{"type":"LineString","coordinates":[[-0.3548,39.4528],[-0.3525,39.4525],[-0.3497,39.4534],[-0.3492,39.4548],[-0.3498,39.4562],[-0.3520,39.4566],[-0.3542,39.4558],[-0.3548,39.4542],[-0.3548,39.4528]]}',
+  ];
 
   // ── Demo world data (lng first — RFC 7946) ───────────────────────────────────
 
   static const _r1 = '00000000-r001-r001-r001-000000000001'; // RUZAFA_KID
   static const _r2 = '00000000-r002-r002-r002-000000000002'; // BEACH_RAT
   static const _r3 = '00000000-r003-r003-r003-000000000003'; // NORTE
+  static const _r4 = '00000000-r004-r004-r004-000000000004';
+  static const _r5 = '00000000-r005-r005-r005-000000000005';
+  static const _r6 = '00000000-r006-r006-r006-000000000006';
+  static const _r7 = '00000000-r007-r007-r007-000000000007';
+  static const _r8  = '00000000-r008-r008-r008-000000000008';
+  static const _r9  = '00000000-r009-r009-r009-000000000009';
+  static const _r10 = '00000000-r010-r010-r010-000000000010';
+  static const _r11 = '00000000-r011-r011-r011-000000000011';
+  static const _r12 = '00000000-r012-r012-r012-000000000012';
+  static const _r13 = '00000000-r013-r013-r013-000000000013';
+  static const _r14 = '00000000-r014-r014-r014-000000000014';
+  static const _r15 = '00000000-r015-r015-r015-000000000015';
 
   static const List<Map<String, dynamic>> _allDemoUsers = [
     {'id': _demoId,  'email': _demoEmail,        'username': 'WARLORD',    'color': '#FF2D7A', 'influence': 8},
-    {'id': _r1,      'email': 'r1@runwar.demo',  'username': 'NIÑO RATA',   'color': '#FF8500', 'influence': 5},
-    {'id': _r2,      'email': 'r2@runwar.demo',  'username': 'TU EX',      'color': '#00CFFF', 'influence': 6},
-    {'id': _r3,      'email': 'r3@runwar.demo',  'username': 'CHAVO DEL 8','color': '#39FF6B', 'influence': 4},
+    {'id': _r1,  'email': 'r1@runwar.demo',  'username': 'SOCARRAT',  'color': '#FF8500', 'influence': 5},
+    {'id': _r2,  'email': 'r2@runwar.demo',  'username': 'MASCLETÀ',  'color': '#00CFFF', 'influence': 6},
+    {'id': _r3,  'email': 'r3@runwar.demo',  'username': 'FALLERA',   'color': '#39FF6B', 'influence': 4},
+    {'id': _r4,  'email': 'r4@runwar.demo',  'username': 'PILOTARI',  'color': '#FF4500', 'influence': 3},
+    {'id': _r5,  'email': 'r5@runwar.demo',  'username': 'TARONGERO', 'color': '#FFD700', 'influence': 4},
+    {'id': _r6,  'email': 'r6@runwar.demo',  'username': 'NINOT',     'color': '#FF69B4', 'influence': 3},
+    {'id': _r7,  'email': 'r7@runwar.demo',  'username': 'SEQUIERO',  'color': '#9370DB', 'influence': 3},
+    {'id': _r8,  'email': 'r8@runwar.demo',  'username': 'ARROSSER',  'color': '#20B2AA', 'influence': 3},
+    {'id': _r9,  'email': 'r9@runwar.demo',  'username': 'MICALET',   'color': '#FF1493', 'influence': 3},
+    {'id': _r10, 'email': 'r10@runwar.demo', 'username': 'LLOTGER',   'color': '#00CED1', 'influence': 3},
+    {'id': _r11, 'email': 'r11@runwar.demo', 'username': 'BUNYOLERO', 'color': '#ADFF2F', 'influence': 3},
+    {'id': _r12, 'email': 'r12@runwar.demo', 'username': 'HORCHATER', 'color': '#FF6347', 'influence': 3},
+    {'id': _r13, 'email': 'r13@runwar.demo', 'username': 'SOROLLÀ',   'color': '#BA55D3', 'influence': 3},
+    {'id': _r14, 'email': 'r14@runwar.demo', 'username': 'BARQUERO',  'color': '#F0E68C', 'influence': 3},
+    {'id': _r15, 'email': 'r15@runwar.demo', 'username': 'PESCAILLA', 'color': '#7FFFD4', 'influence': 3},
   ];
 
   static const List<Map<String, dynamic>> _allDemoZones = [
@@ -189,7 +314,86 @@ class AuthService {
     // Challenging WARLORD's El Carmen
     {'owner': _r3, 'status': 'disputed', 'influence': 4,
      'geom': '{"type":"Polygon","coordinates":[[[-0.3808,39.4718],[-0.3790,39.4715],[-0.3778,39.4720],[-0.3775,39.4730],[-0.3780,39.4742],[-0.3796,39.4745],[-0.3810,39.4740],[-0.3808,39.4718]]]}'},
+
+    // ── PILOTARI — Garrofera/Patraix south-west: elongated WE oval ~1.3 km ─
+    {'owner': _r4, 'status': 'owned', 'influence': 3,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.4020,39.4545],[-0.3975,39.4510],[-0.3920,39.4495],[-0.3868,39.4502],[-0.3840,39.4528],[-0.3842,39.4562],[-0.3878,39.4585],[-0.3935,39.4592],[-0.3988,39.4580],[-0.4020,39.4558],[-0.4020,39.4545]]]}'},
+
+    // ── TARONGERO — Mestalla stadium district: compact rounded square ~800m
+    {'owner': _r5, 'status': 'owned', 'influence': 4,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3655,39.4720],[-0.3615,39.4712],[-0.3568,39.4718],[-0.3540,39.4740],[-0.3542,39.4768],[-0.3572,39.4788],[-0.3618,39.4795],[-0.3658,39.4782],[-0.3675,39.4758],[-0.3665,39.4733],[-0.3655,39.4720]]]}'},
+
+    // ── NINOT — Quatre Carreres south-east: wide shallow rectangle ~1.4 km
+    {'owner': _r6, 'status': 'owned', 'influence': 3,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3792,39.4488],[-0.3728,39.4462],[-0.3658,39.4458],[-0.3608,39.4472],[-0.3592,39.4502],[-0.3600,39.4538],[-0.3648,39.4562],[-0.3718,39.4568],[-0.3778,39.4555],[-0.3810,39.4528],[-0.3812,39.4498],[-0.3792,39.4488]]]}'},
+
+    // ── SEQUIERO — Nazaret port: tall narrow NS strip ~1.5 km ────────────
+    {'owner': _r7, 'status': 'owned', 'influence': 3,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3345,39.4550],[-0.3302,39.4540],[-0.3268,39.4522],[-0.3248,39.4488],[-0.3252,39.4445],[-0.3282,39.4412],[-0.3325,39.4408],[-0.3358,39.4428],[-0.3368,39.4468],[-0.3362,39.4512],[-0.3348,39.4542],[-0.3345,39.4550]]]}'},
+
+    // ── ARROSSER — Trinitat/Poblets Marítims: diagonal coastal strip ~1.3 km
+    {'owner': _r8, 'status': 'owned', 'influence': 3,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3438,39.4730],[-0.3392,39.4718],[-0.3345,39.4702],[-0.3308,39.4682],[-0.3288,39.4652],[-0.3292,39.4622],[-0.3322,39.4610],[-0.3368,39.4618],[-0.3410,39.4638],[-0.3450,39.4660],[-0.3462,39.4692],[-0.3455,39.4718],[-0.3438,39.4730]]]}'},
+
+    // ── MICALET — El Carmen old town: small irregular pentagon ~600m ──────
+    {'owner': _r9, 'status': 'owned', 'influence': 3,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3858,39.4782],[-0.3820,39.4775],[-0.3788,39.4752],[-0.3778,39.4728],[-0.3788,39.4706],[-0.3818,39.4698],[-0.3852,39.4702],[-0.3872,39.4722],[-0.3875,39.4750],[-0.3865,39.4772],[-0.3858,39.4782]]]}'},
+
+    // ── LLOTGER — Extramurs west of old town: medium irregular ~1.0 km ───
+    {'owner': _r10, 'status': 'owned', 'influence': 3,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3968,39.4712],[-0.3918,39.4695],[-0.3872,39.4685],[-0.3838,39.4668],[-0.3830,39.4638],[-0.3848,39.4612],[-0.3895,39.4598],[-0.3948,39.4602],[-0.3990,39.4622],[-0.4008,39.4652],[-0.4000,39.4688],[-0.3978,39.4708],[-0.3968,39.4712]]]}'},
+
+    // ── BUNYOLERO — Jesús south: compact slightly trapezoidal ~900m ───────
+    {'owner': _r11, 'status': 'owned', 'influence': 3,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3862,39.4578],[-0.3812,39.4558],[-0.3758,39.4545],[-0.3718,39.4548],[-0.3700,39.4572],[-0.3705,39.4600],[-0.3742,39.4620],[-0.3798,39.4628],[-0.3848,39.4620],[-0.3872,39.4598],[-0.3862,39.4578]]]}'},
+
+    // ── HORCHATER — Campanar NW: wide trapezoid ~1.4 km ──────────────────
+    {'owner': _r12, 'status': 'owned', 'influence': 3,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.4100,39.4932],[-0.4038,39.4905],[-0.3968,39.4885],[-0.3918,39.4868],[-0.3898,39.4838],[-0.3918,39.4808],[-0.3972,39.4792],[-0.4042,39.4792],[-0.4112,39.4818],[-0.4150,39.4852],[-0.4148,39.4898],[-0.4118,39.4922],[-0.4100,39.4932]]]}'},
+
+    // ── SOROLLÀ — Algirós east-central: irregular pentagon ~1.1 km ───────
+    {'owner': _r13, 'status': 'owned', 'influence': 3,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3595,39.4858],[-0.3545,39.4848],[-0.3490,39.4835],[-0.3445,39.4808],[-0.3428,39.4772],[-0.3440,39.4738],[-0.3482,39.4715],[-0.3542,39.4708],[-0.3595,39.4720],[-0.3630,39.4750],[-0.3628,39.4798],[-0.3608,39.4838],[-0.3595,39.4858]]]}'},
+
+    // ── BARQUERO — Patraix south-west: roughly square ~1.1 km ───────────
+    {'owner': _r14, 'status': 'owned', 'influence': 3,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.4025,39.4648],[-0.3972,39.4628],[-0.3918,39.4612],[-0.3868,39.4608],[-0.3845,39.4580],[-0.3858,39.4550],[-0.3898,39.4532],[-0.3952,39.4528],[-0.4012,39.4542],[-0.4055,39.4572],[-0.4062,39.4610],[-0.4042,39.4638],[-0.4025,39.4648]]]}'},
+
+    // ── PESCAILLA — Cabanyal/Grau coastal: tall NS strip ~1.5 km ─────────
+    {'owner': _r15, 'status': 'owned', 'influence': 3,
+     'geom': '{"type":"Polygon","coordinates":[[[-0.3338,39.4752],[-0.3298,39.4740],[-0.3265,39.4718],[-0.3248,39.4692],[-0.3248,39.4662],[-0.3265,39.4632],[-0.3295,39.4610],[-0.3330,39.4602],[-0.3362,39.4612],[-0.3380,39.4642],[-0.3380,39.4678],[-0.3368,39.4712],[-0.3352,39.4740],[-0.3338,39.4752]]]}'},
   ];
+
+  Future<bool> redeemTesterCode(String code, String userId) async {
+    final upper = code.trim().toUpperCase();
+    final validCodes = List.generate(50, (i) => 'FOUNDING-VLCR-${(i + 1).toString().padLeft(3, '0')}').toSet();
+    if (!validCodes.contains(upper)) return false;
+
+    final db = DatabaseService.instance.db;
+    final existing = await db.query(
+      'redeemed_codes',
+      where: 'code = ?',
+      whereArgs: [upper],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) return false;
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.transaction((txn) async {
+      await txn.insert('redeemed_codes', {
+        'code': upper,
+        'redeemed_at': now,
+        'user_id': userId,
+      });
+      await txn.update(
+        'profiles',
+        {'invited_at': now, 'is_tester': 1},
+        where: 'id = ?',
+        whereArgs: [userId],
+      );
+    });
+    return true;
+  }
 
   /// Idempotent — clears in-memory session only. SQLite untouched.
   Future<void> signOut() async {

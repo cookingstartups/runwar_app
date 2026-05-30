@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/onboarding_provider.dart';
@@ -316,14 +315,40 @@ class _Step3Color extends ConsumerWidget {
           ),
           const SizedBox(height: 24),
           Center(
-            child: BlockPicker(
-              pickerColor: selectedColor,
-              availableColors: _kPaletteColors,
-              onColorChanged: (c) {
-                ref
-                    .read(onboardingProvider.notifier)
-                    .setColor(_colorToHex(c));
-              },
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 12,
+              runSpacing: 12,
+              children: _kPaletteColors.map((color) {
+                final isSelected = color == selectedColor;
+                return GestureDetector(
+                  onTap: () => ref
+                      .read(onboardingProvider.notifier)
+                      .setColor(_colorToHex(color)),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color:
+                            isSelected ? Colors.white : Colors.transparent,
+                        width: 3,
+                      ),
+                      boxShadow: isSelected
+                          ? [
+                              BoxShadow(
+                                color: color.withValues(alpha: 0.6),
+                                blurRadius: 8,
+                              ),
+                            ]
+                          : [],
+                    ),
+                  ),
+                );
+              }).toList(),
             ),
           ),
           if (state.error != null) ...[

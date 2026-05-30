@@ -39,11 +39,14 @@ dependencies:
   # GPS (declared now; tracking in sibling spec)
   geolocator: ^11.0.0
 
-  # Profile customization (declared now; UI in sibling spec)
-  flutter_colorpicker: ^1.1.0
-
   # Local notifications (declared now; payloads in sibling spec)
   flutter_local_notifications: ^17.1.2
+
+  # Supabase
+  supabase_flutter: ^2.5.0
+
+  # Device UUID for anonymous auth
+  uuid: ^4.4.0
 
 dev_dependencies:
   flutter_test:
