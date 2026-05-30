@@ -1,14 +1,15 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'services/fcm_service.dart';
 
 import 'theme.dart';
 import 'services/database_service.dart';
 import 'services/supabase_service.dart';
-import 'services/auth_service.dart';
-import 'services/realtime_presence_service.dart';
-import 'services/ctf_service.dart';
 import 'services/territory_service.dart';
 import 'providers/auth_provider.dart';
+import 'services/auth_service.dart';
 import 'providers/profile_provider.dart';
 import 'providers/run_recorder_provider.dart';
 import 'screens/splash_screen.dart';
@@ -22,22 +23,19 @@ import 'screens/main_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(handleBackgroundMessage);
   try {
     await initLocalNotifications();
     await DatabaseService.instance.init();
+    await AuthService.instance.seedDemoDataIfNeeded();
     // Supabase init must run before runApp so isConnected is ready for providers.
     await SupabaseService.instance.init();
-    final user = await AuthService.instance.signInAnonymously();
+    // Establish Supabase anon session for DB/Realtime access.
+    // Do NOT create a local SQLite user here — let the login screen handle auth.
+    await SupabaseService.instance.signIn();
     debugPrint('[main] isConnected=${SupabaseService.instance.isConnected} session=${SupabaseService.instance.supabase.auth.currentSession?.user.id}');
-    if (SupabaseService.instance.isConnected) {
-      final uid = (user['supabase_uid'] as String?) ?? (user['id'] as String);
-      RealtimePresenceService.instance.init(
-        playerId: uid,
-        displayName: (user['username'] as String?) ?? 'RUNNER',
-        color: (user['color'] as String?) ?? '#FF7A00',
-      );
-      await CtfService.instance.init();
-    }
+    // Presence + CTF init deferred to MainShell (after login provides profile data).
     await TerritoryService.instance.runDailyDecayIfDue('Valencia');
   } catch (e) {
     runApp(_InitErrorApp(error: e.toString()));

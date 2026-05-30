@@ -114,8 +114,6 @@ class AuthService {
   }
 
   /// Returns user map on credential match; null otherwise. Never throws.
-  /// Special case: admin@test.com / 123456 seeds a demo user with territory on
-  /// first login (no prior sign-up required).
   Future<Map<String, dynamic>?> signIn(String email, String password) async {
     if (email == 'demo@user.com' && password == '123456') {
       return _signInDemo();
@@ -138,38 +136,48 @@ class AuthService {
     return _currentUser;
   }
 
-  static const String _demoId = '00000000-demo-demo-demo-000000000000';
+  static const String _demoId = '3510bc04-8b4c-4d1d-8a5c-250875ae2c30'; // WARLORD
   static const String _demoEmail = 'demo@user.com';
 
-  Future<Map<String, dynamic>> _signInDemo() async {
+  /// Called once from main.dart after DB init. Idempotent — safe to call
+  /// on every launch; users/profiles use INSERT OR IGNORE; zones/runs are
+  /// guarded by an existence check so they are inserted at most once.
+  Future<void> seedDemoDataIfNeeded() async {
     final db = DatabaseService.instance.db;
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
-    final existing = await db.query('users',
-        where: 'id = ?', whereArgs: [_demoId], limit: 1);
+    // Remove any stale rows that share an email with a demo user but have a
+    // different id (prevents UNIQUE email constraint silently blocking insert).
+    for (final u in _allDemoUsers) {
+      await db.delete('users',
+          where: 'email = ? AND id != ?', whereArgs: [u['email'] as String, u['id'] as String]);
+    }
+    // Users + profiles: idempotent via INSERT OR IGNORE on primary key.
+    await db.transaction((txn) async {
+      for (final u in _allDemoUsers) {
+        await txn.insert('users',
+            {'id': u['id'], 'email': u['email'], 'password': '123456', 'created_at': nowIso},
+            conflictAlgorithm: ConflictAlgorithm.ignore);
+        await txn.insert('profiles',
+            {
+              'id': u['id'],
+              'username': u['username'],
+              'city': 'Valencia',
+              'color': u['color'],
+              'influence_level': u['influence'],
+              'invited_at': nowIso,
+              'is_tester': 0,
+              'created_at': nowIso,
+            },
+            conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+    });
 
-    if (existing.isEmpty) {
+    // Zones use random UUIDs — guard with existence check to avoid duplicates.
+    final existingZones = await db.query('zones',
+        where: 'owner_id = ?', whereArgs: [_demoId], limit: 1);
+    if (existingZones.isEmpty) {
       await db.transaction((txn) async {
-        // ── Users + profiles ─────────────────────────────────────────────────
-        for (final u in _allDemoUsers) {
-          await txn.insert('users', {
-            'id': u['id'],
-            'email': u['email'],
-            'password': '123456',
-            'created_at': nowIso,
-          });
-          await txn.insert('profiles', {
-            'id': u['id'],
-            'username': u['username'],
-            'city': 'Valencia',
-            'color': u['color'],
-            'influence_level': u['influence'],
-            'invited_at': nowIso,
-            'is_tester': 0,
-            'created_at': nowIso,
-          });
-        }
-        // ── Zones ────────────────────────────────────────────────────────────
         for (final z in _allDemoZones) {
           await txn.insert('zones', {
             'id': _uuidV4(),
@@ -185,8 +193,7 @@ class AuthService {
       });
     }
 
-    // Seed WARLORD's historical runs separately so it also runs for existing
-    // installs where zones are already seeded but the runs table was added later.
+    // Seed WARLORD runs separately (runs table added after initial schema).
     final existingRuns = await db.query('runs',
         where: 'user_id = ?', whereArgs: [_demoId], limit: 1);
     if (existingRuns.isEmpty) {
@@ -203,9 +210,19 @@ class AuthService {
         });
       }
     }
+  }
 
-    _currentUser = {'id': _demoId, 'email': _demoEmail, 'created_at': nowIso};
-    return _currentUser!;
+  Future<Map<String, dynamic>?> _signInDemo() async {
+    final db = DatabaseService.instance.db;
+    final rows = await db.query('users',
+        where: 'id = ?', whereArgs: [_demoId], limit: 1);
+    if (rows.isEmpty) return null;
+    _currentUser = {
+      'id': _demoId,
+      'email': _demoEmail,
+      'created_at': rows.first['created_at'],
+    };
+    return _currentUser;
   }
 
   // WARLORD's pre-seeded run tracks — one loop per territory cluster.
@@ -223,21 +240,21 @@ class AuthService {
 
   // ── Demo world data (lng first — RFC 7946) ───────────────────────────────────
 
-  static const _r1 = '00000000-r001-r001-r001-000000000001'; // RUZAFA_KID
-  static const _r2 = '00000000-r002-r002-r002-000000000002'; // BEACH_RAT
-  static const _r3 = '00000000-r003-r003-r003-000000000003'; // NORTE
-  static const _r4 = '00000000-r004-r004-r004-000000000004';
-  static const _r5 = '00000000-r005-r005-r005-000000000005';
-  static const _r6 = '00000000-r006-r006-r006-000000000006';
-  static const _r7 = '00000000-r007-r007-r007-000000000007';
-  static const _r8  = '00000000-r008-r008-r008-000000000008';
-  static const _r9  = '00000000-r009-r009-r009-000000000009';
-  static const _r10 = '00000000-r010-r010-r010-000000000010';
-  static const _r11 = '00000000-r011-r011-r011-000000000011';
-  static const _r12 = '00000000-r012-r012-r012-000000000012';
-  static const _r13 = '00000000-r013-r013-r013-000000000013';
-  static const _r14 = '00000000-r014-r014-r014-000000000014';
-  static const _r15 = '00000000-r015-r015-r015-000000000015';
+  static const _r1  = '60b22465-ccbd-424b-a694-397f1c4468a5'; // SOCARRAT
+  static const _r2  = 'a49c23d7-6450-43ac-901d-81a6b1f0313a'; // MASCLETÀ
+  static const _r3  = 'f52d155c-ea42-459c-905d-2f4f9b2b4919'; // FALLERA
+  static const _r4  = 'ff6061b1-1f20-4cdc-ac56-17b1b3b08dac'; // PILOTARI
+  static const _r5  = 'f42c552f-65f3-4520-8cac-bc3a83040e32'; // TARONGERO
+  static const _r6  = '0d6a1a29-5944-4b58-9d0e-1466a352302c'; // NINOT
+  static const _r7  = '824d028e-1c0f-4703-ac61-c923d051c03f'; // SEQUIERO
+  static const _r8  = 'ad9be266-849f-4869-837c-30eaa133a40f'; // ARROSSER
+  static const _r9  = '14500c6b-940f-4092-9f20-8b65b5896b64'; // MICALET
+  static const _r10 = '706dc524-a47a-43b6-a819-452b6ffd3363'; // LLOTGER
+  static const _r11 = '67a16f98-c0f6-4e9f-8ae1-1e3b18382edf'; // BUNYOLERO
+  static const _r12 = 'ed21d846-3c96-4af0-892c-311064a6884d'; // HORCHATER
+  static const _r13 = 'cceae57c-48c8-49b1-94b0-59c51a18484f'; // SOROLLÀ
+  static const _r14 = 'c8b1e559-6785-40f6-84cd-dae6176f0ceb'; // BARQUERO
+  static const _r15 = '0cab1f1a-21b3-46f8-a367-a309337ea4bf'; // PESCAILLA
 
   static const List<Map<String, dynamic>> _allDemoUsers = [
     {'id': _demoId,  'email': _demoEmail,        'username': 'WARLORD',    'color': '#FF2D7A', 'influence': 8},
