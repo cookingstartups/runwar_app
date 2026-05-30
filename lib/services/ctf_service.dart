@@ -14,12 +14,14 @@ class CtfEvent {
     required this.city,
     required this.position,
     required this.expiresAt,
+    this.startsAt,
   });
 
   final String id;
   final String city;
   final LatLng position;
   final DateTime expiresAt;
+  final DateTime? startsAt;
 
   factory CtfEvent.fromMap(Map<String, dynamic> m) => CtfEvent(
         id: m['id'] as String,
@@ -30,13 +32,20 @@ class CtfEvent {
         ),
         expiresAt: DateTime.tryParse(m['expires_at'] as String? ?? '') ??
             DateTime.now().add(const Duration(minutes: 30)),
+        startsAt: m['starts_at'] != null
+            ? DateTime.tryParse(m['starts_at'] as String)
+            : null,
       );
 }
 
-/// Listens to ctf_events Realtime channel.
-/// Fires a local notification when a new flag spawns within the configured
-/// radius (app_config.ctf_notification_radius_km, default 100 km).
-/// Exposes [activeEvents] stream for the map to render CTF pins.
+/// Listens to ctf_events Realtime channel (INSERT + UPDATE).
+///
+/// Two-stage notification lifecycle:
+///   Stage 1 — pre_announced flip (false→true): "flag drops in ~60 min" warning.
+///   Stage 2 — is_active flip (false→true): "FLAG DROPPED" alert.
+///
+/// Legacy events (starts_at IS NULL, is_active=true on INSERT) skip Stage 1.
+/// Notification radius gated by app_config.ctf_notification_radius_km (default 100 km).
 class CtfService {
   CtfService._();
   static final CtfService instance = CtfService._();
@@ -46,7 +55,7 @@ class CtfService {
   final _notifications = FlutterLocalNotificationsPlugin();
 
   bool _notifInit = false;
-  double _notifRadiusKm = 100; // default, overridden by app_config on init
+  double _notifRadiusKm = 100;
 
   static const _channelId = 'runwar_ctf';
   static const _channelName = 'CTF Events';
@@ -59,7 +68,6 @@ class CtfService {
     await _loadConfig();
     await _initNotifications();
     _subscribe();
-    // Load any currently active events.
     await _fetchAndEmit();
     debugPrint('[CtfService] init complete — radius=${_notifRadiusKm}km notifInit=$_notifInit');
   }
@@ -76,7 +84,7 @@ class CtfService {
         if (raw != null) _notifRadiusKm = double.tryParse(raw) ?? 100;
       }
     } catch (e) {
-      debugPrint('[CtfService] config load error: $e (using default $_notifRadiusKm km)');
+      debugPrint('[CtfService] config load error: $e');
     }
   }
 
@@ -108,6 +116,7 @@ class CtfService {
   void _subscribe() {
     _channel = SupabaseService.instance.supabase
         .channel(SupabaseConfig.channelCtf)
+        // ── INSERT: legacy immediate-drop events (starts_at IS NULL) ──────────
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
@@ -115,31 +124,43 @@ class CtfService {
           callback: (payload) async {
             debugPrint('[CtfService] INSERT received: ${payload.newRecord}');
             final row = payload.newRecord;
-            if (row['is_active'] == true) {
+            // Only notify if the flag is already active (no scheduled delay).
+            if (row['is_active'] == true && row['starts_at'] == null) {
               final event = CtfEvent.fromMap(row);
-              await _maybeFireNotification(event);
+              await _maybeFireDroppedNotification(event);
             }
+            await _fetchAndEmit();
+          },
+        )
+        // ── UPDATE: pg_cron flips pre_announced or is_active ─────────────────
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'ctf_events',
+          callback: (payload) async {
+            debugPrint('[CtfService] UPDATE received: ${payload.newRecord}');
+            final old = payload.oldRecord;
+            final row = payload.newRecord;
+            final event = CtfEvent.fromMap(row);
+
+            // Stage 1: pre_announced just flipped → fire 1-hour warning.
+            if (old['pre_announced'] == false &&
+                row['pre_announced'] == true &&
+                row['is_active'] == false) {
+              await _maybeFirePreAnnouncementNotification(event);
+            }
+
+            // Stage 2: is_active just flipped → fire "FLAG DROPPED".
+            if (old['is_active'] == false && row['is_active'] == true) {
+              await _maybeFireDroppedNotification(event);
+            }
+
             await _fetchAndEmit();
           },
         )
         .subscribe((status, error) {
           debugPrint('[CtfService] channel status=$status error=$error');
         });
-  }
-
-  /// Fires the notification only if the player is within [_notifRadiusKm].
-  Future<void> _maybeFireNotification(CtfEvent event) async {
-    final playerPos = RealtimePresenceService.instance.currentPosition;
-    if (playerPos != null) {
-      final distKm = _haversineKm(
-        playerPos.latitude, playerPos.longitude,
-        event.position.latitude, event.position.longitude,
-      );
-      debugPrint('[CtfService] CTF event ${event.id} — player is ${distKm.toStringAsFixed(1)} km away (radius: ${_notifRadiusKm} km)');
-      if (distKm > _notifRadiusKm) return;
-    }
-    // No GPS fix yet → fire anyway (fail-open so first-launch testers aren't silenced).
-    await _fireNotification(event);
   }
 
   Future<void> _fetchAndEmit() async {
@@ -159,14 +180,50 @@ class CtfService {
     }
   }
 
-  Future<void> _fireNotification(CtfEvent event) async {
-    debugPrint('[CtfService] _fireNotification called — notifInit=$_notifInit event=${event.id}');
+  // ── Notification helpers ────────────────────────────────────────────────────
+
+  bool _withinRadius(CtfEvent event) {
+    final playerPos = RealtimePresenceService.instance.currentPosition;
+    if (playerPos == null) return true; // fail-open: no GPS fix yet
+    final distKm = _haversineKm(
+      playerPos.latitude, playerPos.longitude,
+      event.position.latitude, event.position.longitude,
+    );
+    debugPrint('[CtfService] ${event.id} — player ${distKm.toStringAsFixed(1)} km (radius ${_notifRadiusKm} km)');
+    return distKm <= _notifRadiusKm;
+  }
+
+  Future<void> _maybeFirePreAnnouncementNotification(CtfEvent event) async {
+    if (!_withinRadius(event)) return;
+    await _showNotification(
+      id: event.hashCode ^ 1,
+      title: '🔔 FLAG DROPS SOON in ${event.city}!',
+      body: 'A flag drops in ${event.city} in ~60 min — get your running shoes on.',
+    );
+  }
+
+  Future<void> _maybeFireDroppedNotification(CtfEvent event) async {
+    if (!_withinRadius(event)) return;
+    final minsLeft = event.expiresAt.difference(DateTime.now()).inMinutes;
+    await _showNotification(
+      id: event.hashCode,
+      title: '🚩 FLAG DROPPED in ${event.city}!',
+      body: 'Race to the pin — capture it within $minsLeft min. Reward: 500 credits + SHIELD.',
+    );
+  }
+
+  Future<void> _showNotification({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    debugPrint('[CtfService] _showNotification id=$id title=$title');
     if (!_notifInit) return;
     try {
       await _notifications.show(
-        event.hashCode,
-        '🚩 FLAG DROPPED in ${event.city}!',
-        'Race to the pin — capture it within ${event.expiresAt.difference(DateTime.now()).inMinutes} min. Reward: 500 credits + SHIELD.',
+        id,
+        title,
+        body,
         const NotificationDetails(
           android: AndroidNotificationDetails(
             _channelId,
@@ -182,7 +239,8 @@ class CtfService {
     }
   }
 
-  /// Call when user taps "Join" on the CTF map pin.
+  // ── Public API ──────────────────────────────────────────────────────────────
+
   Future<bool> joinEvent(String eventId) async {
     if (!SupabaseService.instance.isConnected) return false;
     try {
@@ -195,7 +253,6 @@ class CtfService {
     }
   }
 
-  /// Call when user physically reaches the pin (≤50 m).
   Future<bool> claimWin(String eventId, LatLng playerPosition) async {
     if (!SupabaseService.instance.isConnected) return false;
     try {
