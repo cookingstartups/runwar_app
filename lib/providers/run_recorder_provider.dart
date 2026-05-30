@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import '../services/run_recorder_service.dart';
 import '../services/territory_service.dart';
 import '../services/supabase_service.dart';
+import '../services/superpower_service.dart';
 import '../services/database_service.dart';
 import 'runs_provider.dart';
 import 'zones_provider.dart';
@@ -75,7 +76,9 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     if (outcome.result != TerritoryResult.failed &&
         outcome.affectedZoneId != null &&
         startedAt != null) {
+      final runId = _uuidV4();
       await _insertRun(
+        runId: runId,
         userId: userId,
         city: city,
         track: track,
@@ -83,6 +86,8 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         closedAt: closedAt,
         zoneId: outcome.affectedZoneId!,
       );
+      // Fire-and-forget: check if this run earned a SHIELD superpower.
+      unawaited(SuperpowerService.instance.checkAndEarn(runId: runId));
       if (outcome.result == TerritoryResult.disputed) {
         // Fire-and-forget — never propagates to caller.
         unawaited(_NotificationGateway.fireDispute(city));
@@ -96,6 +101,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   }
 
   Future<void> _insertRun({
+    required String runId,
     required String userId,
     required String city,
     required List<LatLng> track,
@@ -106,7 +112,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     final db = DatabaseService.instance.db;
     final nowIso = DateTime.now().toUtc().toIso8601String();
     await db.insert('runs', {
-      'id': _uuidV4(),
+      'id': runId,
       'user_id': userId,
       'city': city,
       'track_json': _encodeLineString(track),

@@ -14,8 +14,10 @@ import '../providers/simulation_provider.dart';
 import '../providers/zones_provider.dart';
 import '../providers/run_recorder_provider.dart';
 import '../services/run_recorder_service.dart';
+import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
 import '../services/rival_mover_service.dart';
+import '../services/superpower_service.dart';
 import '../services/supabase_service.dart';
 import '../services/territory_service.dart';
 import '../services/world_reset_service.dart';
@@ -74,6 +76,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   void initState() {
     super.initState();
+    SuperpowerService.instance.onShieldEarned = (grant) {
+      if (mounted) _showShieldEarnedModal(grant);
+    };
     // request permission once at mount; use addPostFrameCallback
     // so the OS dialog appears after the first frame paints.
     WidgetsBinding.instance.addPostFrameCallback((_) => _initLocation());
@@ -103,8 +108,44 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   @override
   void dispose() {
+    SuperpowerService.instance.onShieldEarned = null;
     _posSub?.cancel();
     super.dispose();
+  }
+
+  void _showShieldEarnedModal(SuperpowerGrant grant) {
+    final expiryMins = grant.expiresAt.difference(DateTime.now()).inMinutes;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('🛡️ SHIELD EARNED', style: TextStyle(color: Color(0xFFFF7A00), fontSize: 20, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
+            const SizedBox(height: 8),
+            Text('All your zones are now protected for $expiryMins min.',
+                textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+            const SizedBox(height: 16),
+            Text('Activate 1 extra charge for ${grant.creditsToActivate} credits?',
+                textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF7A00)),
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('CLOSE', style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Resolves the user's city and corresponding map center from the profile.
@@ -517,6 +558,43 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   borderStrokeWidth: 2,
                 ),
               ]),
+            // CTF flag pins from active Supabase events.
+            if (SupabaseService.instance.isConnected)
+              StreamBuilder<List<CtfEvent>>(
+                stream: CtfService.instance.activeEvents,
+                builder: (_, snap) {
+                  final events = snap.data ?? [];
+                  if (events.isEmpty) return const SizedBox.shrink();
+                  return MarkerLayer(
+                    markers: events.map((e) {
+                      return Marker(
+                        point: e.position,
+                        width: 80,
+                        height: 60,
+                        child: GestureDetector(
+                          onTap: () => _showCtfSheet(e),
+                          child: Column(
+                            children: [
+                              const Icon(Icons.flag, color: Colors.redAccent, size: 28),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.black87,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  '${e.expiresAt.difference(DateTime.now()).inMinutes}m',
+                                  style: const TextStyle(color: Colors.redAccent, fontSize: 9, fontFamily: 'monospace'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  );
+                },
+              ),
             // Fog-of-war overlay — drawn last so it sits above all map layers.
             _FogLayer(
               userId: userId,
@@ -641,6 +719,47 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               Text('$influence', style: bodyStyle(size: 16, color: kFg)),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  void _showCtfSheet(CtfEvent event) {
+    final minsLeft = event.expiresAt.difference(DateTime.now()).inMinutes;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('🚩 CAPTURE THE FLAG', style: TextStyle(color: Colors.redAccent, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
+            const SizedBox(height: 8),
+            Text('$minsLeft minutes remaining', style: const TextStyle(color: Colors.white70)),
+            const SizedBox(height: 8),
+            const Text('Walk to the flag pin and claim it within 50m.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 12)),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                onPressed: () async {
+                  Navigator.of(context).pop();
+                  final joined = await CtfService.instance.joinEvent(event.id);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text(joined ? 'You joined the CTF! Race to the pin.' : 'Could not join CTF.'),
+                    backgroundColor: joined ? Colors.redAccent : Colors.grey,
+                  ));
+                },
+                child: const Text('JOIN CTF', style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
+              ),
+            ),
+          ],
         ),
       ),
     );
