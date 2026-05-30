@@ -419,26 +419,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     markers: events.map((e) {
                       return Marker(
                         point: e.position,
-                        width: 80,
-                        height: 60,
-                        child: GestureDetector(
+                        width: 90,
+                        height: 90,
+                        child: _CtfFlagMarker(
+                          event: e,
                           onTap: () => _showCtfSheet(e),
-                          child: Column(
-                            children: [
-                              const Icon(Icons.flag, color: Colors.redAccent, size: 28),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.black87,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  '${e.expiresAt.difference(DateTime.now()).inMinutes}m',
-                                  style: const TextStyle(color: Colors.redAccent, fontSize: 9, fontFamily: 'monospace'),
-                                ),
-                              ),
-                            ],
-                          ),
                         ),
                       );
                     }).toList(),
@@ -788,4 +773,149 @@ class _FogPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_FogPainter old) => true;
+}
+
+// ── CTF flag marker — animated beams + pulsing ring ──────────────────────────
+
+class _CtfFlagMarker extends StatefulWidget {
+  const _CtfFlagMarker({required this.event, required this.onTap});
+  final CtfEvent event;
+  final VoidCallback onTap;
+
+  @override
+  State<_CtfFlagMarker> createState() => _CtfFlagMarkerState();
+}
+
+class _CtfFlagMarkerState extends State<_CtfFlagMarker>
+    with TickerProviderStateMixin {
+  late final AnimationController _pulse;
+  late final AnimationController _rotation;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _rotation = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 5),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    _rotation.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final minsLeft = widget.event.expiresAt.difference(DateTime.now()).inMinutes;
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: SizedBox(
+        width: 90,
+        height: 90,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Rotating beams layer
+            AnimatedBuilder(
+              animation: _rotation,
+              builder: (_, __) => Transform.rotate(
+                angle: _rotation.value * 2 * math.pi,
+                child: AnimatedBuilder(
+                  animation: _pulse,
+                  builder: (_, __) => CustomPaint(
+                    size: const Size(90, 90),
+                    painter: _BeamsPainter(intensity: _pulse.value),
+                  ),
+                ),
+              ),
+            ),
+            // Pulsing outer ring
+            AnimatedBuilder(
+              animation: _pulse,
+              builder: (_, __) => Container(
+                width: 36 + 10 * _pulse.value,
+                height: 36 + 10 * _pulse.value,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFFFF3B3B)
+                        .withOpacity(0.7 - 0.5 * _pulse.value),
+                    width: 1.5,
+                  ),
+                ),
+              ),
+            ),
+            // Flag + timer
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('🚩', style: TextStyle(fontSize: 24)),
+                const SizedBox(height: 2),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black87,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '${minsLeft}m',
+                    style: const TextStyle(
+                      color: Color(0xFFFF3B3B),
+                      fontSize: 9,
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BeamsPainter extends CustomPainter {
+  const _BeamsPainter({required this.intensity});
+  final double intensity; // 0..1 from pulse animation
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    const innerR = 20.0;
+    const outerR = 42.0;
+    const beams = 8;
+
+    final paint = Paint()
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+
+    for (int i = 0; i < beams; i++) {
+      final angle = (2 * math.pi * i) / beams;
+      // Alternate beams slightly different length for visual interest
+      final end = outerR - (i.isOdd ? 6.0 : 0.0);
+      paint.color = const Color(0xFFFF3B3B)
+          .withOpacity((0.3 + 0.5 * intensity) * (i.isEven ? 1.0 : 0.6));
+      canvas.drawLine(
+        Offset(center.dx + math.cos(angle) * innerR,
+            center.dy + math.sin(angle) * innerR),
+        Offset(center.dx + math.cos(angle) * end,
+            center.dy + math.sin(angle) * end),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BeamsPainter old) => old.intensity != intensity;
 }
