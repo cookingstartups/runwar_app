@@ -10,17 +10,14 @@ import 'package:latlong2/latlong.dart';
 import '../providers/auth_provider.dart';
 import '../providers/profile_provider.dart';
 import '../providers/runs_provider.dart';
-import '../providers/simulation_provider.dart';
 import '../providers/zones_provider.dart';
 import '../providers/run_recorder_provider.dart';
 import '../services/run_recorder_service.dart';
 import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
-import '../services/rival_mover_service.dart';
 import '../services/superpower_service.dart';
 import '../services/supabase_service.dart';
 import '../services/territory_service.dart';
-import '../services/world_reset_service.dart';
 import '../theme.dart';
 
 // ── City center lookup ───────────────────────────────────────────────────────
@@ -102,8 +99,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       });
     }
     // denied / deniedForever / unableToDetermine → no stream, no dot, no SnackBar
-    // Auto-start time-lapse so bots visibly populate the world on first open.
-    ref.read(simProvider.notifier).startTimeLapse();
   }
 
   @override
@@ -184,7 +179,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     });
 
     final zonesAsync = ref.watch(zonesProvider(city));
-    final simState = ref.watch(simProvider);
 
     final mapBody = zonesAsync.when(
       loading: () => _buildMap(context, center, const [],
@@ -197,41 +191,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
     return Scaffold(
       backgroundColor: kBg,
-      body: Stack(children: [
-        mapBody,
-        // Simulation button lives at Scaffold level — outside the map's
-        // gesture tree — so taps are never absorbed by FlutterMap.
-        Positioned(
-          bottom: 100,
-          left: 16,
-          child: GestureDetector(
-            onTap: () => _toggleSimulation(city),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: simState.isRunning
-                    ? const Color(0xFFFF7A00).withValues(alpha: 0.25)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFFF7A00), width: 1.5),
-              ),
-              child: Text(
-                simState.isRunning
-                    ? '⏩ SIMULATING…'
-                    : (simState.timeLapseComplete ? '▶ REPLAY' : '▶ START SIM'),
-                style: TextStyle(
-                  fontFamily: 'BebasNeue',
-                  fontSize: 13,
-                  color: simState.isRunning
-                      ? Colors.white
-                      : const Color(0xFFFF7A00),
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ]),
+      body: mapBody,
       floatingActionButton: _buildFab(context, city),
     );
   }
@@ -379,12 +339,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  void _toggleSimulation(String city) {
-    final notifier = ref.read(simProvider.notifier);
-    notifier.resetTimeLapse();
-    notifier.startTimeLapse();
-  }
-
   Widget _buildMap(
     BuildContext context,
     LatLng center,
@@ -417,70 +371,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
             // zone polygon layer.
             PolygonLayer(polygons: _buildPolygons(parsed)),
-            // Bot running tails — coloured polylines drawn below the dot markers.
-            ValueListenableBuilder<Map<String, List<LatLng>>>(
-              valueListenable: RivalMoverService.instance.tails,
-              builder: (_, tailMap, __) {
-                final polylines = tailMap.entries
-                    .where((e) => e.value.length >= 2)
-                    .map((e) {
-                      final info = RivalMoverService.rivalInfo[e.key];
-                      final color = _hexToColor(info?['color'] ?? '#FF7A00');
-                      return Polyline(
-                        points: e.value,
-                        strokeWidth: 3.0,
-                        color: color.withValues(alpha: 0.55),
-                      );
-                    })
-                    .toList();
-                return PolylineLayer(polylines: polylines);
-              },
-            ),
-            // Animated rival runner dots.
-            ValueListenableBuilder<Map<String, LatLng>>(
-              valueListenable: RivalMoverService.instance.positions,
-              builder: (_, positions, __) {
-                if (positions.isEmpty) return const SizedBox.shrink();
-                return MarkerLayer(
-                  markers: positions.entries.map((e) {
-                    final info = RivalMoverService.rivalInfo[e.key];
-                    final color = _hexToColor(info?['color'] ?? '#FF7A00');
-                    final name = info?['name'] ?? '';
-                    return Marker(
-                      point: e.value,
-                      width: 70,
-                      height: 40,
-                      child: Column(
-                        children: [
-                          Container(
-                            width: 7,
-                            height: 7,
-                            decoration: BoxDecoration(
-                              color: color,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            name,
-                            style: TextStyle(
-                              color: color,
-                              fontSize: 7,
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.bold,
-                              shadows: const [
-                                Shadow(color: Colors.black, blurRadius: 4),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                );
-              },
-            ),
-            // Live Supabase presence markers (real players, not bots).
+            // Live Supabase presence markers (real players).
             if (SupabaseService.instance.isConnected)
               StreamBuilder<List<PlayerPresence>>(
                 stream: RealtimePresenceService.instance.playersStream,
@@ -602,21 +493,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               currentPosition: _currentPosition,
             ),
           ],
-        ),
-        // Overlays above map — must be listed after FlutterMap in the Stack.
-        Positioned(
-          top: 8,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: _CountdownBadge(city: city),
-          ),
-        ),
-        const Positioned(
-          top: 48,
-          left: 16,
-          right: 16,
-          child: _EventBanner(),
         ),
         // error banner above map; does not block FAB or tiles.
         if (showError)
@@ -852,99 +728,6 @@ Color _hexToColor(String hex) {
 }
 
 // ── Countdown badge ───────────────────────────────────────────────────────────
-
-class _CountdownBadge extends StatelessWidget {
-  final String city;
-  const _CountdownBadge({required this.city});
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<Duration>(
-      stream: WorldResetService.instance.countdown(city),
-      builder: (context, snap) {
-        final d = snap.data;
-        if (d == null || d == Duration.zero) return const SizedBox.shrink();
-        final h = d.inHours.toString().padLeft(2, '0');
-        final m = (d.inMinutes % 60).toString().padLeft(2, '0');
-        final s = (d.inSeconds % 60).toString().padLeft(2, '0');
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.65),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            'RESET IN $h:$m:$s',
-            style: const TextStyle(
-              fontFamily: 'SpaceGrotesk',
-              fontSize: 12,
-              color: Colors.white70,
-              letterSpacing: 1.2,
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-// ── Event banner ──────────────────────────────────────────────────────────────
-
-class _EventBanner extends ConsumerStatefulWidget {
-  const _EventBanner();
-  @override
-  ConsumerState<_EventBanner> createState() => _EventBannerState();
-}
-
-class _EventBannerState extends ConsumerState<_EventBanner> {
-  String? _text;
-  Timer? _fadeTimer;
-
-  @override
-  void dispose() {
-    _fadeTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    ref.listen(
-      simProvider.select((s) => s.latestEvent),
-      (_, event) {
-        if (event == null) return;
-        _fadeTimer?.cancel();
-        setState(() => _text = event);
-        _fadeTimer = Timer(const Duration(milliseconds: 2500), () {
-          if (mounted) setState(() => _text = null);
-        });
-      },
-    );
-
-    if (_text == null) return const SizedBox.shrink();
-    return AnimatedOpacity(
-      opacity: 1.0,
-      duration: const Duration(milliseconds: 400),
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.75),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            _text!,
-            style: const TextStyle(
-              fontFamily: 'SpaceGrotesk',
-              fontSize: 13,
-              color: Colors.white,
-              letterSpacing: 0.8,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // ── Fog-of-war overlay ────────────────────────────────────────────────────────
 
