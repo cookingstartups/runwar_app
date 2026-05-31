@@ -173,36 +173,25 @@ class AuthService {
 
   /// Returns user map on credential match; null otherwise. Never throws.
   Future<Map<String, dynamic>?> signIn(String email, String password) async {
-    final Map<String, dynamic>? user;
-    if (email == _demoEmail && password == '123456') {
-      user = await _signInDemo();
-    } else {
-      final db = DatabaseService.instance.db;
-      final rows = await db.query(
-        'users',
-        where: 'email = ?',
-        whereArgs: [email],
-        limit: 1,
-      );
-      if (rows.isEmpty) return null;
-      final row = rows.first;
-      if (row['password'] != password) return null;
-      _currentUser = {
-        'id': row['id'],
-        'email': row['email'],
-        'created_at': row['created_at'],
-      };
-      user = _currentUser;
-    }
-    if (user != null) {
-      // Establish Supabase Auth session using the actual form credentials.
-      await SupabaseService.instance.signInWithPassword(email, password);
-    }
-    return user;
+    final db = DatabaseService.instance.db;
+    final rows = await db.query(
+      'users',
+      where: 'email = ?',
+      whereArgs: [email],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    if (row['password'] != password) return null;
+    _currentUser = {
+      'id': row['id'],
+      'email': row['email'],
+      'created_at': row['created_at'],
+    };
+    // Establish Supabase Auth session using the actual form credentials.
+    await SupabaseService.instance.signInWithPassword(email, password);
+    return _currentUser;
   }
-
-  static const String _demoId    = '3510bc04-8b4c-4d1d-8a5c-250875ae2c30'; // WARLORD
-  static const String _demoEmail = 'demo@user.com';
 
   /// Called once from main.dart after DB init. Idempotent — safe to call
   /// on every launch; users/profiles use INSERT OR IGNORE; zones/runs are
@@ -240,7 +229,7 @@ class AuthService {
 
     // Zones use random UUIDs — guard with existence check to avoid duplicates.
     final existingZones = await db.query('zones',
-        where: 'owner_id = ?', whereArgs: [_demoId], limit: 1);
+        where: 'owner_id = ?', whereArgs: [_r1], limit: 1);
     if (existingZones.isEmpty) {
       await db.transaction((txn) async {
         for (final z in _allDemoZones) {
@@ -257,51 +246,8 @@ class AuthService {
         }
       });
     }
-
-    // Seed WARLORD runs separately (runs table added after initial schema).
-    final existingRuns = await db.query('runs',
-        where: 'user_id = ?', whereArgs: [_demoId], limit: 1);
-    if (existingRuns.isEmpty) {
-      for (final r in _demoRuns) {
-        await db.insert('runs', {
-          'id': _uuidV4(),
-          'user_id': _demoId,
-          'city': 'Valencia',
-          'track_json': r,
-          'started_at': nowIso,
-          'closed_at': nowIso,
-          'zone_id': null,
-          'created_at': nowIso,
-        });
-      }
-    }
   }
 
-  Future<Map<String, dynamic>?> _signInDemo() async {
-    final db = DatabaseService.instance.db;
-    final rows = await db.query('users',
-        where: 'id = ?', whereArgs: [_demoId], limit: 1);
-    if (rows.isEmpty) return null;
-    _currentUser = {
-      'id': _demoId,
-      'email': _demoEmail,
-      'created_at': rows.first['created_at'],
-    };
-    return _currentUser;
-  }
-
-  // WARLORD's pre-seeded run tracks — one loop per territory cluster.
-  // Coordinates: [lng, lat] per RFC 7946.
-  static const List<String> _demoRuns = [
-    // City centre loop — Ayuntamiento + El Carmen + Mercado Central
-    '{"type":"LineString","coordinates":[[-0.3780,39.4690],[-0.3765,39.4688],[-0.3748,39.4692],[-0.3744,39.4703],[-0.3748,39.4714],[-0.3762,39.4718],[-0.3780,39.4752],[-0.3800,39.4753],[-0.3820,39.4745],[-0.3820,39.4728],[-0.3808,39.4722],[-0.3790,39.4719],[-0.3775,39.4723],[-0.3768,39.4735],[-0.3775,39.4748],[-0.3795,39.4750],[-0.3808,39.4743],[-0.3810,39.4730],[-0.3800,39.4726]]}',
-    // Xàtiva corridor + Ruzafa Sur
-    '{"type":"LineString","coordinates":[[-0.3820,39.4660],[-0.3800,39.4656],[-0.3775,39.4655],[-0.3755,39.4660],[-0.3755,39.4672],[-0.3768,39.4677],[-0.3728,39.4616],[-0.3710,39.4613],[-0.3694,39.4619],[-0.3692,39.4631],[-0.3700,39.4642],[-0.3720,39.4644],[-0.3728,39.4636]]}',
-    // Jardines del Real — north corridor
-    '{"type":"LineString","coordinates":[[-0.3688,39.4762],[-0.3675,39.4759],[-0.3660,39.4760],[-0.3654,39.4770],[-0.3654,39.4784],[-0.3660,39.4800],[-0.3672,39.4807],[-0.3685,39.4806],[-0.3690,39.4795],[-0.3690,39.4778],[-0.3688,39.4762]]}',
-    // Ciudad de las Artes — southeast
-    '{"type":"LineString","coordinates":[[-0.3548,39.4528],[-0.3525,39.4525],[-0.3497,39.4534],[-0.3492,39.4548],[-0.3498,39.4562],[-0.3520,39.4566],[-0.3542,39.4558],[-0.3548,39.4542],[-0.3548,39.4528]]}',
-  ];
 
   // ── Demo world data (lng first — RFC 7946) ───────────────────────────────────
 
@@ -322,7 +268,6 @@ class AuthService {
   static const _r15 = '0cab1f1a-21b3-46f8-a367-a309337ea4bf'; // PESCAILLA
 
   static const List<Map<String, dynamic>> _allDemoUsers = [
-    {'id': _demoId,  'email': _demoEmail,        'username': 'WARLORD',    'color': '#FF2D7A', 'influence': 8},
     {'id': _r1,  'email': 'r1@runwar.demo',  'username': 'SOCARRAT',  'color': '#FF8500', 'influence': 5},
     {'id': _r2,  'email': 'r2@runwar.demo',  'username': 'MASCLETÀ',  'color': '#00CFFF', 'influence': 6},
     {'id': _r3,  'email': 'r3@runwar.demo',  'username': 'FALLERA',   'color': '#39FF6B', 'influence': 4},
@@ -341,29 +286,6 @@ class AuthService {
   ];
 
   static const List<Map<String, dynamic>> _allDemoZones = [
-    // ── WARLORD — incumbent territories ──────────────────────────────────────
-    // Plaza del Ayuntamiento — under siege by RUZAFA_KID
-    {'owner': _demoId, 'status': 'disputed', 'influence': 8,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3775,39.4695],[-0.3762,39.4692],[-0.3748,39.4696],[-0.3746,39.4706],[-0.3752,39.4712],[-0.3770,39.4711],[-0.3778,39.4703],[-0.3775,39.4695]]]}'},
-    // El Carmen — under siege by NORTE
-    {'owner': _demoId, 'status': 'disputed', 'influence': 8,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3815,39.4728],[-0.3798,39.4726],[-0.3785,39.4730],[-0.3783,39.4742],[-0.3790,39.4750],[-0.3808,39.4752],[-0.3818,39.4745],[-0.3820,39.4735],[-0.3815,39.4728]]]}'},
-    // Ciudad de las Artes — secure
-    {'owner': _demoId, 'status': 'owned', 'influence': 8,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3540,39.4530],[-0.3510,39.4528],[-0.3495,39.4535],[-0.3492,39.4548],[-0.3498,39.4558],[-0.3520,39.4562],[-0.3540,39.4555],[-0.3545,39.4542],[-0.3540,39.4530]]]}'},
-    // Ruzafa Sur — conquered from RUZAFA_KID
-    {'owner': _demoId, 'status': 'owned', 'influence': 6,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3724,39.4618],[-0.3705,39.4615],[-0.3694,39.4620],[-0.3692,39.4632],[-0.3700,39.4640],[-0.3718,39.4642],[-0.3727,39.4636],[-0.3724,39.4618]]]}'},
-    // Xàtiva corridor — EW along C/ Xàtiva toward train station
-    {'owner': _demoId, 'status': 'owned', 'influence': 7,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3818,39.4660],[-0.3790,39.4656],[-0.3768,39.4658],[-0.3755,39.4663],[-0.3755,39.4670],[-0.3768,39.4675],[-0.3790,39.4677],[-0.3818,39.4673],[-0.3818,39.4660]]]}'},
-    // Mercado Central district
-    {'owner': _demoId, 'status': 'owned', 'influence': 7,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3800,39.4725],[-0.3782,39.4722],[-0.3770,39.4728],[-0.3768,39.4738],[-0.3775,39.4746],[-0.3795,39.4748],[-0.3808,39.4742],[-0.3810,39.4730],[-0.3800,39.4725]]]}'},
-    // Jardines del Real — NS park corridor northeast
-    {'owner': _demoId, 'status': 'owned', 'influence': 5,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3682,39.4765],[-0.3668,39.4762],[-0.3658,39.4768],[-0.3655,39.4782],[-0.3660,39.4800],[-0.3672,39.4805],[-0.3685,39.4800],[-0.3688,39.4782],[-0.3685,39.4768],[-0.3682,39.4765]]]}'},
-
     // ── RUZAFA_KID — southern runner ─────────────────────────────────────────
     // Ruzafa Central
     {'owner': _r1, 'status': 'owned', 'influence': 5,
@@ -371,8 +293,8 @@ class AuthService {
     // Gran Vía
     {'owner': _r1, 'status': 'owned', 'influence': 5,
      'geom': '{"type":"Polygon","coordinates":[[[-0.3728,39.4672],[-0.3708,39.4668],[-0.3690,39.4670],[-0.3678,39.4676],[-0.3682,39.4686],[-0.3696,39.4690],[-0.3718,39.4690],[-0.3730,39.4684],[-0.3728,39.4672]]]}'},
-    // Challenging WARLORD's Ayuntamiento
-    {'owner': _r1, 'status': 'disputed', 'influence': 5,
+    // Ayuntamiento fringe
+    {'owner': _r1, 'status': 'owned', 'influence': 5,
      'geom': '{"type":"Polygon","coordinates":[[[-0.3762,39.4688],[-0.3748,39.4686],[-0.3736,39.4690],[-0.3733,39.4700],[-0.3740,39.4710],[-0.3755,39.4712],[-0.3764,39.4704],[-0.3762,39.4688]]]}'},
 
     // ── BEACH_RAT — coastal runner ────────────────────────────────────────────
@@ -393,8 +315,8 @@ class AuthService {
     // Campanar
     {'owner': _r3, 'status': 'owned', 'influence': 4,
      'geom': '{"type":"Polygon","coordinates":[[[-0.3992,39.4808],[-0.3968,39.4805],[-0.3948,39.4810],[-0.3940,39.4822],[-0.3946,39.4836],[-0.3962,39.4842],[-0.3982,39.4840],[-0.3995,39.4828],[-0.3992,39.4808]]]}'},
-    // Challenging WARLORD's El Carmen
-    {'owner': _r3, 'status': 'disputed', 'influence': 4,
+    // El Carmen fringe
+    {'owner': _r3, 'status': 'owned', 'influence': 4,
      'geom': '{"type":"Polygon","coordinates":[[[-0.3808,39.4718],[-0.3790,39.4715],[-0.3778,39.4720],[-0.3775,39.4730],[-0.3780,39.4742],[-0.3796,39.4745],[-0.3810,39.4740],[-0.3808,39.4718]]]}'},
 
     // ── PILOTARI — Garrofera/Patraix south-west: elongated WE oval ~1.3 km ─
