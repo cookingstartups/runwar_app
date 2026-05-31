@@ -24,6 +24,14 @@ import '../widgets/attack_sheet.dart';
 import '../widgets/zone_level_badge.dart';
 import '../widgets/zone_legend.dart';
 import '../widgets/dispute_countdown_label.dart';
+import '../widgets/drop_marker.dart';
+import '../widgets/credits_chip.dart';
+import '../widgets/superpower_inventory_strip.dart';
+// Phase 2 providers — written by @Backend-Developer (design.md §5.1).
+import '../providers/drops/active_drops_provider.dart';
+// Phase 2 repositories — written by @Backend-Developer.
+import '../providers/repositories.dart';
+import '../services/database/drops_repository.dart';
 import '../theme.dart';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -363,6 +371,24 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             MarkerLayer(
               markers: _buildZoneMarkers(visibleZones),
             ),
+            // Phase 2 — drop pickup markers.
+            Consumer(builder: (context, watchRef, _) {
+              final drops = watchRef
+                  .watch(activeDropsProvider(city))
+                  .valueOrNull ?? [];
+              return MarkerLayer(markers: [
+                for (final d in drops)
+                  Marker(
+                    point: LatLng(d.lat, d.lng),
+                    width: 36,
+                    height: 36,
+                    child: DropMarker(
+                      drop: d,
+                      onTap: (drop) => _handleDropTap(context, watchRef, drop),
+                    ),
+                  ),
+              ]);
+            }),
             // Live Supabase presence markers (real players).
             if (SupabaseService.instance.isConnected)
               StreamBuilder<List<PlayerPresence>>(
@@ -517,6 +543,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               );
             },
           ),
+        // Phase 2 — credit balance chip (top-right).
+        Positioned(
+          top: 48,
+          right: 16,
+          child: CreditsChip(playerId: userId),
+        ),
+        // Phase 2 — superpower inventory strip (above ZoneLegend).
+        Positioned(
+          bottom: 80,
+          left: 0,
+          right: 0,
+          child: SuperpowerInventoryStrip(playerId: userId),
+        ),
         // error banner above map; does not block FAB or tiles.
         if (showError)
           Positioned(
@@ -758,6 +797,93 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Phase 2 — handles a tap on a drop marker.
+  /// Shows a bottom sheet with drop info and a Claim button.
+  Future<void> _handleDropTap(
+    BuildContext context,
+    WidgetRef watchRef,
+    Drop drop,
+  ) async {
+    if (!context.mounted) return;
+    final dropTypeLabel = switch (drop.dropType) {
+      'influence_crystal' => 'Influence Crystal',
+      'credits_cache' => 'Credits Cache',
+      'power_core' => 'Power Core',
+      _ => drop.dropType,
+    };
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: kSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetCtx) {
+        return Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                dropTypeLabel.toUpperCase(),
+                style: displayStyle(size: 22, color: kAccent),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Move close to claim this drop.',
+                style: bodyStyle(size: 14, color: kFgMuted),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: () async {
+                  Navigator.of(sheetCtx).pop();
+                  final pos = _currentPosition;
+                  if (pos == null) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('No GPS fix — step outside and try again')),
+                    );
+                    return;
+                  }
+                  try {
+                    final result = await watchRef
+                        .read(dropsRepoProvider)
+                        .claim(drop.id, pos.latitude, pos.longitude);
+                    if (!context.mounted) return;
+                    final msg = switch (result) {
+                      ClaimDropCash(:final credits) =>
+                        'Claimed! +$credits credits',
+                      ClaimDropCrystal(:final newInfluence) =>
+                        'Crystal absorbed! Influence +$newInfluence',
+                      ClaimDropPower(:final grantedPower) =>
+                        '$grantedPower charge unlocked!',
+                      ClaimDropFailure(:final reason) => switch (reason) {
+                          'too_far' => 'You are too far away.',
+                          'already_claimed' => 'Already claimed.',
+                          'expired' => 'Drop has expired.',
+                          'no_zone_nearby' => 'No zone nearby for crystal.',
+                          _ => 'Could not claim: $reason',
+                        },
+                    };
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(msg)),
+                    );
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error: $e')),
+                    );
+                  }
+                },
+                child: const Text('CLAIM'),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
