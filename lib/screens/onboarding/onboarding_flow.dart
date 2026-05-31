@@ -229,7 +229,7 @@ class _Step2CityState extends ConsumerState<_Step2City> {
             style: bodyStyle(size: 14, color: kFgMuted),
           ),
           const SizedBox(height: 32),
-          for (final city in const ['Valencia', 'Madrid', 'La Coma'])
+          for (final city in const ['Valencia', 'Madrid'])
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: OutlinedButton(

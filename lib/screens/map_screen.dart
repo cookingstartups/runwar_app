@@ -25,7 +25,6 @@ import '../theme.dart';
 const Map<String, LatLng> _kCityCenter = {
   'Valencia': LatLng(39.4699, -0.3763),
   'Madrid': LatLng(40.4168, -3.7038),
-  'La Coma': LatLng(39.5540, -0.4050),
 };
 const LatLng _kDefaultCenter = LatLng(40.4168, -3.7038); // Madrid
 const double _kInitialZoom = 16.0;
