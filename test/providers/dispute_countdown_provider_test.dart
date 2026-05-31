@@ -130,14 +130,23 @@ void main() {
       final allEmissions = <Duration>[];
       bool streamDone = false;
 
-      await container
+      // Use a Completer so that the onDone callback fires correctly.
+      // StreamSubscription.asFuture() replaces the onDone handler set in
+      // listen(), so the two cannot be combined — the Completer pattern
+      // keeps them independent.
+      final doneCompleter = Completer<void>();
+
+      container
           .read(disputeCountdownProvider('zone-term'))
           .listen(
             allEmissions.add,
-            onDone: () => streamDone = true,
-          )
-          .asFuture<void>()
-          .timeout(const Duration(seconds: 5));
+            onDone: () {
+              streamDone = true;
+              doneCompleter.complete();
+            },
+          );
+
+      await doneCompleter.future.timeout(const Duration(seconds: 5));
 
       // The final emission must be Duration.zero.
       expect(allEmissions.last, equals(Duration.zero),

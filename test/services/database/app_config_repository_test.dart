@@ -16,7 +16,6 @@
 //     - Returns Err on client failure; callers fall back to CityConfig.valencia
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fake_async/fake_async.dart';
 
 import 'package:runwar_app/services/database/repository.dart';
 import 'package:runwar_app/services/database/app_config_repository.dart';
@@ -42,9 +41,14 @@ Map<String, dynamic> _validConfigRow() => {
 
 /// A controllable AppConfigRepository fake that tracks client call count
 /// and supports cache bypass via invalidateCache().
+///
+/// [clock] defaults to [DateTime.now] so all non-timing tests need no
+/// argument. Pass a controlled closure in the cache-expiry test so the
+/// fake's notion of "now" can be advanced without touching the OS clock.
 class FakeAppConfigRepository implements AppConfigRepository {
   final Map<String, dynamic>? _row;
   final bool _throwOnFetch;
+  final DateTime Function() clock;
 
   int fetchCallCount = 0;
   CityConfig? _cache;
@@ -55,13 +59,15 @@ class FakeAppConfigRepository implements AppConfigRepository {
   FakeAppConfigRepository({
     Map<String, dynamic>? row,
     bool throwOnFetch = false,
+    DateTime Function()? clock,
   })  : _row = row,
-        _throwOnFetch = throwOnFetch;
+        _throwOnFetch = throwOnFetch,
+        clock = clock ?? DateTime.now;
 
   @override
   Future<RepoResult<CityConfig>> loadCityConfig() async {
     // Return cache if still valid.
-    final now = DateTime.now();
+    final now = clock();
     if (_cache != null &&
         _cacheExpiresAt != null &&
         now.isBefore(_cacheExpiresAt!)) {
@@ -158,31 +164,31 @@ void main() {
     });
 
     // GIVEN a 60-second cache window
-    // WHEN the cache expires (simulated with fake_async)
+    // WHEN the cache expires (simulated via an injected clock)
     // THEN the next loadCityConfig call fetches fresh data
-    test('cache expires after 60 seconds and triggers fresh fetch', () {
-      fakeAsync((async) {
-        final repo = FakeAppConfigRepository(row: _validConfigRow());
+    test('cache expires after 60 seconds and triggers fresh fetch', () async {
+      // Controllable clock: start at a fixed instant and advance it manually.
+      var fakeNow = DateTime(2026, 1, 1, 12, 0, 0);
+      final repo = FakeAppConfigRepository(
+        row: _validConfigRow(),
+        clock: () => fakeNow,
+      );
 
-        // First call populates cache.
-        repo.loadCityConfig();
-        async.flushMicrotasks();
-        expect(repo.fetchCallCount, equals(1));
+      // First call populates cache (fakeNow = T+0s).
+      await repo.loadCityConfig();
+      expect(repo.fetchCallCount, equals(1));
 
-        // Advance 59 seconds — still within cache window.
-        async.elapse(const Duration(seconds: 59));
-        repo.loadCityConfig();
-        async.flushMicrotasks();
-        expect(repo.fetchCallCount, equals(1),
-            reason: 'Cache should still be valid at 59s');
+      // Advance 59 seconds — still within cache window.
+      fakeNow = fakeNow.add(const Duration(seconds: 59));
+      await repo.loadCityConfig();
+      expect(repo.fetchCallCount, equals(1),
+          reason: 'Cache should still be valid at 59s');
 
-        // Advance past the 60s expiry.
-        async.elapse(const Duration(seconds: 2));
-        repo.loadCityConfig();
-        async.flushMicrotasks();
-        expect(repo.fetchCallCount, equals(2),
-            reason: 'Cache expired at 60s; should have fetched again');
-      });
+      // Advance past the 60s expiry (T+61s total).
+      fakeNow = fakeNow.add(const Duration(seconds: 2));
+      await repo.loadCityConfig();
+      expect(repo.fetchCallCount, equals(2),
+          reason: 'Cache expired at 60s; should have fetched again');
     });
   });
 }

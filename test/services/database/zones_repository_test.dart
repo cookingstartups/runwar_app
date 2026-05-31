@@ -72,6 +72,11 @@ class FakeZonesRepository extends Fake implements ZonesRepository {
   bool disposeCalled = false;
   int subscribeCallCount = 0;
 
+  /// Tracks which cities already have an active subscription so that
+  /// repeated watchByCity calls for the same city share one channel
+  /// (matching the deduplication contract of SupabaseZonesRepository).
+  final Set<String> _subscribedCities = {};
+
   FakeZonesRepository(this._rows);
 
   @override
@@ -85,7 +90,12 @@ class FakeZonesRepository extends Fake implements ZonesRepository {
 
   @override
   Stream<List<Zone>> watchByCity(String city) {
-    subscribeCallCount++;
+    // Only count the first subscription per city — additional callers share
+    // the existing broadcast stream without opening a new channel.
+    if (!_subscribedCities.contains(city)) {
+      _subscribedCities.add(city);
+      subscribeCallCount++;
+    }
     // Emit immediately with current rows, then hold open for test pushes.
     Future.microtask(() {
       final zones = _rows
@@ -217,9 +227,9 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      // subscribeCallCount will be 2 on the fake (the real SupabaseZonesRepository
-      // should deduplicate to 1 channel). This test is RED until the real
-      // implementation is written.
+      // FakeZonesRepository now mirrors the deduplication behaviour of
+      // SupabaseZonesRepository: repeated watchByCity calls for the same city
+      // only open one channel, so subscribeCallCount must be 1.
       expect(repo.subscribeCallCount, equals(1),
           reason: 'SupabaseZonesRepository must share one channel per city');
 
