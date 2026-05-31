@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/auth_provider.dart';
 import '../../theme.dart';
+import 'invitation_code_screen.dart';
 import 'login_screen.dart';
 
 class SignUpScreen extends ConsumerStatefulWidget {
@@ -45,8 +46,32 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
     }
 
     await ref.read(authProvider.notifier).signUp(email, password);
-    // On success the root _RouteGuard (POC-013) rebuilds to WaitlistGateScreen
-    // (invited_at = null on fresh signUp). No Navigator call here.
+    if (!mounted) return;
+    final state = ref.read(authProvider);
+    final user = state.user;
+    if (user != null && user['invited_at'] == null) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => InvitationCodeScreen(userId: user['id'] as String),
+        ),
+      );
+    }
+    // If invited_at is already set somehow, the route guard handles navigation.
+  }
+
+  Future<void> _signInWithGoogle() async {
+    ref.read(authProvider.notifier).clearError();
+    await ref.read(authProvider.notifier).signInWithGoogle();
+    if (!mounted) return;
+    final state = ref.read(authProvider);
+    final user = state.user;
+    if (user != null && user['invited_at'] == null) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => InvitationCodeScreen(userId: user['id'] as String),
+        ),
+      );
+    }
   }
 
   @override
@@ -132,6 +157,36 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                         ),
                       )
                     : const Text('CREATE ACCOUNT'),
+              ),
+              const SizedBox(height: 16),
+              // ── OR divider ──────────────────────────────────────────────────
+              Row(
+                children: [
+                  const Expanded(child: Divider(color: kBorder, thickness: 1)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text('OR', style: bodyStyle(size: 11, color: kFgFaint)),
+                  ),
+                  const Expanded(child: Divider(color: kBorder, thickness: 1)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // ── Google Sign-In button ───────────────────────────────────────
+              OutlinedButton.icon(
+                onPressed: loading ? null : _signInWithGoogle,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: kFg,
+                  side: const BorderSide(color: kBorder),
+                  minimumSize: const Size(double.infinity, 52),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: bodyStyle(size: 13, color: kFg).copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                icon: const Icon(Icons.g_mobiledata, size: 24, color: kFg),
+                label: const Text('Continue with Google'),
               ),
               const SizedBox(height: 16),
               TextButton(

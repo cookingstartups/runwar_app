@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/auth_provider.dart';
 import '../../theme.dart';
+import 'invitation_code_screen.dart';
 import 'signup_screen.dart';
 import 'forgot_password_screen.dart';
 
@@ -31,6 +32,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // On success authProvider state is updated with the new user.
     // The root _RouteGuard (POC-013) watches authProvider and rebuilds to
     // the destination screen. No Navigator call here.
+  }
+
+  Future<void> _signInWithGoogle() async {
+    await ref.read(authProvider.notifier).signInWithGoogle();
+    if (!mounted) return;
+    final state = ref.read(authProvider);
+    final user = state.user;
+    if (user != null && user['invited_at'] == null) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => InvitationCodeScreen(userId: user['id'] as String),
+        ),
+      );
+    }
+    // If invited_at is set (returning user), the route guard handles navigation.
   }
 
   @override
@@ -99,6 +115,36 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                       )
                     : const Text('LOG IN'),
+              ),
+              const SizedBox(height: 16),
+              // ── OR divider ──────────────────────────────────────────────────
+              Row(
+                children: [
+                  const Expanded(child: Divider(color: kBorder, thickness: 1)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text('OR', style: bodyStyle(size: 11, color: kFgFaint)),
+                  ),
+                  const Expanded(child: Divider(color: kBorder, thickness: 1)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // ── Google Sign-In button ───────────────────────────────────────
+              OutlinedButton.icon(
+                onPressed: loading ? null : _signInWithGoogle,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: kFg,
+                  side: const BorderSide(color: kBorder),
+                  minimumSize: const Size(double.infinity, 52),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: bodyStyle(size: 13, color: kFg).copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                icon: const Icon(Icons.g_mobiledata, size: 24, color: kFg),
+                label: const Text('Continue with Google'),
               ),
               const SizedBox(height: 16),
               TextButton(

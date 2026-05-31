@@ -67,6 +67,43 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  Future<void> signInWithGoogle() async {
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final user = await _authService.signInWithGoogle();
+      if (user == null) {
+        // User cancelled the picker — silently reset loading.
+        state = state.copyWith(isLoading: false, error: null);
+      } else {
+        state = state.copyWith(isLoading: false, user: user, error: null);
+      }
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<bool> redeemCode(String code, String userId) async {
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final success = await _authService.redeemTesterCode(code, userId);
+      if (success) {
+        // Refresh current user so invited_at is treated as set.
+        final updated = Map<String, dynamic>.from(state.user ?? {});
+        updated['invited_at'] = DateTime.now().toUtc().toIso8601String();
+        state = state.copyWith(isLoading: false, user: updated, error: null);
+      } else {
+        state = state.copyWith(
+          isLoading: false,
+          error: 'Invalid or already used code',
+        );
+      }
+      return success;
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+      return false;
+    }
+  }
+
   Future<void> signOut() async {
     state = state.copyWith(isLoading: true, error: null);
     await _authService.signOut();

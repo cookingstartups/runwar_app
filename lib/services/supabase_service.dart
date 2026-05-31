@@ -53,6 +53,22 @@ class SupabaseService {
     }
   }
 
+  /// Registers a new user with Supabase Auth (email + password).
+  /// Returns the Supabase-assigned UUID on success, null on error (offline / duplicate).
+  Future<String?> signUpWithPassword(String email, String password) async {
+    if (!_initialized) return null;
+    try {
+      final response = await supabase.auth.signUp(
+        email: email,
+        password: password,
+      );
+      return response.user?.id;
+    } catch (e) {
+      debugPrint('[SupabaseService] signUpWithPassword error: $e');
+      return null;
+    }
+  }
+
   /// Signs in with email + password via Supabase Auth.
   /// Returns the Supabase user ID on success, null on failure.
   /// Safe to call even if a session already exists (returns existing ID).

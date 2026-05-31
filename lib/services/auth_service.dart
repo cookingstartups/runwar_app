@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'database_service.dart';
+import 'google_auth_service.dart';
 import 'supabase_service.dart';
 
 class AuthService {
@@ -78,11 +79,16 @@ class AuthService {
   }
 
   /// Inserts one `users` row + one `profiles` row in a transaction.
+  /// Uses the Supabase-assigned UUID so `auth.uid()` matches the local user ID.
   /// Returns the new user map (id/email/created_at) or null on duplicate email.
   Future<Map<String, dynamic>?> signUp(String email, String password) async {
     final db = DatabaseService.instance.db;
-    final id = _uuidV4();
     final nowIso = DateTime.now().toUtc().toIso8601String();
+
+    // Register with Supabase first to get the canonical UUID.
+    final supabaseId = await SupabaseService.instance.signUpWithPassword(email, password);
+    // Fall back to a local UUID when offline / Supabase unavailable.
+    final id = supabaseId ?? _uuidV4();
 
     try {
       await db.transaction((txn) async {
@@ -110,6 +116,58 @@ class AuthService {
     }
 
     _currentUser = {'id': id, 'email': email, 'created_at': nowIso};
+    return _currentUser;
+  }
+
+  /// Signs in with Google via [GoogleAuthService], upserts the user into SQLite,
+  /// and returns the user map. Returns null if the user cancelled.
+  /// Throws [GoogleAuthException] on Google / Supabase errors.
+  Future<Map<String, dynamic>?> signInWithGoogle() async {
+    final db = DatabaseService.instance.db;
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+
+    // Runs the native Google picker + Supabase token exchange.
+    final googleUser = await GoogleAuthService.instance.signIn();
+    if (googleUser == null) return null; // user cancelled
+
+    final id = googleUser['id'] as String;
+    final email = googleUser['email'] as String? ?? '$id@google.runwar';
+    final displayName = googleUser['displayName'] as String?;
+
+    // Derive a username from the display name or email prefix.
+    final shortId = id.replaceAll('-', '').substring(0, 6).toUpperCase();
+    final username = displayName?.toUpperCase().replaceAll(' ', '_') ?? 'RUNNER-$shortId';
+
+    // Upsert: safe on every login — INSERT OR IGNORE preserves existing rows.
+    await db.transaction((txn) async {
+      await txn.insert(
+        'users',
+        {
+          'id': id,
+          'email': email,
+          'password': '', // no password for Google accounts
+          'created_at': nowIso,
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+      await txn.insert(
+        'profiles',
+        {
+          'id': id,
+          'username': username,
+          'city': 'Valencia',
+          'color': '#FF7A00',
+          'influence_level': 1,
+          'invited_at': null, // must redeem invitation code
+          'is_tester': 0,
+          'created_at': nowIso,
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    });
+
+    _currentUser = {'id': id, 'email': email, 'created_at': nowIso};
+    debugPrint('[AuthService] Google sign-in complete: $username ($id)');
     return _currentUser;
   }
 
