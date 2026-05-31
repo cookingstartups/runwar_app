@@ -18,7 +18,8 @@ class SupabaseConfig {
   // Steps: Firebase Console → Authentication → Google → enable → download updated google-services.json
   //        Google Cloud Console → APIs & Services → Credentials → Web client → copy Client ID here
   // Also set in: Supabase Dashboard → Authentication → Providers → Google
-  static const String googleWebClientId = ''; // TODO: fill in after Google Cloud setup
+  static const String googleWebClientId =
+      '646002557080-se7o2t8pkp987bsjdabokcrkl55euh11.apps.googleusercontent.com';
 
   // Realtime channel names.
   static const String channelZones = 'zones';

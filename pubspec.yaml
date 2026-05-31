@@ -52,6 +52,9 @@ dependencies:
   # Device UUID for anonymous auth
   uuid: ^4.4.0
 
+  # Google Sign-In (native, not OAuth redirect)
+  google_sign_in: ^6.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
