@@ -31,20 +31,40 @@ import 'disputes_repository_provider.dart';
 
 /// Returns a broadcast [Stream<Duration>] that emits the remaining countdown
 /// once per second, terminating at (and including) [Duration.zero].
+///
+/// Uses [Timer.periodic] (cancellable) instead of [Future.delayed]
+/// (non-cancellable) so that test teardown finds no pending timers when
+/// [ref.onDispose] fires before the countdown reaches zero.
 final disputeCountdownProvider =
     Provider.family<Stream<Duration>, String>(
   (ref, zoneId) {
     final repo = ref.watch(disputesRepositoryProvider);
 
+    // ticker is set by _driveCountdown after the fetch completes.
+    // ref.onDispose cancels it directly so no pending timer is left
+    // when the provider is torn down (e.g. during test teardown).
+    Timer? ticker;
+
     late StreamController<Duration> controller;
     controller = StreamController<Duration>.broadcast(
       onListen: () {
         // Drive the countdown asynchronously so onListen returns immediately.
-        Future.microtask(() => _driveCountdown(repo, zoneId, controller));
+        Future.microtask(
+          () => _driveCountdown(repo, zoneId, controller, (t) => ticker = t),
+        );
+      },
+      onCancel: () {
+        // Cancel the ticker when the last listener unsubscribes.
+        // This handles the case where the widget unmounts before the countdown
+        // reaches zero — e.g. during test teardown or navigation away.
+        ticker?.cancel();
+        ticker = null;
       },
     );
 
     ref.onDispose(() {
+      ticker?.cancel();
+      ticker = null;
       if (!controller.isClosed) controller.close();
     });
 
@@ -56,6 +76,7 @@ Future<void> _driveCountdown(
   DisputesRepository repo,
   String zoneId,
   StreamController<Duration> controller,
+  void Function(Timer?) onTickerCreated,
 ) async {
   if (controller.isClosed) return;
 
@@ -65,20 +86,33 @@ Future<void> _driveCountdown(
 
   if (res is! Ok<Dispute?> || res.value == null) {
     controller.add(Duration.zero);
-    await controller.close();
+    if (!controller.isClosed) controller.close();
     return;
   }
 
   final expires = res.value!.expiresAt;
+  Timer? ticker;
 
-  while (!controller.isClosed) {
+  void tick() {
+    if (controller.isClosed) {
+      ticker?.cancel();
+      onTickerCreated(null);
+      return;
+    }
     final left = expires.difference(DateTime.now());
     if (left <= Duration.zero) {
       controller.add(Duration.zero);
-      await controller.close();
-      return;
+      ticker?.cancel();
+      onTickerCreated(null);
+      if (!controller.isClosed) controller.close();
+    } else {
+      controller.add(left);
     }
-    controller.add(left);
-    await Future<void>.delayed(const Duration(seconds: 1));
   }
+
+  // Emit immediately, then every 1 s via a cancellable Timer.periodic.
+  tick();
+  ticker = Timer.periodic(const Duration(seconds: 1), (_) => tick());
+  // Publish the ticker reference so ref.onDispose can cancel it directly.
+  onTickerCreated(ticker);
 }

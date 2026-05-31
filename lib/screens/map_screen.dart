@@ -550,11 +550,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final markers = <Marker>[];
     for (final z in zones) {
       final centroid = _centroid(z.points);
+      // The GestureDetector key ('zone-<id>') is used by integration tests
+      // to tap a zone badge directly without relying on flutter_map's
+      // coordinate projection (which is unreliable in test viewports).
+      final currentUserId =
+          (ref.read(authProvider).user?['id'] as String?) ?? '';
       markers.add(Marker(
         point: centroid,
         width: 28,
         height: 28,
-        child: ZoneLevelBadge(level: z.influenceLevel),
+        child: GestureDetector(
+          key: ValueKey('zone-${z.id}'),
+          onTap: () => _handleMapTap(context, centroid, zones, currentUserId),
+          child: ZoneLevelBadge(level: z.influenceLevel),
+        ),
       ));
       if (z.status == ZoneStatus.disputed) {
         markers.add(Marker(
