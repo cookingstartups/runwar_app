@@ -37,10 +37,16 @@ void registerFallbackValues() {
 /// - [cityConfig] defaults to [CityConfig.valencia] (synchronous, no Supabase).
 /// - [zonesRepo] overrides [zonesRepositoryProvider] when provided.
 /// - [disputesRepo] overrides [disputesRepositoryProvider] when provided.
+/// - [overrides] accepts additional overrides (e.g. profileCacheProvider,
+///   runRecorderProvider) that will be pre-seeded at construction time so that
+///   subsequent [ProviderContainer.updateOverrides] calls can update them.
+///   Riverpod requires that any provider passed to updateOverrides was present
+///   in the initial overrides list with a matching type.
 ProviderContainer makeTestContainer({
   CityConfig? cityConfig,
   ZonesRepository? zonesRepo,
   DisputesRepository? disputesRepo,
+  List<Override> overrides = const [],
 }) {
   return ProviderContainer(overrides: [
     cityConfigProvider.overrideWith(
@@ -50,5 +56,6 @@ ProviderContainer makeTestContainer({
       zonesRepositoryProvider.overrideWithValue(zonesRepo),
     if (disputesRepo != null)
       disputesRepositoryProvider.overrideWithValue(disputesRepo),
+    ...overrides,
   ]);
 }

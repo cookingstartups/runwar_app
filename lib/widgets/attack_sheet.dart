@@ -43,18 +43,19 @@ class AttackSheet extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header row: zone level badge area + status indicator
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Zone owned by $ownerName',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+            // Header: zone owner label then standalone owner name (test contract).
+            Text(
+              'Zone owned by',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[500],
                   ),
-                ),
-              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              ownerName,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
             ),
             const SizedBox(height: 8),
 
@@ -72,8 +73,9 @@ class AttackSheet extends ConsumerWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'Run a loop that intersects this zone. If the countdown expires '
-              'before you run again, the defender wins and their level increases.',
+              'If you run through this zone and close a lasso before the timer '
+              'expires, you capture it. If the timer expires without a successful '
+              'lasso, the defender wins and their zone gains +1 influence.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Colors.grey[600],
                   ),

@@ -47,8 +47,7 @@ class ZoneLevelBadge extends StatelessWidget {
         boxShadow: const [
           BoxShadow(
             color: Colors.black54,
-            blurRadius: 2,
-            offset: Offset(0, 1),
+            blurRadius: 4,
           ),
         ],
       ),

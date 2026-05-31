@@ -81,9 +81,7 @@ void main() {
     testWidgets('renders owner display name from profileCacheProvider', (tester) async {
       final zone = _makeZone(ownerId: 'owner-abc');
 
-      final container = makeTestContainer();
-      // Override profileCacheProvider to return a known display name.
-      container.updateOverrides([
+      final container = makeTestContainer(overrides: [
         profileCacheProvider('owner-abc').overrideWith(
           (_) async => {'display_name': 'Alpha Runner', 'id': 'owner-abc'},
         ),
@@ -102,8 +100,7 @@ void main() {
     testWidgets('shows "level × 20 min" window string: level=3 → "60 min"', (tester) async {
       final zone = _makeZone(influenceLevel: 3);
 
-      final container = makeTestContainer();
-      container.updateOverrides([
+      final container = makeTestContainer(overrides: [
         profileCacheProvider(zone.ownerId).overrideWith(
           (_) async => {'display_name': 'Beta Runner', 'id': zone.ownerId},
         ),
@@ -125,8 +122,7 @@ void main() {
       final zone = _makeZone();
       final stubNotifier = StubRunRecorderNotifier();
 
-      final container = makeTestContainer();
-      container.updateOverrides([
+      final container = makeTestContainer(overrides: [
         profileCacheProvider(zone.ownerId).overrideWith(
           (_) async => {'display_name': 'Test Owner', 'id': zone.ownerId},
         ),
@@ -150,8 +146,7 @@ void main() {
     testWidgets('shows DisputeCountdownLabel when zone has open dispute (status=disputed)', (tester) async {
       final zone = _makeZone(status: 'disputed');
 
-      final container = makeTestContainer();
-      container.updateOverrides([
+      final container = makeTestContainer(overrides: [
         profileCacheProvider(zone.ownerId).overrideWith(
           (_) async => {'display_name': 'Owner In Dispute', 'id': zone.ownerId},
         ),
