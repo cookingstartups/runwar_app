@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -12,22 +11,26 @@ import '../providers/profile_provider.dart';
 import '../providers/runs_provider.dart';
 import '../providers/zones_provider.dart';
 import '../providers/run_recorder_provider.dart';
+import '../providers/app_config_provider.dart';
 import '../services/run_recorder_service.dart';
 import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
 import '../services/superpower_service.dart';
 import '../services/supabase_service.dart';
 import '../services/territory_service.dart';
+import '../services/database/models/zone.dart';
+import '../services/database/models/city_config.dart';
+import '../widgets/attack_sheet.dart';
+import '../widgets/zone_level_badge.dart';
+import '../widgets/zone_legend.dart';
+import '../widgets/dispute_countdown_label.dart';
 import '../theme.dart';
 
-// ── City center lookup ───────────────────────────────────────────────────────
+// ── Constants ────────────────────────────────────────────────────────────────
+// City center and bounds are now loaded from cityConfigProvider (design.md §5).
+// _kCityCenter and _kDefaultCenter removed; use CityConfig.valencia fallback.
 
-const Map<String, LatLng> _kCityCenter = {
-  'Valencia': LatLng(39.4699, -0.3763),
-  'Madrid': LatLng(40.4168, -3.7038),
-};
-const LatLng _kDefaultCenter = LatLng(40.0, -3.0); // fallback: central Iberian Peninsula
-const double _kInitialZoom = 13.0;
+const double _kInitialZoom = 16.0;
 
 // ── Tile configuration ────────────────────────────────────────────────────────
 
@@ -39,23 +42,6 @@ const List<String> _kTileSubdomains = ['a', 'b', 'c', 'd'];
 
 const Color _kGpsDotColor = Color(0xFF4A9EFF); // blue GPS dot (brief spec)
 const Color _kDisputedColor = Color(0xFFC8973A); // amber for disputed zones
-
-// ── Parsed zone data model (§5.1) ────────────────────────────────────────────
-
-class _ParsedZone {
-  const _ParsedZone({
-    required this.id,
-    required this.ownerId,
-    required this.status,
-    required this.influence,
-    required this.points,
-  });
-  final String id;
-  final String ownerId;
-  final String status; // 'owned' | 'disputed'
-  final int influence;
-  final List<LatLng> points;
-}
 
 // ── MapScreen widget ─────────────────────────────────────────────────────────
 
@@ -70,6 +56,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   final MapController _mapController = MapController();
   StreamSubscription<Position>? _posSub;
   Position? _currentPosition;
+  bool _centeredOnGps = false;
   @override
   void initState() {
     super.initState();
@@ -78,7 +65,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     };
     // request permission once at mount; use addPostFrameCallback
     // so the OS dialog appears after the first frame paints.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initLocation());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initLocation();
+      CtfService.instance.refresh();
+    });
   }
 
   Future<void> _initLocation() async {
@@ -96,6 +86,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       ).listen((pos) {
         if (!mounted) return;
         setState(() => _currentPosition = pos);
+        if (!_centeredOnGps) {
+          _centeredOnGps = true;
+          _mapController.move(
+            LatLng(pos.latitude, pos.longitude),
+            _kInitialZoom,
+          );
+        }
+        CtfService.instance.checkCaptureProximity(pos.latitude, pos.longitude);
       });
     }
     // denied / deniedForever / unableToDetermine → no stream, no dot, no SnackBar
@@ -143,14 +141,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
-  /// Resolves the user's city and corresponding map center from the profile.
+  /// Resolves the user's city and map center.
+  /// City comes from the user profile; center comes from cityConfigProvider
+  /// (falls back to CityConfig.valencia when provider is loading or errors).
   ({String city, LatLng center}) _resolveCenter() {
     final auth = ref.watch(authProvider);
     final userId = auth.user?['id'] as String?;
-    if (userId == null) return (city: '', center: _kDefaultCenter);
+    final cityConfig =
+        ref.watch(cityConfigProvider).valueOrNull ?? CityConfig.valencia;
+    if (userId == null) return (city: '', center: cityConfig.center);
     final p = ref.watch(profileGateProvider(userId)).valueOrNull;
     final city = (p?['city'] as String?) ?? '';
-    return (city: city, center: _kCityCenter[city] ?? _kDefaultCenter);
+    return (city: city, center: cityConfig.center);
   }
 
   @override
@@ -180,13 +182,27 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
     final zonesAsync = ref.watch(zonesProvider(city));
 
+    // Build the same revealed-area circles used by _FogLayer so we can
+    // hide zones and CTF pins that sit entirely inside unexplored fog.
+    final runPoints = ref
+        .watch(userRunPointsProvider((userId: userId, city: city)))
+        .valueOrNull ?? const [];
+    final fogCenters = <({LatLng point, double radiusM})>[
+      for (final pt in runPoints) (point: pt, radiusM: 5000),
+      if (_currentPosition != null)
+        (
+          point: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+          radiusM: 1000,
+        ),
+    ];
+
     final mapBody = zonesAsync.when(
       loading: () => _buildMap(context, center, const [],
-          showError: false, city: city, userId: userId),
+          showError: false, city: city, userId: userId, fogCenters: fogCenters),
       error: (e, _) => _buildMap(context, center, const [],
-          showError: true, city: city, userId: userId),
-      data: (rows) => _buildMap(context, center, _parseEmission(rows),
-          showError: false, city: city, userId: userId),
+          showError: true, city: city, userId: userId, fogCenters: fogCenters),
+      data: (zones) => _buildMap(context, center, zones,
+          showError: false, city: city, userId: userId, fogCenters: fogCenters),
     );
 
     return Scaffold(
@@ -225,8 +241,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               : null,
           child: FloatingActionButton(
             heroTag: 'run_rec',
-            backgroundColor: kAccent,
-            foregroundColor: kBg,
+            backgroundColor: (hasGps || isRecording) ? kAccent : kSurface,
+            foregroundColor: (hasGps || isRecording) ? kBg : kFgMuted,
             onPressed: () => _onFabTap(context, recState, city),
             child: Icon(isRecording ? Icons.stop : Icons.play_arrow),
           ),
@@ -248,6 +264,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
               content: Text('Location permission required to record runs')),
+        );
+        return;
+      }
+      if (_currentPosition == null) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Waiting for GPS fix — step outside and try again')),
         );
         return;
       }
@@ -299,11 +323,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Widget _buildMap(
     BuildContext context,
     LatLng center,
-    List<_ParsedZone> parsed, {
+    List<Zone> zones, {
     required bool showError,
     String city = '',
     String userId = '',
+    List<({LatLng point, double radiusM})> fogCenters = const [],
   }) {
+    // Only render zones whose centroid is inside a revealed fog circle.
+    final visibleZones = fogCenters.isEmpty
+        ? zones
+        : zones.where((z) => _isRevealedByFog(_centroid(z.points), fogCenters)).toList();
     return Stack(
       children: [
         FlutterMap(
@@ -318,7 +347,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
             // map-level tap → ray-cast hit-test.
             onTap: (TapPosition tapPos, LatLng latLng) =>
-                _handleMapTap(context, latLng, parsed),
+                _handleMapTap(context, latLng, visibleZones, userId),
           ),
           children: [
             TileLayer(
@@ -328,8 +357,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
               userAgentPackageName: 'app.runwar.runwar_app',
             ),
-            // zone polygon layer.
-            PolygonLayer(polygons: _buildPolygons(parsed)),
+            // zone polygon layer — fog-gated.
+            PolygonLayer(polygons: _buildPolygons(visibleZones)),
+            // ZoneLevelBadge + DisputeCountdownLabel markers at polygon centroids.
+            MarkerLayer(
+              markers: _buildZoneMarkers(visibleZones),
+            ),
             // Live Supabase presence markers (real players).
             if (SupabaseService.instance.isConnected)
               StreamBuilder<List<PlayerPresence>>(
@@ -408,12 +441,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   borderStrokeWidth: 2,
                 ),
               ]),
-            // CTF flag pins from active Supabase events.
+            // CTF flag pins — fog-gated: only render if the pin is revealed.
             if (SupabaseService.instance.isConnected)
               StreamBuilder<List<CtfEvent>>(
                 stream: CtfService.instance.activeEvents,
                 builder: (_, snap) {
-                  final events = snap.data ?? [];
+                  final all = snap.data ?? [];
+                  final events = fogCenters.isEmpty
+                      ? all
+                      : all.where((e) => _isRevealedByFog(e.position, fogCenters)).toList();
                   if (events.isEmpty) return const SizedBox.shrink();
                   return MarkerLayer(
                     markers: events.map((e) {
@@ -438,6 +474,49 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
           ],
         ),
+        // Pre-announce CTF banner — shown when there are pending events to join.
+        if (SupabaseService.instance.isConnected)
+          StreamBuilder<List<CtfEvent>>(
+            stream: CtfService.instance.pendingEvents,
+            builder: (_, snap) {
+              final pending = snap.data ?? [];
+              if (pending.isEmpty) return const SizedBox.shrink();
+              final first = pending.first;
+              return Positioned(
+                top: 48,
+                left: 16,
+                right: 16,
+                child: GestureDetector(
+                  onTap: () => _showCtfSheet(first),
+                  child: Material(
+                    color: const Color(0xFFCC2200).withOpacity(0.92),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      child: Row(
+                        children: [
+                          const Text('🔔', style: TextStyle(fontSize: 18)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'CTF incoming in ${first.city} — tap to join',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontFamily: 'monospace',
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right, color: Colors.white70, size: 20),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
         // error banner above map; does not block FAB or tiles.
         if (showError)
           Positioned(
@@ -456,22 +535,60 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ),
             ),
           ),
+        // Zone legend — bottom-right anchor (design.md §4).
+        const Positioned(
+          bottom: 24,
+          right: 24,
+          child: ZoneLegend(),
+        ),
       ],
     );
+  }
+
+  /// Builds zone level badge markers and dispute countdown markers.
+  List<Marker> _buildZoneMarkers(List<Zone> zones) {
+    final markers = <Marker>[];
+    for (final z in zones) {
+      final centroid = _centroid(z.points);
+      // The GestureDetector key ('zone-<id>') is used by integration tests
+      // to tap a zone badge directly without relying on flutter_map's
+      // coordinate projection (which is unreliable in test viewports).
+      final currentUserId =
+          (ref.read(authProvider).user?['id'] as String?) ?? '';
+      markers.add(Marker(
+        point: centroid,
+        width: 28,
+        height: 28,
+        child: GestureDetector(
+          key: ValueKey('zone-${z.id}'),
+          onTap: () => _handleMapTap(context, centroid, zones, currentUserId),
+          child: ZoneLevelBadge(level: z.influenceLevel),
+        ),
+      ));
+      if (z.status == ZoneStatus.disputed) {
+        markers.add(Marker(
+          point: LatLng(centroid.latitude + 0.0002, centroid.longitude),
+          width: 60,
+          height: 24,
+          child: DisputeCountdownLabel(zoneId: z.id),
+        ));
+      }
+    }
+    return markers;
   }
 
   /// Builds the list of Polygon widgets for the PolygonLayer.
   /// Owned zones: fill opacity and stroke width scale with influence (1–15).
   /// Disputed zones: amber at fixed 15% fill regardless of influence.
-  List<Polygon> _buildPolygons(List<_ParsedZone> parsed) {
+  List<Polygon> _buildPolygons(List<Zone> zones) {
     final out = <Polygon>[];
-    for (final z in parsed) {
-      if (z.status == 'owned') {
+    for (final z in zones) {
+      if (z.status == ZoneStatus.owned) {
         final ownerProfile =
             ref.watch(profileCacheProvider(z.ownerId)).valueOrNull;
         final ownerColor =
             _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
-        final level = z.influence.clamp(1, 15);
+        final level = z.influenceLevel.clamp(1, 15);
         final fillAlpha = 0.0633 * level;        // 6.33% … 95%
         final strokeWidth = 1.0 + (level / 15.0) * 2.0;
         out.add(Polygon(
@@ -482,7 +599,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           borderStrokeWidth: strokeWidth,
           isDotted: false,
         ));
-      } else if (z.status == 'disputed') {
+      } else if (z.status == ZoneStatus.disputed) {
         out.add(Polygon(
           points: z.points,
           isFilled: true,
@@ -496,24 +613,38 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return out;
   }
 
-  /// Handles a map tap — ray-cast to find zone, then show bottom sheet.
+  /// Handles a map tap — ray-cast to find zone, then show appropriate sheet.
+  /// Own zone → info sheet; rival zone → AttackSheet (design.md §4).
   Future<void> _handleMapTap(
     BuildContext context,
     LatLng latLng,
-    List<_ParsedZone> parsed,
+    List<Zone> zones,
+    String currentUserId,
   ) async {
-    final z = _zoneAtPoint(latLng, parsed);
+    final z = _zoneAtPoint(latLng, zones);
     if (z == null) return;
-    // Fetch owner profile at tap time; cached if already resolved for color.
-    final ownerProfile =
-        await ref.read(profileCacheProvider(z.ownerId).future);
     if (!context.mounted) return;
-    final username = (ownerProfile?['username'] as String?) ?? '';
-    final displayName = username.isEmpty ? 'Unknown player' : username;
-    _showZoneSheet(context, displayName, z.status, z.influence);
+
+    if (z.ownerId == currentUserId) {
+      // Own zone: show legacy info sheet.
+      final ownerProfile =
+          await ref.read(profileCacheProvider(z.ownerId).future);
+      if (!context.mounted) return;
+      final username = (ownerProfile?['username'] as String?) ?? '';
+      final displayName = username.isEmpty ? 'Unknown player' : username;
+      _showZoneSheet(context, displayName, z.status.name, z.influenceLevel);
+    } else {
+      // Rival zone: show AttackSheet (design.md §4).
+      showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: kSurface,
+        isScrollControlled: true,
+        builder: (_) => AttackSheet(zone: z),
+      );
+    }
   }
 
-  /// Modal bottom sheet with zone details.
+  /// Modal bottom sheet with own-zone details (legacy info sheet).
   void _showZoneSheet(
     BuildContext context,
     String username,
@@ -546,6 +677,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   void _showCtfSheet(CtfEvent event) {
     final minsLeft = event.expiresAt.difference(DateTime.now()).inMinutes;
+    final thresholdM = CtfService.instance.captureThresholdM.toInt();
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF1A1A2E),
@@ -557,28 +689,72 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('🚩 CAPTURE THE FLAG', style: TextStyle(color: Colors.redAccent, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
+            const Text('🚩 CAPTURE THE FLAG',
+                style: TextStyle(
+                    color: Colors.redAccent,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'monospace')),
             const SizedBox(height: 8),
-            Text('$minsLeft minutes remaining', style: const TextStyle(color: Colors.white70)),
+            if (event.isActive)
+              Text('$minsLeft minutes remaining',
+                  style: const TextStyle(color: Colors.white70))
+            else
+              const Text('Flag drops soon — join now to see it on the map',
+                  style: TextStyle(color: Colors.white70),
+                  textAlign: TextAlign.center),
             const SizedBox(height: 8),
-            const Text('Walk to the flag pin and claim it within 50m.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 12)),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                onPressed: () async {
-                  Navigator.of(context).pop();
-                  final joined = await CtfService.instance.joinEvent(event.id);
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Text(joined ? 'You joined the CTF! Race to the pin.' : 'Could not join CTF.'),
-                    backgroundColor: joined ? Colors.redAccent : Colors.grey,
-                  ));
-                },
-                child: const Text('JOIN CTF', style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
+            if (event.isJoined && event.isActive) ...[
+              Text(
+                'You\'re racing — capture auto-triggers at ${thresholdM}m',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xFF4AFF91), fontSize: 13),
               ),
-            ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E3A2F)),
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('CLOSE',
+                      style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
+                ),
+              ),
+            ] else ...[
+              Text(
+                event.isJoined
+                    ? 'You\'re registered — flag pin will appear when it drops'
+                    : 'Join now to see the flag pin when it drops',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+              const SizedBox(height: 16),
+              if (!event.isJoined)
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.redAccent),
+                    onPressed: () async {
+                      Navigator.of(context).pop();
+                      final joined =
+                          await CtfService.instance.joinEvent(event.id);
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(joined
+                            ? 'You joined the CTF! Race to the pin when it drops.'
+                            : 'Could not join CTF — try again.'),
+                        backgroundColor:
+                            joined ? Colors.redAccent : Colors.grey,
+                      ));
+                    },
+                    child: const Text('JOIN CTF',
+                        style: TextStyle(
+                            color: Colors.white, fontFamily: 'monospace')),
+                  ),
+                ),
+            ],
           ],
         ),
       ),
@@ -588,54 +764,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
 // ── File-private helpers ─────────────────────────────────────────────────────
 
-/// Parses a GeoJSON Polygon string into an outer ring of LatLng points.
-/// Returns null on any malformed input (silent skip).
-/// GeoJSON coordinate order is [lng, lat]; LatLng takes (lat, lng) — swap.
-List<LatLng>? _parseZoneGeom(String geomJson) {
-  try {
-    final dynamic decoded = jsonDecode(geomJson);
-    if (decoded is! Map) return null;
-    if (decoded['type'] != 'Polygon') return null;
-    final dynamic coords = decoded['coordinates'];
-    if (coords is! List || coords.isEmpty) return null;
-    final dynamic ring = coords[0];
-    if (ring is! List || ring.length < 3) return null;
-    final pts = <LatLng>[];
-    for (final pt in ring) {
-      if (pt is! List || pt.length < 2) return null;
-      final lng = (pt[0] as num).toDouble();
-      final lat = (pt[1] as num).toDouble();
-      pts.add(LatLng(lat, lng));
-    }
-    return pts;
-  } catch (_) {
-    return null;
-  }
-}
-
-/// Builds a list of _ParsedZone from a raw zones emission.
-/// Silently skips any row whose geom_json cannot be parsed.
-List<_ParsedZone> _parseEmission(List<Map<String, dynamic>> rows) {
-  final out = <_ParsedZone>[];
-  for (final r in rows) {
-    final geom = r['geom_json'];
-    if (geom is! String) continue;
-    final points = _parseZoneGeom(geom);
-    if (points == null || points.length < 3) continue;
-    out.add(_ParsedZone(
-      id: r['id'] as String,
-      ownerId: r['owner_id'] as String,
-      status: (r['status'] as String?) ?? 'owned',
-      influence: (r['influence'] as num?)?.toInt() ?? 1,
-      points: points,
-    ));
-  }
-  return out;
-}
-
-/// Ray-casting point-in-polygon test. Returns first matching zone or null.
+/// Ray-casting point-in-polygon test. Returns first matching Zone or null.
 /// Used by MapOptions.onTap (no GestureDetector on polygons).
-_ParsedZone? _zoneAtPoint(LatLng tap, List<_ParsedZone> zones) {
+Zone? _zoneAtPoint(LatLng tap, List<Zone> zones) {
   for (final z in zones) {
     if (_pointInRing(tap, z.points)) return z;
   }
@@ -669,6 +800,41 @@ Color _hexToColor(String hex) {
   } catch (_) {
     return kAccent;
   }
+}
+
+// ── Fog visibility helpers ───────────────────────────────────────────────────
+
+/// Returns the centroid of a polygon ring (average of all vertices).
+LatLng _centroid(List<LatLng> pts) {
+  if (pts.isEmpty) return const LatLng(0, 0);
+  final lat = pts.fold(0.0, (s, p) => s + p.latitude) / pts.length;
+  final lng = pts.fold(0.0, (s, p) => s + p.longitude) / pts.length;
+  return LatLng(lat, lng);
+}
+
+/// Haversine distance in metres between two lat/lng points.
+double _haversineM(LatLng a, LatLng b) {
+  const R = 6371000.0;
+  final dLat = (b.latitude - a.latitude) * math.pi / 180;
+  final dLng = (b.longitude - a.longitude) * math.pi / 180;
+  final s = math.sin(dLat / 2) * math.sin(dLat / 2) +
+      math.cos(a.latitude * math.pi / 180) *
+          math.cos(b.latitude * math.pi / 180) *
+          math.sin(dLng / 2) *
+          math.sin(dLng / 2);
+  return 2 * R * math.asin(math.sqrt(s));
+}
+
+/// True if [point] falls inside at least one revealed fog circle.
+/// If [centers] is empty (no runs, no GPS) every point is hidden — fail-closed.
+bool _isRevealedByFog(
+  LatLng point,
+  List<({LatLng point, double radiusM})> centers,
+) {
+  for (final c in centers) {
+    if (_haversineM(point, c.point) <= c.radiusM) return true;
+  }
+  return false;
 }
 
 // ── Countdown badge ───────────────────────────────────────────────────────────
@@ -740,7 +906,7 @@ class _FogPainter extends CustomPainter {
     canvas.drawRect(
       Offset.zero & size,
       Paint()
-        ..color = const Color(0xCC08060F) // ~80% opacity
+        ..color = const Color(0xEE08060F) // ~93% opacity
         ..style = PaintingStyle.fill,
     );
 

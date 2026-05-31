@@ -1,6 +1,10 @@
+// DEPRECATED (Phase 1): superseded by LocalZonesRepository.
+// All functionality moved to lib/services/database/zones_repository_local.dart.
+// This file is retained for the Phase 1 transition; remove in Phase 2 (task RW-P2-01).
 import 'dart:async';
 import 'database_service.dart';
 
+/// @Deprecated Use LocalZonesRepository via zonesRepositoryProvider instead.
 class ZonesService {
   ZonesService._();
   static final ZonesService instance = ZonesService._();

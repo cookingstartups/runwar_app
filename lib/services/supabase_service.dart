@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/supabase_config.dart';
 
@@ -49,6 +50,56 @@ class SupabaseService {
     } catch (e) {
       // Network unavailable — offline mode, returns null.
       return null;
+    }
+  }
+
+  /// Registers a new user with Supabase Auth (email + password).
+  /// Returns the Supabase-assigned UUID on success, null on error (offline / duplicate).
+  Future<String?> signUpWithPassword(String email, String password) async {
+    if (!_initialized) return null;
+    try {
+      final response = await supabase.auth.signUp(
+        email: email,
+        password: password,
+      );
+      return response.user?.id;
+    } catch (e) {
+      debugPrint('[SupabaseService] signUpWithPassword error: $e');
+      return null;
+    }
+  }
+
+  /// Signs in with email + password via Supabase Auth.
+  /// Returns the Supabase user ID on success, null on failure.
+  /// Safe to call even if a session already exists (returns existing ID).
+  Future<String?> signInWithPassword(String email, String password) async {
+    if (!_initialized) return null;
+
+    // Reuse existing session if already authenticated with same email.
+    final existing = supabase.auth.currentSession;
+    if (existing != null && existing.user.email == email) {
+      return existing.user.id;
+    }
+
+    try {
+      final response = await supabase.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+      return response.user?.id;
+    } catch (e) {
+      debugPrint('[SupabaseService] signInWithPassword error: $e');
+      return null;
+    }
+  }
+
+  /// Signs out of Supabase Auth. Safe to call even if not signed in.
+  Future<void> signOut() async {
+    if (!_initialized) return;
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      debugPrint('[SupabaseService] signOut error: $e');
     }
   }
 }

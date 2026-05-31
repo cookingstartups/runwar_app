@@ -53,6 +53,7 @@ class RealtimePresenceService {
   /// Last known GPS position for this player. Null until first GPS fix.
   LatLng? get currentPosition => _currentPosition;
 
+  bool _inited = false;
   String? _myPlayerId;
   String? _myDisplayName;
   String? _myColor;
@@ -63,6 +64,8 @@ class RealtimePresenceService {
     required String displayName,
     required String color,
   }) {
+    if (_inited) return;
+    _inited = true;
     _myPlayerId = playerId;
     _myDisplayName = displayName;
     _myColor = color;

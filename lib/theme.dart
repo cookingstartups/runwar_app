@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-// ── Color tokens (mirrors the landing page CSS variables) ──────────────────
-const Color kBg = Color(0xFF08060F);
-const Color kSurface = Color(0xFF12111A);
-const Color kBorder = Color(0xFF1E1C28);
-const Color kAccent = Color(0xFFFF7A00); // rw-accent — orange
-const Color kFg = Color(0xFFFFFFFF);
-const Color kFgMuted = Color(0x99FFFFFF); // 60% white
-const Color kFgFaint = Color(0x40FFFFFF); // 25% white
-const Color kDanger = Color(0xFFFF3B30);
+// ── Color tokens — Valencia aesthetic (mirrors landing page CSS variables) ──
+const Color kBg      = Color(0xFF080E1A);  // Valencia bg
+const Color kSurface = Color(0xFF0F1C2E);  // Valencia surface
+const Color kBorder  = Color(0x14F5EDD8);  // rgba(245,237,216,0.08)
+const Color kAccent  = Color(0xFFFF6B00);  // Valencia accent
+const Color kAccent2 = Color(0xFFFFB703);  // Valencia gold / accent2
+const Color kFg      = Color(0xFFF5EDD8);  // Valencia fg
+const Color kFgMuted = Color(0xFF7A8FA6);  // Valencia mute
+const Color kFgFaint = Color(0x40F5EDD8);  // 25% fg
+const Color kDanger  = Color(0xFFE83300);  // Valencia danger
 
 // ── Text styles ─────────────────────────────────────────────────────────────
 TextStyle displayStyle({double size = 32, Color color = kFg, double? height}) =>

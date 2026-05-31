@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "646002557080",
+    "project_id": "runwar-fe299",
+    "storage_bucket": "runwar-fe299.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:646002557080:android:0c133529a99e98f7bad0ed",
+        "android_client_info": {
+          "package_name": "com.cookingstartups.runwar"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "646002557080-o0p27i22u45pm6ib7u2okr5efgcd2nbe.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.cookingstartups.runwar",
+            "certificate_hash": "4cf54b1ecaccfb37dc62f9a0ef35c09edadfef1c"
+          }
+        },
+        {
+          "client_id": "646002557080-se7o2t8pkp987bsjdabokcrkl55euh11.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCefSMlYdWyd9ZOmiFBuSXGzYkgOY2Dqow"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "646002557080-se7o2t8pkp987bsjdabokcrkl55euh11.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

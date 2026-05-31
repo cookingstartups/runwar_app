@@ -1,3 +1,6 @@
+// DEPRECATED (Phase 1): superseded by SupabaseZonesRepository.
+// All functionality moved to lib/services/database/zones_repository_supabase.dart.
+// This file is retained for the Phase 1 transition; remove in Phase 2 (task RW-P2-01).
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -5,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_service.dart';
 import '../config/supabase_config.dart';
 
+/// @Deprecated Use SupabaseZonesRepository via zonesRepositoryProvider instead.
 /// Subscribes to the `zones` Realtime channel and re-queries `zones_geojson`
 /// on every change. Emits zone lists in the same shape as ZonesService so
 /// zonesProvider can switch between the two without touching map_screen.dart.

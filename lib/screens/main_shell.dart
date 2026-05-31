@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../theme.dart';
+import '../providers/auth_provider.dart';
+import '../services/database_service.dart';
+import '../services/realtime_presence_service.dart';
+import '../services/ctf_service.dart';
+import '../services/fcm_service.dart';
 import 'map_screen.dart';
 import 'profile_screen.dart';
 
@@ -13,6 +18,32 @@ class MainShell extends ConsumerStatefulWidget {
 
 class _MainShellState extends ConsumerState<MainShell> {
   int _selectedIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initServices());
+  }
+
+  Future<void> _initServices() async {
+    final userId = ref.read(authProvider).user?['id'] as String?;
+    if (userId == null) return;
+    final rows = await DatabaseService.instance.db.query(
+      'profiles',
+      where: 'id = ?',
+      whereArgs: [userId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return;
+    final profile = rows.first;
+    RealtimePresenceService.instance.init(
+      playerId: userId,
+      displayName: (profile['username'] as String?) ?? 'RUNNER',
+      color: (profile['color'] as String?) ?? '#FF7A00',
+    );
+    await CtfService.instance.init(playerId: userId);
+    await FcmService.instance.init(playerId: userId);
+  }
 
   @override
   Widget build(BuildContext context) {

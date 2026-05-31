@@ -20,7 +20,7 @@ dependencies:
   flutter_riverpod: ^2.5.1
 
   # Share referral link
-  share_plus: ^9.0.0
+  share_plus: ^12.0.2
 
   # Copy to clipboard (built into Flutter via Clipboard)
   # url_launcher for deeplinks
@@ -45,14 +45,23 @@ dependencies:
   # Supabase
   supabase_flutter: ^2.5.0
 
+  # Firebase — push notifications (FCM)
+  firebase_core: ^3.6.0
+  firebase_messaging: ^15.1.3
+
   # Device UUID for anonymous auth
   uuid: ^4.4.0
+
+  # Google Sign-In (native, not OAuth redirect)
+  google_sign_in: ^6.2.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.14.1
+  mocktail: ^1.0.0
+  fake_async: ^1.3.1
 
 flutter_launcher_icons:
   android: true
@@ -64,3 +73,5 @@ flutter_launcher_icons:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/animations/
