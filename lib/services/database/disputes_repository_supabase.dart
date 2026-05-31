@@ -8,8 +8,6 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:realtime_client/realtime_client.dart'
-    show PostgresChangeFilter, PostgresChangeFilterType;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../supabase_service.dart';
