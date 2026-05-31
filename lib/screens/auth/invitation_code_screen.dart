@@ -15,7 +15,7 @@ class InvitationCodeScreen extends ConsumerStatefulWidget {
 }
 
 class _InvitationCodeScreenState extends ConsumerState<InvitationCodeScreen> {
-  final _codeController = TextEditingController();
+  final _codeController = TextEditingController(text: 'ALPHA1');
 
   @override
   void dispose() {
@@ -28,7 +28,7 @@ class _InvitationCodeScreenState extends ConsumerState<InvitationCodeScreen> {
     if (code.isEmpty) return;
     final success = await ref
         .read(authProvider.notifier)
-        .redeemCode(code, widget.userId);
+        .redeemInvitationCode(code, widget.userId);
     if (success && mounted) {
       // The root route guard watches authProvider — once invited_at is set it
       // will rebuild to the next destination automatically. Pop this screen so
@@ -74,7 +74,7 @@ class _InvitationCodeScreenState extends ConsumerState<InvitationCodeScreen> {
                 ],
                 decoration: const InputDecoration(
                   labelText: 'INVITATION CODE',
-                  hintText: 'FOUNDING-VLCR-001',
+                  hintText: 'ENTER YOUR CODE',
                 ),
               ),
               if (errorText != null) ...[

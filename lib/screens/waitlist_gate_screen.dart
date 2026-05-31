@@ -32,7 +32,7 @@ class _WaitlistGateScreenState extends ConsumerState<WaitlistGateScreen> {
       _codeError = null;
     });
     final ok =
-        await AuthService.instance.redeemTesterCode(_codeCtrl.text, userId);
+        await AuthService.instance.redeemInvitationCode(_codeCtrl.text, userId);
     if (ok) {
       ref.invalidate(profileGateProvider(userId));
     } else {

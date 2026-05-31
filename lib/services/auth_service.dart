@@ -368,27 +368,57 @@ class AuthService {
      'geom': '{"type":"Polygon","coordinates":[[[-0.3338,39.4752],[-0.3298,39.4740],[-0.3265,39.4718],[-0.3248,39.4692],[-0.3248,39.4662],[-0.3265,39.4632],[-0.3295,39.4610],[-0.3330,39.4602],[-0.3362,39.4612],[-0.3380,39.4642],[-0.3380,39.4678],[-0.3368,39.4712],[-0.3352,39.4740],[-0.3338,39.4752]]]}'},
   ];
 
-  Future<bool> redeemTesterCode(String code, String userId) async {
+  /// Validates [code] against the Supabase `invitation_codes` table.
+  /// One user can redeem exactly one code. One code can be redeemed up to
+  /// max_redemptions times by different users.
+  /// Also updates local SQLite profile so the route guard passes immediately.
+  /// Returns false if code is unknown, capped out, already used by this user, or offline.
+  Future<bool> redeemInvitationCode(String code, String userId) async {
     final upper = code.trim().toUpperCase();
-    final validCodes = List.generate(50, (i) => 'FOUNDING-VLCR-${(i + 1).toString().padLeft(3, '0')}').toSet();
-    if (!validCodes.contains(upper)) return false;
+    if (upper.isEmpty) return false;
 
-    final db = DatabaseService.instance.db;
-    final existing = await db.query(
-      'redeemed_codes',
-      where: 'code = ?',
-      whereArgs: [upper],
-      limit: 1,
-    );
-    if (existing.isNotEmpty) return false;
-
+    final supabase = SupabaseService.instance.supabase;
     final now = DateTime.now().toUtc().toIso8601String();
-    await db.transaction((txn) async {
-      await txn.insert('redeemed_codes', {
+
+    try {
+      // Verify code exists and has remaining capacity.
+      final codeRows = await supabase
+          .from('invitation_codes')
+          .select('code, max_redemptions')
+          .eq('code', upper)
+          .limit(1);
+
+      if ((codeRows as List).isEmpty) return false;
+      final codeRow = codeRows.first as Map<String, dynamic>;
+      final maxRedemptions = (codeRow['max_redemptions'] as int?) ?? 1;
+
+      // Count how many times this code has been used so far.
+      final countRows = await supabase
+          .from('code_redemptions')
+          .select('id')
+          .eq('code', upper);
+      final usedCount = (countRows as List).length;
+      if (usedCount >= maxRedemptions) return false;
+
+      // Claim a slot — unique(code, user_id) prevents double-redeem.
+      await supabase.from('code_redemptions').insert({
         'code': upper,
-        'redeemed_at': now,
         'user_id': userId,
+        'redeemed_at': now,
       });
+    } catch (e) {
+      debugPrint('[AuthService] redeemInvitationCode Supabase error: $e');
+      return false;
+    }
+
+    // Update local SQLite so the route guard picks up invited_at immediately.
+    final db = DatabaseService.instance.db;
+    await db.transaction((txn) async {
+      await txn.insert(
+        'redeemed_codes',
+        {'code': upper, 'redeemed_at': now, 'user_id': userId},
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
       await txn.update(
         'profiles',
         {'invited_at': now, 'is_tester': 1},

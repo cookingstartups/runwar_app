@@ -82,10 +82,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<bool> redeemCode(String code, String userId) async {
+  Future<bool> redeemInvitationCode(String code, String userId) async {
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final success = await _authService.redeemTesterCode(code, userId);
+      final success = await _authService.redeemInvitationCode(code, userId);
       if (success) {
         // Refresh current user so invited_at is treated as set.
         final updated = Map<String, dynamic>.from(state.user ?? {});
