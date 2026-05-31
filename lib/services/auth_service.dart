@@ -133,6 +133,8 @@ class AuthService {
       'email': row['email'],
       'created_at': row['created_at'],
     };
+    // Establish Supabase Auth session so Realtime + RLS work correctly.
+    await SupabaseService.instance.signInWithPassword(email, password);
     return _currentUser;
   }
 
@@ -222,6 +224,8 @@ class AuthService {
       'email': _demoEmail,
       'created_at': rows.first['created_at'],
     };
+    // Establish Supabase Auth session so Realtime + RLS work correctly.
+    await SupabaseService.instance.signInWithPassword(_demoEmail, '123456');
     return _currentUser;
   }
 
@@ -412,9 +416,10 @@ class AuthService {
     return true;
   }
 
-  /// Idempotent — clears in-memory session only. SQLite untouched.
+  /// Clears in-memory session and signs out of Supabase Auth. SQLite untouched.
   Future<void> signOut() async {
     _currentUser = null;
+    await SupabaseService.instance.signOut();
   }
 
   /// PoC no-op. Console log only. No network, no email.
