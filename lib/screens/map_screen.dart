@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -12,21 +11,25 @@ import '../providers/profile_provider.dart';
 import '../providers/runs_provider.dart';
 import '../providers/zones_provider.dart';
 import '../providers/run_recorder_provider.dart';
+import '../providers/app_config_provider.dart';
 import '../services/run_recorder_service.dart';
 import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
 import '../services/superpower_service.dart';
 import '../services/supabase_service.dart';
 import '../services/territory_service.dart';
+import '../services/database/models/zone.dart';
+import '../services/database/models/city_config.dart';
+import '../widgets/attack_sheet.dart';
+import '../widgets/zone_level_badge.dart';
+import '../widgets/zone_legend.dart';
+import '../widgets/dispute_countdown_label.dart';
 import '../theme.dart';
 
-// ── City center lookup ───────────────────────────────────────────────────────
+// ── Constants ────────────────────────────────────────────────────────────────
+// City center and bounds are now loaded from cityConfigProvider (design.md §5).
+// _kCityCenter and _kDefaultCenter removed; use CityConfig.valencia fallback.
 
-const Map<String, LatLng> _kCityCenter = {
-  'Valencia': LatLng(39.4699, -0.3763),
-  'Madrid': LatLng(40.4168, -3.7038),
-};
-const LatLng _kDefaultCenter = LatLng(40.4168, -3.7038); // Madrid
 const double _kInitialZoom = 16.0;
 
 // ── Tile configuration ────────────────────────────────────────────────────────
@@ -39,23 +42,6 @@ const List<String> _kTileSubdomains = ['a', 'b', 'c', 'd'];
 
 const Color _kGpsDotColor = Color(0xFF4A9EFF); // blue GPS dot (brief spec)
 const Color _kDisputedColor = Color(0xFFC8973A); // amber for disputed zones
-
-// ── Parsed zone data model (§5.1) ────────────────────────────────────────────
-
-class _ParsedZone {
-  const _ParsedZone({
-    required this.id,
-    required this.ownerId,
-    required this.status,
-    required this.influence,
-    required this.points,
-  });
-  final String id;
-  final String ownerId;
-  final String status; // 'owned' | 'disputed'
-  final int influence;
-  final List<LatLng> points;
-}
 
 // ── MapScreen widget ─────────────────────────────────────────────────────────
 
@@ -155,14 +141,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
-  /// Resolves the user's city and corresponding map center from the profile.
+  /// Resolves the user's city and map center.
+  /// City comes from the user profile; center comes from cityConfigProvider
+  /// (falls back to CityConfig.valencia when provider is loading or errors).
   ({String city, LatLng center}) _resolveCenter() {
     final auth = ref.watch(authProvider);
     final userId = auth.user?['id'] as String?;
-    if (userId == null) return (city: '', center: _kDefaultCenter);
+    final cityConfig =
+        ref.watch(cityConfigProvider).valueOrNull ?? CityConfig.valencia;
+    if (userId == null) return (city: '', center: cityConfig.center);
     final p = ref.watch(profileGateProvider(userId)).valueOrNull;
     final city = (p?['city'] as String?) ?? '';
-    return (city: city, center: _kCityCenter[city] ?? _kDefaultCenter);
+    return (city: city, center: cityConfig.center);
   }
 
   @override
@@ -211,7 +201,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           showError: false, city: city, userId: userId, fogCenters: fogCenters),
       error: (e, _) => _buildMap(context, center, const [],
           showError: true, city: city, userId: userId, fogCenters: fogCenters),
-      data: (rows) => _buildMap(context, center, _parseEmission(rows),
+      data: (zones) => _buildMap(context, center, zones,
           showError: false, city: city, userId: userId, fogCenters: fogCenters),
     );
 
@@ -333,7 +323,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Widget _buildMap(
     BuildContext context,
     LatLng center,
-    List<_ParsedZone> parsed, {
+    List<Zone> zones, {
     required bool showError,
     String city = '',
     String userId = '',
@@ -341,8 +331,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }) {
     // Only render zones whose centroid is inside a revealed fog circle.
     final visibleZones = fogCenters.isEmpty
-        ? parsed
-        : parsed.where((z) => _isRevealedByFog(_centroid(z.points), fogCenters)).toList();
+        ? zones
+        : zones.where((z) => _isRevealedByFog(_centroid(z.points), fogCenters)).toList();
     return Stack(
       children: [
         FlutterMap(
@@ -357,7 +347,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
             // map-level tap → ray-cast hit-test.
             onTap: (TapPosition tapPos, LatLng latLng) =>
-                _handleMapTap(context, latLng, visibleZones),
+                _handleMapTap(context, latLng, visibleZones, userId),
           ),
           children: [
             TileLayer(
@@ -369,6 +359,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
             // zone polygon layer — fog-gated.
             PolygonLayer(polygons: _buildPolygons(visibleZones)),
+            // ZoneLevelBadge + DisputeCountdownLabel markers at polygon centroids.
+            MarkerLayer(
+              markers: _buildZoneMarkers(visibleZones),
+            ),
             // Live Supabase presence markers (real players).
             if (SupabaseService.instance.isConnected)
               StreamBuilder<List<PlayerPresence>>(
@@ -541,22 +535,51 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ),
             ),
           ),
+        // Zone legend — bottom-right anchor (design.md §4).
+        const Positioned(
+          bottom: 24,
+          right: 24,
+          child: ZoneLegend(),
+        ),
       ],
     );
+  }
+
+  /// Builds zone level badge markers and dispute countdown markers.
+  List<Marker> _buildZoneMarkers(List<Zone> zones) {
+    final markers = <Marker>[];
+    for (final z in zones) {
+      final centroid = _centroid(z.points);
+      markers.add(Marker(
+        point: centroid,
+        width: 28,
+        height: 28,
+        child: ZoneLevelBadge(level: z.influenceLevel),
+      ));
+      if (z.status == ZoneStatus.disputed) {
+        markers.add(Marker(
+          point: LatLng(centroid.latitude + 0.0002, centroid.longitude),
+          width: 60,
+          height: 24,
+          child: DisputeCountdownLabel(zoneId: z.id),
+        ));
+      }
+    }
+    return markers;
   }
 
   /// Builds the list of Polygon widgets for the PolygonLayer.
   /// Owned zones: fill opacity and stroke width scale with influence (1–15).
   /// Disputed zones: amber at fixed 15% fill regardless of influence.
-  List<Polygon> _buildPolygons(List<_ParsedZone> parsed) {
+  List<Polygon> _buildPolygons(List<Zone> zones) {
     final out = <Polygon>[];
-    for (final z in parsed) {
-      if (z.status == 'owned') {
+    for (final z in zones) {
+      if (z.status == ZoneStatus.owned) {
         final ownerProfile =
             ref.watch(profileCacheProvider(z.ownerId)).valueOrNull;
         final ownerColor =
             _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
-        final level = z.influence.clamp(1, 15);
+        final level = z.influenceLevel.clamp(1, 15);
         final fillAlpha = 0.0633 * level;        // 6.33% … 95%
         final strokeWidth = 1.0 + (level / 15.0) * 2.0;
         out.add(Polygon(
@@ -567,7 +590,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           borderStrokeWidth: strokeWidth,
           isDotted: false,
         ));
-      } else if (z.status == 'disputed') {
+      } else if (z.status == ZoneStatus.disputed) {
         out.add(Polygon(
           points: z.points,
           isFilled: true,
@@ -581,24 +604,38 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return out;
   }
 
-  /// Handles a map tap — ray-cast to find zone, then show bottom sheet.
+  /// Handles a map tap — ray-cast to find zone, then show appropriate sheet.
+  /// Own zone → info sheet; rival zone → AttackSheet (design.md §4).
   Future<void> _handleMapTap(
     BuildContext context,
     LatLng latLng,
-    List<_ParsedZone> parsed,
+    List<Zone> zones,
+    String currentUserId,
   ) async {
-    final z = _zoneAtPoint(latLng, parsed);
+    final z = _zoneAtPoint(latLng, zones);
     if (z == null) return;
-    // Fetch owner profile at tap time; cached if already resolved for color.
-    final ownerProfile =
-        await ref.read(profileCacheProvider(z.ownerId).future);
     if (!context.mounted) return;
-    final username = (ownerProfile?['username'] as String?) ?? '';
-    final displayName = username.isEmpty ? 'Unknown player' : username;
-    _showZoneSheet(context, displayName, z.status, z.influence);
+
+    if (z.ownerId == currentUserId) {
+      // Own zone: show legacy info sheet.
+      final ownerProfile =
+          await ref.read(profileCacheProvider(z.ownerId).future);
+      if (!context.mounted) return;
+      final username = (ownerProfile?['username'] as String?) ?? '';
+      final displayName = username.isEmpty ? 'Unknown player' : username;
+      _showZoneSheet(context, displayName, z.status.name, z.influenceLevel);
+    } else {
+      // Rival zone: show AttackSheet (design.md §4).
+      showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: kSurface,
+        isScrollControlled: true,
+        builder: (_) => AttackSheet(zone: z),
+      );
+    }
   }
 
-  /// Modal bottom sheet with zone details.
+  /// Modal bottom sheet with own-zone details (legacy info sheet).
   void _showZoneSheet(
     BuildContext context,
     String username,
@@ -718,54 +755,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
 // ── File-private helpers ─────────────────────────────────────────────────────
 
-/// Parses a GeoJSON Polygon string into an outer ring of LatLng points.
-/// Returns null on any malformed input (silent skip).
-/// GeoJSON coordinate order is [lng, lat]; LatLng takes (lat, lng) — swap.
-List<LatLng>? _parseZoneGeom(String geomJson) {
-  try {
-    final dynamic decoded = jsonDecode(geomJson);
-    if (decoded is! Map) return null;
-    if (decoded['type'] != 'Polygon') return null;
-    final dynamic coords = decoded['coordinates'];
-    if (coords is! List || coords.isEmpty) return null;
-    final dynamic ring = coords[0];
-    if (ring is! List || ring.length < 3) return null;
-    final pts = <LatLng>[];
-    for (final pt in ring) {
-      if (pt is! List || pt.length < 2) return null;
-      final lng = (pt[0] as num).toDouble();
-      final lat = (pt[1] as num).toDouble();
-      pts.add(LatLng(lat, lng));
-    }
-    return pts;
-  } catch (_) {
-    return null;
-  }
-}
-
-/// Builds a list of _ParsedZone from a raw zones emission.
-/// Silently skips any row whose geom_json cannot be parsed.
-List<_ParsedZone> _parseEmission(List<Map<String, dynamic>> rows) {
-  final out = <_ParsedZone>[];
-  for (final r in rows) {
-    final geom = r['geom_json'];
-    if (geom is! String) continue;
-    final points = _parseZoneGeom(geom);
-    if (points == null || points.length < 3) continue;
-    out.add(_ParsedZone(
-      id: r['id'] as String,
-      ownerId: r['owner_id'] as String,
-      status: (r['status'] as String?) ?? 'owned',
-      influence: (r['influence'] as num?)?.toInt() ?? 1,
-      points: points,
-    ));
-  }
-  return out;
-}
-
-/// Ray-casting point-in-polygon test. Returns first matching zone or null.
+/// Ray-casting point-in-polygon test. Returns first matching Zone or null.
 /// Used by MapOptions.onTap (no GestureDetector on polygons).
-_ParsedZone? _zoneAtPoint(LatLng tap, List<_ParsedZone> zones) {
+Zone? _zoneAtPoint(LatLng tap, List<Zone> zones) {
   for (final z in zones) {
     if (_pointInRing(tap, z.points)) return z;
   }

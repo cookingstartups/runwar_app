@@ -11,9 +11,15 @@ import '../config/supabase_config.dart';
 enum TerritoryResult { claimed, conquered, disputed, failed }
 
 class ClaimOutcome {
-  const ClaimOutcome(this.result, this.affectedZoneId);
+  const ClaimOutcome(this.result, this.affectedZoneId,
+      {this.disputeResolved = false});
   final TerritoryResult result;
   final String? affectedZoneId;
+
+  /// True when this claim resolved an existing open dispute (conquered path).
+  /// Parsed from claim_territory Edge fn response field `dispute_resolved`.
+  /// Defaults to false for all existing call sites.
+  final bool disputeResolved;
 }
 
 class TerritoryService {
@@ -55,6 +61,7 @@ class TerritoryService {
 
       final result = data['result'] as String?;
       final zoneId = data['zone_id'] as String?;
+      final disputeResolved = data['dispute_resolved'] as bool? ?? false;
 
       return ClaimOutcome(
         switch (result) {
@@ -64,6 +71,7 @@ class TerritoryService {
           _ => TerritoryResult.failed,
         },
         zoneId,
+        disputeResolved: disputeResolved,
       );
     } catch (e) {
       debugPrint('[TerritoryService] claimViaEdgeFunction error: $e');
