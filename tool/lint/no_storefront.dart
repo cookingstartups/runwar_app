@@ -20,7 +20,17 @@
 import 'dart:io';
 
 /// Files that ARE allowed to reference [needle].
-const allowList = {'lib/screens/contextual_offer_screen.dart'};
+///
+/// Allowed set:
+///   - contextual_offer_screen.dart — the ONLY spend UI (design.md §7).
+///   - offers_repository.dart — the repository implementation that calls the
+///     edge function via `_client.functions.invoke('spend_credits_on_power')`.
+///     The guard exists to prevent *UI / screen* layers from calling the fn
+///     directly; the repository layer is the intended choke-point.
+const allowList = {
+  'lib/screens/contextual_offer_screen.dart',
+  'lib/services/database/offers_repository.dart',
+};
 
 /// The call site that no file except [allowList] members may contain.
 const needle = 'spend_credits_on_power';
