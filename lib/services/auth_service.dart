@@ -115,27 +115,32 @@ class AuthService {
 
   /// Returns user map on credential match; null otherwise. Never throws.
   Future<Map<String, dynamic>?> signIn(String email, String password) async {
-    if (email == 'demo@user.com' && password == '123456') {
-      return _signInDemo();
+    final Map<String, dynamic>? user;
+    if (email == _demoEmail && password == '123456') {
+      user = await _signInDemo();
+    } else {
+      final db = DatabaseService.instance.db;
+      final rows = await db.query(
+        'users',
+        where: 'email = ?',
+        whereArgs: [email],
+        limit: 1,
+      );
+      if (rows.isEmpty) return null;
+      final row = rows.first;
+      if (row['password'] != password) return null;
+      _currentUser = {
+        'id': row['id'],
+        'email': row['email'],
+        'created_at': row['created_at'],
+      };
+      user = _currentUser;
     }
-    final db = DatabaseService.instance.db;
-    final rows = await db.query(
-      'users',
-      where: 'email = ?',
-      whereArgs: [email],
-      limit: 1,
-    );
-    if (rows.isEmpty) return null;
-    final row = rows.first;
-    if (row['password'] != password) return null;
-    _currentUser = {
-      'id': row['id'],
-      'email': row['email'],
-      'created_at': row['created_at'],
-    };
-    // Establish Supabase Auth session so Realtime + RLS work correctly.
-    await SupabaseService.instance.signInWithPassword(email, password);
-    return _currentUser;
+    if (user != null) {
+      // Establish Supabase Auth session using the actual form credentials.
+      await SupabaseService.instance.signInWithPassword(email, password);
+    }
+    return user;
   }
 
   static const String _demoId    = '3510bc04-8b4c-4d1d-8a5c-250875ae2c30'; // WARLORD
@@ -224,8 +229,6 @@ class AuthService {
       'email': _demoEmail,
       'created_at': rows.first['created_at'],
     };
-    // Establish Supabase Auth session so Realtime + RLS work correctly.
-    await SupabaseService.instance.signInWithPassword(_demoEmail, '123456');
     return _currentUser;
   }
 
