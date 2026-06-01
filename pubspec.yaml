@@ -39,6 +39,9 @@ dependencies:
   # GPS (declared now; tracking in sibling spec)
   geolocator: ^11.0.0
 
+  # Gyroscope / accelerometer (anti-cheat orientation sampling)
+  sensors_plus: ^4.0.2
+
   # Local notifications (declared now; payloads in sibling spec)
   flutter_local_notifications: ^17.1.2
 

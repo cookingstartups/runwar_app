@@ -4,6 +4,7 @@ import '../providers/auth_provider.dart';
 import '../providers/profile_provider.dart';
 import '../services/zones_service.dart';
 import '../theme.dart';
+import '../widgets/reputation_badge.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -19,6 +20,7 @@ class ProfileScreen extends ConsumerWidget {
     }
 
     final profileAsync = ref.watch(profileGateProvider(userId));
+    final reputationAsync = ref.watch(reputationProvider(userId));
 
     return Scaffold(
       backgroundColor: kBg,
@@ -70,7 +72,19 @@ class ProfileScreen extends ConsumerWidget {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 16),
+                  // P3: Reputation badge
+                  reputationAsync.maybeWhen(
+                    data: (rep) => Row(
+                      children: [
+                        Text('REPUTATION', style: monoStyle()),
+                        const SizedBox(width: 12),
+                        ReputationBadge(score: rep),
+                      ],
+                    ),
+                    orElse: () => const SizedBox.shrink(),
+                  ),
+                  const SizedBox(height: 16),
                   // AC-10: zones-owned count — static snapshot at mount.
                   // Sourced exclusively from ZonesService (AC-10 invariant).
                   FutureBuilder<int>(
