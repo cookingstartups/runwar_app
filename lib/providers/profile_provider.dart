@@ -33,7 +33,7 @@ final referralCodeProvider =
   if (!SupabaseService.instance.isConnected) return null;
   try {
     final row = await SupabaseService.instance.supabase
-        .from('profiles')
+        .from('players')
         .select('referral_code, phone')
         .eq('id', userId)
         .maybeSingle();
@@ -49,7 +49,7 @@ final hasPhoneProvider =
   if (!SupabaseService.instance.isConnected) return true; // Don't block offline
   try {
     final row = await SupabaseService.instance.supabase
-        .from('profiles')
+        .from('players')
         .select('phone')
         .eq('id', userId)
         .maybeSingle();

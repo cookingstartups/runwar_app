@@ -115,7 +115,7 @@ class _CitiesSelectionScreenState
                         const MilestoneProgressBar(currentStep: 1, labels: ['PHONE', 'TERRITORY', 'WAITLIST']),
                         const Spacer(),
                         Text(
-                          '${_selected.length} / 6',
+                          '${_selected.length} / 1',
                           style: TextStyle(
                             fontFamily: 'monospace',
                             fontSize: 10,
@@ -281,13 +281,32 @@ class _CitiesSelectionScreenState
         return CityCard(
           city: city,
           selected: _selected.contains(city.slug),
-          onTap: () => setState(() {
+          onTap: () {
             if (_selected.contains(city.slug)) {
-              _selected.remove(city.slug);
+              setState(() => _selected.remove(city.slug));
+            } else if (_selected.length >= 1) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Run & conquer to unlock more cities.',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      letterSpacing: 1,
+                      color: kFg,
+                    ),
+                  ),
+                  backgroundColor: kSurface,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  duration: const Duration(seconds: 3),
+                ),
+              );
             } else {
-              _selected.add(city.slug);
+              setState(() => _selected.add(city.slug));
             }
-          }),
+          },
         );
       },
     );
