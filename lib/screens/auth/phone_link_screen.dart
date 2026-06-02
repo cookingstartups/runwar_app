@@ -134,9 +134,17 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
                             GoogleFonts.inter(color: kFg, fontSize: 14),
                         dropdownIcon:
                             const Icon(Icons.arrow_drop_down, color: kFgMuted),
+                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                        invalidNumberMessage: 'Enter your full number — e.g. 722 456 789',
+                        validator: (phone) {
+                          if (phone == null || phone.number.length < 7) {
+                            return 'Enter your full number — e.g. 722 456 789';
+                          }
+                          return null;
+                        },
                         onChanged: (phone) {
                           setState(() {
-                            _valid = phone.number.length >= 6;
+                            _valid = phone.number.length >= 7;
                             _e164 = phone.completeNumber;
                           });
                         },

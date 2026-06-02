@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:sqflite/sqflite.dart';
 import '../../theme.dart';
 import '../../data/cities_catalog.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/cities_provider.dart';
 import '../../providers/profile_provider.dart';
 import '../../services/database/waitlist_repository.dart';
+import '../../services/database_service.dart';
 import '../../widgets/city_card.dart';
 import '../../widgets/milestone_progress_bar.dart';
 import '../../widgets/grain_overlay.dart';
@@ -27,6 +29,7 @@ class _CitiesSelectionScreenState
   String _search = '';
   String _filter = 'ALL';
   bool _submitting = false;
+  String? _otherCity;
   late final AnimationController _fadeCtrl;
 
   static const _filters = ['ALL', 'UNLOCKED', 'EUROPE', 'AMERICAS', 'ASIA', 'SOON'];
@@ -71,10 +74,66 @@ class _CitiesSelectionScreenState
     return list;
   }
 
+  Future<void> _showOtherCityDialog() async {
+    final ctrl = TextEditingController(text: _otherCity);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Your city',
+          style: GoogleFonts.spaceGrotesk(color: kFg, fontWeight: FontWeight.w700),
+        ),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: GoogleFonts.inter(color: kFg),
+          decoration: InputDecoration(
+            hintText: 'e.g. Madrid, Berlin, Tokyo…',
+            hintStyle: TextStyle(color: kFgFaint),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: kBorder),
+            ),
+            focusedBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: kAccent),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              setState(() => _otherCity = null);
+              Navigator.pop(ctx);
+            },
+            child: Text('CLEAR', style: TextStyle(color: kFgMuted, fontSize: 12)),
+          ),
+          TextButton(
+            onPressed: () {
+              final v = ctrl.text.trim();
+              setState(() => _otherCity = v.isEmpty ? null : v);
+              Navigator.pop(ctx);
+            },
+            child: Text('SAVE', style: TextStyle(color: kAccent, fontSize: 12, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _joinWar(String userId) async {
     if (_selected.isEmpty) return;
     setState(() => _submitting = true);
     try {
+      // Save "other city" interest to local prefs so the team can review it.
+      final other = _otherCity;
+      if (other != null && other.isNotEmpty) {
+        await DatabaseService.instance.db.insert(
+          'prefs',
+          {'key': 'city_interest', 'value': other},
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
       await WaitlistRepository.instance.joinCities(userId, _selected.toList());
       ref.invalidate(joinedCitySlugsProvider(userId));
       ref.invalidate(profileGateProvider(userId));
@@ -275,8 +334,65 @@ class _CitiesSelectionScreenState
         crossAxisSpacing: 14,
         mainAxisSpacing: 14,
       ),
-      itemCount: filtered.length,
+      itemCount: filtered.length + 1,
       itemBuilder: (_, i) {
+        // Last slot — "other city" card
+        if (i == filtered.length) {
+          final hasOther = _otherCity != null && _otherCity!.isNotEmpty;
+          return GestureDetector(
+            onTap: _showOtherCityDialog,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: hasOther ? kAccent : kBorder,
+                  width: hasOther ? 1.5 : 1,
+                  style: hasOther ? BorderStyle.solid : BorderStyle.solid,
+                ),
+                color: hasOther
+                    ? kAccent.withValues(alpha: 0.08)
+                    : kSurface.withValues(alpha: 0.5),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    hasOther ? Icons.location_city : Icons.add,
+                    color: hasOther ? kAccent : kFgMuted,
+                    size: 28,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    hasOther ? _otherCity! : 'OTHER CITY',
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: hasOther ? 12 : 10,
+                      letterSpacing: 1.5,
+                      color: hasOther ? kFg : kFgMuted,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (!hasOther) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Not on the list?',
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 9,
+                        color: kFgFaint,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        }
+
         final city = filtered[i];
         return CityCard(
           city: city,
@@ -284,7 +400,7 @@ class _CitiesSelectionScreenState
           onTap: () {
             if (_selected.contains(city.slug)) {
               setState(() => _selected.remove(city.slug));
-            } else if (_selected.length >= 1) {
+            } else if (_selected.isNotEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(

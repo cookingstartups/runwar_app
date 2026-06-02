@@ -48,3 +48,4 @@ app.*.map.json
 .agents/
 SESSION_STATE.md
 skills-lock.json
+.gitnexus

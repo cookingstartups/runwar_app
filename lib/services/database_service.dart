@@ -37,7 +37,7 @@ class DatabaseService {
     final dbPath = p.join(await getDatabasesPath(), 'runwar.db');
     _db = await openDatabase(
       dbPath,
-      version: 5,
+      version: 6,
       onCreate: (db, version) async {
         await _createSchema(db);
       },
@@ -53,6 +53,9 @@ class DatabaseService {
         }
         if (oldVersion < 5) {
           await _migrateToV5(db);
+        }
+        if (oldVersion < 6) {
+          await _migrateToV6(db);
         }
       },
       onOpen: (db) async {
@@ -144,6 +147,27 @@ class DatabaseService {
         created_at TEXT NOT NULL
       )
     ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS city_waitlists (
+        user_id    TEXT NOT NULL,
+        city_slug  TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, city_slug)
+      )
+    ''');
+  }
+
+  Future<void> _migrateToV6(Database db) async {
+    try {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS city_waitlists (
+          user_id    TEXT NOT NULL,
+          city_slug  TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, city_slug)
+        )
+      ''');
+    } catch (_) {}
   }
 
   Future<void> _migrateToV5(Database db) async {
