@@ -61,15 +61,12 @@ class _SplashScreenState extends State<SplashScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Layer 1: Valencia map GIF (no blur — show map clearly)
+          // Layer 1: Valencia map GIF — full resolution, scrim handles depth
           Positioned.fill(
-            child: Opacity(
-              opacity: 0.80,
-              child: Image.asset(
-                'assets/maps/valencia_loop.gif',
-                fit: BoxFit.cover,
-                gaplessPlayback: true,
-              ),
+            child: Image.asset(
+              'assets/maps/valencia_loop.gif',
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
             ),
           ),
           // Layer 2: Radial orange glow
