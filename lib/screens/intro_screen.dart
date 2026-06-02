@@ -81,7 +81,7 @@ const _slides = [
     tagColor: kAccent2,
     headline: 'A FLAG JUST\nDROPPED.',
     body: 'Real GPS locations. Real urgency. First runner to arrive wins.\nMap drops and powers hidden across your city.',
-    lottie: 'assets/lottie/pulse.json',
+    lottie: 'assets/lottie/ctf_drop.json',
     layout: _Layout.textTopVisualBottom,
   ),
   // 5 — Invite close
@@ -311,6 +311,8 @@ class _FullBleedSlide extends StatelessWidget {
               const SizedBox(height: 16),
               Text(
                 slide.headline,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.bebasNeue(
                   fontSize: 58,
                   height: 1.0,
