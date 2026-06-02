@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme.dart';
@@ -62,18 +61,14 @@ class _SplashScreenState extends State<SplashScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Layer 1: Valencia map GIF (blurred, 45% opacity)
+          // Layer 1: Valencia map GIF (no blur — show map clearly)
           Positioned.fill(
-            child: ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(
-                sigmaX: 1.5, sigmaY: 1.5, tileMode: TileMode.decal),
-              child: Opacity(
-                opacity: 0.65,
-                child: Image.asset(
-                  'assets/maps/valencia_loop.gif',
-                  fit: BoxFit.cover,
-                  gaplessPlayback: true,
-                ),
+            child: Opacity(
+              opacity: 0.80,
+              child: Image.asset(
+                'assets/maps/valencia_loop.gif',
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
               ),
             ),
           ),
@@ -102,11 +97,11 @@ class _SplashScreenState extends State<SplashScreen>
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  stops: const [0.0, 0.4, 1.0],
+                  stops: const [0.0, 0.55, 1.0],
                   colors: [
-                    kBg.withValues(alpha: 0),
-                    kBg.withValues(alpha: 0.4),
-                    kBg.withValues(alpha: 0.97),
+                    kBg.withValues(alpha: 0.1),
+                    kBg.withValues(alpha: 0.35),
+                    kBg.withValues(alpha: 0.90),
                   ],
                 ),
               ),
