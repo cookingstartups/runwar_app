@@ -167,14 +167,16 @@ class _CitiesSelectionScreenState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Top bar
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                    child: Row(
-                      children: [
-                        const MilestoneProgressBar(currentStep: 1, labels: ['PHONE', 'TERRITORY', 'WAITLIST']),
-                        const Spacer(),
-                        Text(
-                          '${_selected.length} / 1',
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      const Expanded(
+                        child: MilestoneProgressBar(currentStep: 1, labels: ['PHONE', 'TERRITORY', 'WAITLIST']),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 20),
+                        child: Text(
+                          '${_selected.length} / 3',
                           style: TextStyle(
                             fontFamily: 'monospace',
                             fontSize: 10,
@@ -182,8 +184,8 @@ class _CitiesSelectionScreenState
                             color: _selected.isEmpty ? kFgMuted : kAccent,
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
@@ -400,7 +402,7 @@ class _CitiesSelectionScreenState
           onTap: () {
             if (_selected.contains(city.slug)) {
               setState(() => _selected.remove(city.slug));
-            } else if (_selected.isNotEmpty) {
+            } else if (_selected.length >= 3) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
