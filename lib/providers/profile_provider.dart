@@ -33,6 +33,21 @@ final reputationProvider = FutureProvider.family<int, String>((ref, userId) asyn
 /// Generated on first access, cached in local prefs, backfilled to Supabase.
 final referralCodeProvider =
     FutureProvider.family<String?, String>((ref, userId) async {
+  // Gate: only players who are invited AND have redeemed an invitation code can refer.
+  try {
+    final db = DatabaseService.instance.db;
+    final profile = await db.query(
+      'profiles', columns: ['invited_at'], where: 'id = ?', whereArgs: [userId], limit: 1,
+    );
+    final isInvited = profile.isNotEmpty && profile.first['invited_at'] != null;
+    if (!isInvited) return null;
+    final redeemed = await db.query(
+      'redeemed_codes', columns: ['code'], where: 'user_id = ?', whereArgs: [userId], limit: 1,
+    );
+    if (redeemed.isEmpty) return null;
+  } catch (_) {
+    return null;
+  }
   // 1. Supabase is canonical.
   if (SupabaseService.instance.isConnected) {
     try {

@@ -25,7 +25,7 @@ class JoinWarConfirmationScreen extends ConsumerWidget {
 
     final cities = citiesAsync.value ?? kCitiesCatalog;
     final joinedSlugs = joinedAsync.value ?? [];
-    final referralCode = codeAsync.value ?? '------';
+    final referralCode = codeAsync.value; // null = not yet eligible to refer
     final joinedCities =
         cities.where((c) => joinedSlugs.contains(c.slug)).toList();
     final firstName = joinedCities.isNotEmpty ? joinedCities.first.name : 'your city';
@@ -192,97 +192,99 @@ class JoinWarConfirmationScreen extends ConsumerWidget {
                     Expanded(child: Container(height: 1, color: kBorder)),
                   ]),
                   const SizedBox(height: 20),
-                  // Referral card
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: kSurface,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: kBorder),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'YOUR REFERRAL CODE',
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 10,
-                            letterSpacing: 3,
-                            color: kFgMuted,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 20, vertical: 16),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                                color: kAccent.withValues(alpha: 0.3),
-                                strokeAlign: BorderSide.strokeAlignOutside),
-                            color: kBg,
-                          ),
-                          child: Text(
-                            referralCode,
-                            textAlign: TextAlign.center,
-                            style: GoogleFonts.spaceGrotesk(
-                              fontSize: 36,
-                              fontWeight: FontWeight.w700,
-                              color: kFg,
-                              letterSpacing: 4,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(children: [
-                          Expanded(
-                            child: ValenciaButton(
-                              label: 'COPY',
-                              variant: ValenciaButtonVariant.ghost,
-                              onPressed: () {
-                                Clipboard.setData(
-                                    ClipboardData(text: referralCode));
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text('Code copied!'),
-                                      duration: Duration(seconds: 2)),
-                                );
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: ValenciaButton(
-                              label: 'SHARE',
-                              onPressed: () {
-                                SharePlus.instance.share(
-                                  ShareParams(
-                                    text: 'Join me in RunWar — the mobile game where runners claim real streets. '
-                                        'Use my code $referralCode — we both win lifetime rewards. '
-                                        'https://runwar.gg',
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ]),
-                        const SizedBox(height: 12),
-                        Center(
-                          child: Text(
-                            'LIFETIME 20% KICKBACK · YOU + EVERY RUNNER YOU INVITE',
+                  // Referral card — only shown to invited players who redeemed a code
+                  if (referralCode != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: kSurface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: kBorder),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'YOUR REFERRAL CODE',
                             style: TextStyle(
                               fontFamily: 'monospace',
-                              fontSize: 9,
-                              letterSpacing: 2,
+                              fontSize: 10,
+                              letterSpacing: 3,
                               color: kFgMuted,
                             ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 16),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: kAccent.withValues(alpha: 0.3),
+                                  strokeAlign: BorderSide.strokeAlignOutside),
+                              color: kBg,
+                            ),
+                            child: Text(
+                              referralCode,
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.spaceGrotesk(
+                                fontSize: 36,
+                                fontWeight: FontWeight.w700,
+                                color: kFg,
+                                letterSpacing: 4,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Row(children: [
+                            Expanded(
+                              child: ValenciaButton(
+                                label: 'COPY',
+                                variant: ValenciaButtonVariant.ghost,
+                                onPressed: () {
+                                  Clipboard.setData(
+                                      ClipboardData(text: referralCode));
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                        content: Text('Code copied!'),
+                                        duration: Duration(seconds: 2)),
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: ValenciaButton(
+                                label: 'SHARE',
+                                onPressed: () {
+                                  SharePlus.instance.share(
+                                    ShareParams(
+                                      text: 'Join me in RunWar — the mobile game where runners claim real streets. '
+                                          'Use my code $referralCode — we both win lifetime rewards. '
+                                          'https://runwar.gg',
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ]),
+                          const SizedBox(height: 12),
+                          Center(
+                            child: Text(
+                              'LIFETIME 20% KICKBACK · YOU + EVERY RUNNER YOU INVITE',
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 9,
+                                letterSpacing: 2,
+                                color: kFgMuted,
+                              ),
+                            ),
+                          ),
+                        ],
                     ),
                   ),
+                  ],  // end referralCode != null
                   const SizedBox(height: 16),
                   ValenciaButton(
                     label: 'I HAVE AN INVITE CODE',
