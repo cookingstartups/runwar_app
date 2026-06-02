@@ -124,7 +124,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Claim your\ncity.',
+                      'Run to conquer\nyour city.',
                       style: GoogleFonts.spaceGrotesk(
                         fontSize: 56,
                         fontWeight: FontWeight.w700,

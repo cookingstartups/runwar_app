@@ -86,18 +86,19 @@ class _SplashScreenState extends State<SplashScreen>
               ),
             ),
           ),
-          // Layer 3: Bottom scrim
+          // Layer 3: Bottom scrim — top stays fully open so map reads clearly
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  stops: const [0.0, 0.55, 1.0],
+                  stops: const [0.0, 0.40, 0.75, 1.0],
                   colors: [
-                    kBg.withValues(alpha: 0.1),
-                    kBg.withValues(alpha: 0.35),
-                    kBg.withValues(alpha: 0.90),
+                    kBg.withValues(alpha: 0.0),
+                    kBg.withValues(alpha: 0.05),
+                    kBg.withValues(alpha: 0.70),
+                    kBg.withValues(alpha: 0.94),
                   ],
                 ),
               ),
