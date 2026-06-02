@@ -61,12 +61,11 @@ class _SplashScreenState extends State<SplashScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Layer 1: Valencia map GIF — full resolution, scrim handles depth
+          // Layer 1: Valencia map — real CartoDB dark tiles, JPEG for full color depth
           Positioned.fill(
             child: Image.asset(
-              'assets/maps/valencia_loop.gif',
+              'assets/maps/valencia_map.jpg',
               fit: BoxFit.cover,
-              gaplessPlayback: true,
             ),
           ),
           // Layer 2: Radial orange glow
