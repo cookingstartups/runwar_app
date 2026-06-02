@@ -66,9 +66,9 @@ class _SplashScreenState extends State<SplashScreen>
           Positioned.fill(
             child: ImageFiltered(
               imageFilter: ui.ImageFilter.blur(
-                sigmaX: 4, sigmaY: 4, tileMode: TileMode.decal),
+                sigmaX: 1.5, sigmaY: 1.5, tileMode: TileMode.decal),
               child: Opacity(
-                opacity: 0.45,
+                opacity: 0.65,
                 child: Image.asset(
                   'assets/maps/valencia_loop.gif',
                   fit: BoxFit.cover,
@@ -125,7 +125,7 @@ class _SplashScreenState extends State<SplashScreen>
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
-                      'INVITATION ONLY · VALENCIA',
+                      'EARLY ACCESS FOR COMMITTED RUNNERS ONLY',
                       style: TextStyle(
                         fontFamily: 'monospace',
                         fontSize: 10,

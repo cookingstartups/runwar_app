@@ -100,7 +100,7 @@ class _RouteGuard extends ConsumerWidget {
     final authState = ref.watch(authProvider);
 
     if (authState.isLoading) {
-      return const SplashScreen(showStatus: true, statusLabel: 'BOOTING SYSTEMS');
+      return const _GateLoading();
     }
 
     if (authState.user == null) {
@@ -112,7 +112,7 @@ class _RouteGuard extends ConsumerWidget {
     // Gate 1: phone linked?
     final hasPhoneAsync = ref.watch(hasPhoneProvider(userId));
     if (hasPhoneAsync.isLoading) {
-      return const SplashScreen(showStatus: true, statusLabel: 'SYNCING TERRITORY');
+      return const _GateLoading();
     }
     final hasPhone = hasPhoneAsync.value ?? true;
     if (!hasPhone) return const PhoneLinkScreen();
@@ -120,7 +120,7 @@ class _RouteGuard extends ConsumerWidget {
     // Gate 2: any cities joined?
     final joinedAsync = ref.watch(joinedCitySlugsProvider(userId));
     if (joinedAsync.isLoading) {
-      return const SplashScreen(showStatus: true, statusLabel: 'SYNCING TERRITORY');
+      return const _GateLoading();
     }
     final joined = joinedAsync.value ?? [];
     if (joined.isEmpty) return const CitiesSelectionScreen();
@@ -143,6 +143,26 @@ class _RouteGuard extends ConsumerWidget {
       },
     );
   }
+}
+
+/// Minimal dark loading screen shown during route gate state checks.
+/// Replaces the full SplashScreen to avoid jarring re-renders mid-auth.
+class _GateLoading extends StatelessWidget {
+  const _GateLoading();
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+        backgroundColor: kBg,
+        body: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              color: kAccent,
+              strokeWidth: 1.5,
+            ),
+          ),
+        ),
+      );
 }
 
 class _InitErrorApp extends StatelessWidget {
