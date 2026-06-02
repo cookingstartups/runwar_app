@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lottie/lottie.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme.dart';
@@ -25,13 +26,11 @@ class _Slide {
   final String body;
   final String hint;
   final Color tagColor;
-  final String asset; // path under assets/
 
   const _Slide({
     required this.tag,
     required this.headline,
     required this.body,
-    required this.asset,
     this.hint = '',
     this.tagColor = kAccent,
   });
@@ -43,21 +42,18 @@ const _slides = [
     tagColor: kAccent,
     headline: 'Claim\nReal Streets',
     body: 'Run GPS-tracked routes to capture territory in your city.\nEvery block you conquer is yours — until someone takes it.',
-    asset: 'assets/screenshots/run_claim.gif',
   ),
   _Slide(
     tag: 'ECONOMY & POWERS',
     tagColor: kSea,
     headline: 'Every\nRun Pays',
     body: 'Earn credits on each run. Claim drops, unlock superpowers,\nand defend your ground against rivals.',
-    asset: 'assets/screenshots/run_city.gif',
   ),
   _Slide(
     tag: 'TRUST LAYER',
     tagColor: kAccent2,
     headline: 'Earn\nYour Spot',
     body: 'Invitation-only. Reputation-based.\nYour every move is GPS-verified — no fakes.',
-    asset: 'assets/screenshots/run_defend.gif',
     hint: 'Leagues, clans & city wars — coming soon',
   ),
 ];
@@ -186,7 +182,7 @@ class _IntroScreenState extends State<IntroScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// Slide page — GIF panel + copy
+// Slide page — text top, Lottie panel bottom
 // ---------------------------------------------------------------------------
 class _SlidePage extends StatelessWidget {
   final _Slide slide;
@@ -197,35 +193,6 @@ class _SlidePage extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── GIF preview panel ─────────────────────────────────────────────
-        Expanded(
-          flex: 5,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: slide.tagColor.withValues(alpha: 0.25),
-                    width: 1,
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  color: kSurface,
-                ),
-                child: Image.asset(
-                  slide.asset,
-                  fit: BoxFit.cover,
-                  gaplessPlayback: true,
-                  width: double.infinity,
-                ),
-              ),
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 24),
-
         // ── Text content ──────────────────────────────────────────────────
         Expanded(
           flex: 4,
@@ -233,6 +200,7 @@ class _SlidePage extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 28),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 // Tag chip
                 Container(
@@ -246,7 +214,7 @@ class _SlidePage extends StatelessWidget {
                 ),
                 const SizedBox(height: 14),
 
-                // Headline — sized down from 64 to fit reliably
+                // Headline
                 Text(
                   slide.headline.toUpperCase(),
                   maxLines: 2,
@@ -297,6 +265,49 @@ class _SlidePage extends StatelessWidget {
             ),
           ),
         ),
+
+        // ── Lottie animation panel ────────────────────────────────────────
+        Expanded(
+          flex: 5,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: kBorder.withValues(alpha: 0.4),
+                    width: 1,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  color: kSurface,
+                  boxShadow: [
+                    BoxShadow(
+                      color: kBg.withValues(alpha: 0.4),
+                      blurRadius: 24,
+                      spreadRadius: -12,
+                    ),
+                  ],
+                ),
+                child: Lottie.asset(
+                  'assets/lottie/pulse.json',
+                  repeat: true,
+                  fit: BoxFit.contain,
+                  delegates: LottieDelegates(
+                    values: [
+                      ValueDelegate.colorFilter(
+                        const ['**'],
+                        value: ColorFilter.mode(slide.tagColor, BlendMode.srcIn),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 16),
       ],
     );
   }

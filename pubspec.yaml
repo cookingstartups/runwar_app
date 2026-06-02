@@ -67,6 +67,9 @@ dependencies:
   # One-time showcase state
   shared_preferences: ^2.3.2
 
+  # Lottie vector animations (showcase slides)
+  lottie: ^3.1.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -91,3 +94,4 @@ flutter:
     - assets/icons/
     - assets/maps/
     - assets/screenshots/
+    - assets/lottie/
