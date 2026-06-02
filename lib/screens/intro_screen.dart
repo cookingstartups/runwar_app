@@ -126,6 +126,15 @@ class _IntroScreenState extends State<IntroScreen> {
     }
   }
 
+  void _prev() {
+    if (_page > 0) {
+      _controller.previousPage(
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeInOutCubic,
+      );
+    }
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -142,13 +151,25 @@ class _IntroScreenState extends State<IntroScreen> {
       backgroundColor: kBg,
       body: Stack(
         children: [
-          // PageView fills screen — vertical scroll: swipe down = next, swipe up = back
-          PageView.builder(
-            controller: _controller,
-            scrollDirection: Axis.vertical,
-            onPageChanged: (i) => setState(() => _page = i),
-            itemCount: _slides.length,
-            itemBuilder: (_, i) => _SlidePage(slide: _slides[i]),
+          // PageView fills screen — vertical swipe: up = back, down = next.
+          // GestureDetector adds horizontal swipe: left = next, right = back.
+          GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragEnd: (details) {
+              final v = details.primaryVelocity ?? 0;
+              if (v < -200) {
+                _next();
+              } else if (v > 200) {
+                _prev();
+              }
+            },
+            child: PageView.builder(
+              controller: _controller,
+              scrollDirection: Axis.vertical,
+              onPageChanged: (i) => setState(() => _page = i),
+              itemCount: _slides.length,
+              itemBuilder: (_, i) => _SlidePage(slide: _slides[i]),
+            ),
           ),
 
           // Skip row — floats above PageView
@@ -310,15 +331,17 @@ class _FullBleedSlide extends StatelessWidget {
             children: [
               _TagChip(slide: slide),
               const SizedBox(height: 16),
-              Text(
-                slide.headline,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.bebasNeue(
-                  fontSize: 58,
-                  height: 1.0,
-                  color: kFg,
-                  letterSpacing: 2,
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.topLeft,
+                child: Text(
+                  slide.headline,
+                  style: GoogleFonts.bebasNeue(
+                    fontSize: 58,
+                    height: 1.0,
+                    color: kFg,
+                    letterSpacing: 2,
+                  ),
                 ),
               ),
               const SizedBox(height: 14),

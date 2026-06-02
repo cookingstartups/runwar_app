@@ -124,13 +124,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Run to conquer\nyour city.',
+                      'Run to conquer',
                       style: GoogleFonts.spaceGrotesk(
                         fontSize: 56,
                         fontWeight: FontWeight.w700,
                         color: kFg,
-                        height: 0.98,
+                        height: 1.0,
                         letterSpacing: -1.5,
+                      ),
+                    ),
+                    Text(
+                      'your city.',
+                      style: GoogleFonts.spaceGrotesk(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w500,
+                        color: kFgMuted,
+                        height: 1.3,
+                        letterSpacing: -0.5,
                       ),
                     ),
                     const SizedBox(height: 14),
