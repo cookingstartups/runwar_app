@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/profile_service.dart';
+import '../services/supabase_service.dart';
 
 /// Fetches the profile for a signed-in user so the route guard can decide
 /// which screen to show. Returns null if the profile row doesn't exist.
@@ -8,3 +9,19 @@ import '../services/profile_service.dart';
 final profileGateProvider =
     FutureProvider.family<Map<String, dynamic>?, String>(
         (ref, userId) => ProfileService.instance.fetchProfile(userId));
+
+/// P3: Player reputation score (0–100+) from the players table.
+/// Defaults to 100 if the row is missing or Supabase is unavailable.
+final reputationProvider = FutureProvider.family<int, String>((ref, userId) async {
+  if (!SupabaseService.instance.isConnected) return 100;
+  try {
+    final row = await SupabaseService.instance.supabase
+        .from('players')
+        .select('reputation')
+        .eq('id', userId)
+        .maybeSingle();
+    return (row?['reputation'] as int?) ?? 100;
+  } catch (_) {
+    return 100;
+  }
+});
