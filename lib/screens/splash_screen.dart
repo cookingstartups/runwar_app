@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme.dart';
@@ -18,8 +19,6 @@ class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
   late final AnimationController _fadeCtrl;
   late final AnimationController _slideCtrl;
-  late final AnimationController _kenBurnsCtrl;
-  late final AnimationController _gridCtrl;
 
   @override
   void initState() {
@@ -28,13 +27,6 @@ class _SplashScreenState extends State<SplashScreen>
         vsync: this, duration: const Duration(milliseconds: 800));
     _slideCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));
-    _kenBurnsCtrl = AnimationController(
-        vsync: this, duration: const Duration(seconds: 20))
-      ..repeat();
-    _gridCtrl = AnimationController(
-        vsync: this, duration: const Duration(seconds: 4))
-      ..repeat();
-
     Future.delayed(const Duration(milliseconds: 200), () {
       if (mounted) {
         _fadeCtrl.forward();
@@ -56,8 +48,6 @@ class _SplashScreenState extends State<SplashScreen>
   void dispose() {
     _fadeCtrl.dispose();
     _slideCtrl.dispose();
-    _kenBurnsCtrl.dispose();
-    _gridCtrl.dispose();
     super.dispose();
   }
 
@@ -72,18 +62,17 @@ class _SplashScreenState extends State<SplashScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Layer 1: Ken-Burns Valencia photo
-          AnimatedBuilder(
-            animation: _kenBurnsCtrl,
-            builder: (_, __) => Transform.scale(
-              scale: 1.0 + _kenBurnsCtrl.value * 0.08,
+          // Layer 1: Valencia map GIF (blurred, 45% opacity)
+          Positioned.fill(
+            child: ImageFiltered(
+              imageFilter: ui.ImageFilter.blur(
+                sigmaX: 4, sigmaY: 4, tileMode: TileMode.decal),
               child: Opacity(
-                opacity: 0.18,
+                opacity: 0.45,
                 child: Image.asset(
-                  'assets/cities/valencia.jpg',
+                  'assets/maps/valencia_loop.gif',
                   fit: BoxFit.cover,
-                  width: size.width,
-                  height: size.height,
+                  gaplessPlayback: true,
                 ),
               ),
             ),
@@ -106,16 +95,7 @@ class _SplashScreenState extends State<SplashScreen>
               ),
             ),
           ),
-          // Layer 3: Animated grid
-          AnimatedBuilder(
-            animation: _gridCtrl,
-            builder: (_, __) => CustomPaint(
-              painter: _GridPainter(_gridCtrl.value),
-              size: size,
-              child: const SizedBox.expand(),
-            ),
-          ),
-          // Layer 4: Bottom scrim
+          // Layer 3: Bottom scrim
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -132,7 +112,7 @@ class _SplashScreenState extends State<SplashScreen>
               ),
             ),
           ),
-          // Layer 5: Center content
+          // Layer 4: Center content
           SafeArea(
             child: FadeTransition(
               opacity: fade,
@@ -228,25 +208,3 @@ class _SplashScreenState extends State<SplashScreen>
   }
 }
 
-class _GridPainter extends CustomPainter {
-  const _GridPainter(this.phase);
-  final double phase;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0x0A00F5E1)
-      ..strokeWidth = 0.5;
-    const step = 48.0;
-    final offset = phase * step;
-    for (double x = offset % step; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-    for (double y = offset % step; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_GridPainter old) => old.phase != phase;
-}
