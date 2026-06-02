@@ -88,7 +88,7 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
                     const MilestoneProgressBar(currentStep: 0, labels: ['PHONE', 'TERRITORY', 'WAITLIST']),
                     const SizedBox(height: 32),
                     Text(
-                      'Link your\nnumber.',
+                      'Verify your\naccount.',
                       style: GoogleFonts.spaceGrotesk(
                         fontSize: 44,
                         fontWeight: FontWeight.w700,
@@ -99,7 +99,7 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'We alert you when your city goes live for runners.\nNever spam.',
+                      'You\'ll receive a one-time SMS code to confirm your number.\nNo fakes. No bots. Real runners only.',
                       style: GoogleFonts.inter(
                           fontSize: 14, color: kFgMuted, height: 1.5),
                     ),
