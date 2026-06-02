@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../services/database_service.dart';
 import '../services/profile_service.dart';
 import '../services/supabase_service.dart';
 
@@ -43,18 +44,20 @@ final referralCodeProvider =
   }
 });
 
-/// Whether the player has linked a phone number.
+/// Whether the player has linked a phone number (reads from local SQLite profiles).
 final hasPhoneProvider =
     FutureProvider.family<bool, String>((ref, userId) async {
-  if (!SupabaseService.instance.isConnected) return true; // Don't block offline
   try {
-    final row = await SupabaseService.instance.supabase
-        .from('players')
-        .select('phone')
-        .eq('id', userId)
-        .maybeSingle();
-    return (row?['phone'] as String?)?.isNotEmpty ?? false;
+    final rows = await DatabaseService.instance.db.query(
+      'profiles',
+      columns: ['phone'],
+      where: 'id = ?',
+      whereArgs: [userId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return false;
+    return (rows.first['phone'] as String?)?.isNotEmpty ?? false;
   } catch (_) {
-    return true;
+    return false;
   }
 });

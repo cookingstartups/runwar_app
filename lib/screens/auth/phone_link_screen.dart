@@ -5,7 +5,7 @@ import 'package:intl_phone_field/intl_phone_field.dart';
 import '../../theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/profile_provider.dart';
-import '../../services/supabase_service.dart';
+import '../../services/database_service.dart';
 import '../../widgets/grain_overlay.dart';
 import '../../widgets/milestone_progress_bar.dart';
 import '../../widgets/valencia_button.dart';
@@ -44,15 +44,15 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
     if (!_valid || _e164 == null) return;
     setState(() => _loading = true);
     try {
-      final userId =
-          ref.read(authProvider).user?['id'] as String?;
+      final userId = ref.read(authProvider).user?['id'] as String?;
       if (userId == null) return;
-      await SupabaseService.instance.supabase
-          .from('profiles')
-          .update({'phone': _e164})
-          .eq('id', userId);
+      await DatabaseService.instance.db.update(
+        'profiles',
+        {'phone': _e164},
+        where: 'id = ?',
+        whereArgs: [userId],
+      );
       ref.invalidate(hasPhoneProvider(userId));
-      ref.invalidate(profileGateProvider(userId));
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

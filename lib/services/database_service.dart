@@ -37,7 +37,7 @@ class DatabaseService {
     final dbPath = p.join(await getDatabasesPath(), 'runwar.db');
     _db = await openDatabase(
       dbPath,
-      version: 4,
+      version: 5,
       onCreate: (db, version) async {
         await _createSchema(db);
       },
@@ -50,6 +50,9 @@ class DatabaseService {
         }
         if (oldVersion < 4) {
           await _migrateToV4(db);
+        }
+        if (oldVersion < 5) {
+          await _migrateToV5(db);
         }
       },
       onOpen: (db) async {
@@ -77,6 +80,7 @@ class DatabaseService {
         influence_level  INTEGER NOT NULL DEFAULT 1,
         invited_at       TEXT,
         is_tester        INTEGER NOT NULL DEFAULT 0,
+        phone            TEXT,
         created_at       TEXT NOT NULL
       )
     ''');
@@ -140,6 +144,12 @@ class DatabaseService {
         created_at TEXT NOT NULL
       )
     ''');
+  }
+
+  Future<void> _migrateToV5(Database db) async {
+    try {
+      await db.execute('ALTER TABLE profiles ADD COLUMN phone TEXT');
+    } catch (_) {}
   }
 
   Future<void> _migrateToV4(Database db) async {
