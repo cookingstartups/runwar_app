@@ -1,0 +1,295 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
+import '../../theme.dart';
+import '../../data/cities_catalog.dart';
+import '../../providers/auth_provider.dart';
+import '../../providers/cities_provider.dart';
+import '../../providers/profile_provider.dart';
+import '../../services/database/waitlist_repository.dart';
+import '../../widgets/city_card.dart';
+import '../../widgets/eyebrow_label.dart';
+import '../../widgets/grain_overlay.dart';
+import '../../widgets/valencia_button.dart';
+
+class CitiesSelectionScreen extends ConsumerStatefulWidget {
+  const CitiesSelectionScreen({super.key});
+
+  @override
+  ConsumerState<CitiesSelectionScreen> createState() =>
+      _CitiesSelectionScreenState();
+}
+
+class _CitiesSelectionScreenState
+    extends ConsumerState<CitiesSelectionScreen>
+    with SingleTickerProviderStateMixin {
+  final Set<String> _selected = {};
+  String _search = '';
+  String _filter = 'ALL';
+  bool _submitting = false;
+  late final AnimationController _fadeCtrl;
+
+  static const _filters = ['ALL', 'UNLOCKED', 'EUROPE', 'AMERICAS', 'ASIA', 'SOON'];
+
+  static const _continentMap = {
+    'EUROPE': ['valencia', 'london', 'barcelona'],
+    'AMERICAS': ['new-york'],
+    'ASIA': ['bali', 'seoul'],
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _fadeCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 600));
+    Future.delayed(const Duration(milliseconds: 80), () {
+      if (mounted) _fadeCtrl.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _fadeCtrl.dispose();
+    super.dispose();
+  }
+
+  List<CityEntry> _applyFilters(List<CityEntry> all) {
+    var list = all.where((c) {
+      if (_search.isEmpty) return true;
+      return c.name.toLowerCase().contains(_search.toLowerCase()) ||
+          c.country.toLowerCase().contains(_search.toLowerCase());
+    }).toList();
+
+    if (_filter == 'UNLOCKED') {
+      list = list.where((c) => c.isUnlocked).toList();
+    } else if (_filter == 'SOON') {
+      list = list.where((c) => !c.isUnlocked).toList();
+    } else if (_continentMap.containsKey(_filter)) {
+      final slugs = _continentMap[_filter]!;
+      list = list.where((c) => slugs.contains(c.slug)).toList();
+    }
+    return list;
+  }
+
+  Future<void> _joinWar(String userId) async {
+    if (_selected.isEmpty) return;
+    setState(() => _submitting = true);
+    try {
+      await WaitlistRepository.instance.joinCities(userId, _selected.toList());
+      ref.invalidate(joinedCitySlugsProvider(userId));
+      ref.invalidate(profileGateProvider(userId));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: kDanger),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final userId = ref.watch(authProvider).user?['id'] as String? ?? '';
+    final citiesAsync = ref.watch(citiesProvider);
+    final fade = CurvedAnimation(
+        parent: _fadeCtrl, curve: const Cubic(0.22, 1, 0.36, 1));
+
+    return Scaffold(
+      backgroundColor: kBg,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          SafeArea(
+            child: FadeTransition(
+              opacity: fade,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Top bar
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                    child: Row(
+                      children: [
+                        const EyebrowLabel('STEP 2 / 3 · TERRITORY'),
+                        const Spacer(),
+                        Text(
+                          '${_selected.length} / 6',
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 10,
+                            letterSpacing: 2,
+                            color: _selected.isEmpty ? kFgMuted : kAccent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'CHOOSE YOUR CITY',
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 10,
+                            letterSpacing: 3,
+                            color: kAccent,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Where will\nyou fight?',
+                          style: GoogleFonts.spaceGrotesk(
+                            fontSize: 36,
+                            fontWeight: FontWeight.w700,
+                            color: kFg,
+                            height: 0.98,
+                            letterSpacing: -1,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        // Search box
+                        Container(
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: kSurface,
+                            borderRadius: BorderRadius.circular(100),
+                            border: Border.all(color: kBorder),
+                          ),
+                          child: TextField(
+                            onChanged: (v) => setState(() => _search = v),
+                            style: GoogleFonts.inter(color: kFg, fontSize: 14),
+                            decoration: InputDecoration(
+                              hintText: 'Search cities…',
+                              hintStyle: const TextStyle(color: kFgFaint, fontSize: 14),
+                              prefixIcon: const Icon(Icons.search, color: kFgMuted, size: 20),
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                              filled: false,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        // Filter chips
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: _filters.map((f) {
+                              final active = _filter == f;
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: GestureDetector(
+                                  onTap: () => setState(() => _filter = f),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 14, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: active ? kAccent : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(100),
+                                      border: Border.all(
+                                        color: active ? kAccent : kBorder,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      f,
+                                      style: TextStyle(
+                                        fontFamily: 'monospace',
+                                        fontSize: 10,
+                                        letterSpacing: 1.5,
+                                        color: active ? kBg : kFgMuted,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // City grid
+                  Expanded(
+                    child: citiesAsync.when(
+                      loading: () => const Center(
+                          child: CircularProgressIndicator(color: kAccent)),
+                      error: (_, __) => _buildGrid(kCitiesCatalog),
+                      data: (cities) => _buildGrid(cities),
+                    ),
+                  ),
+                  // Sticky bottom bar
+                  Container(
+                    padding: EdgeInsets.fromLTRB(
+                      20,
+                      12,
+                      20,
+                      12 + MediaQuery.paddingOf(context).bottom,
+                    ),
+                    decoration: BoxDecoration(
+                      color: kBg,
+                      border: Border(top: BorderSide(color: kBorder)),
+                    ),
+                    child: ValenciaButton(
+                      label: _selected.isEmpty
+                          ? 'SELECT A CITY'
+                          : 'JOIN THE WAR · ${_selected.length} ${_selected.length == 1 ? "CITY" : "CITIES"}',
+                      onPressed:
+                          _selected.isEmpty ? null : () => _joinWar(userId),
+                      enabled: _selected.isNotEmpty,
+                      loading: _submitting,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const GrainOverlay(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGrid(List<CityEntry> all) {
+    final filtered = _applyFilters(all);
+    if (filtered.isEmpty) {
+      return Center(
+        child: Text('No cities match.',
+            style: GoogleFonts.inter(color: kFgMuted)),
+      );
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 3 / 4,
+        crossAxisSpacing: 14,
+        mainAxisSpacing: 14,
+      ),
+      itemCount: filtered.length,
+      itemBuilder: (_, i) {
+        final city = filtered[i];
+        return CityCard(
+          city: city,
+          selected: _selected.contains(city.slug),
+          onTap: () => setState(() {
+            if (_selected.contains(city.slug)) {
+              _selected.remove(city.slug);
+            } else {
+              _selected.add(city.slug);
+            }
+          }),
+        );
+      },
+    );
+  }
+}

@@ -11,6 +11,12 @@ const Color kFg      = Color(0xFFF5EDD8);  // Valencia fg
 const Color kFgMuted = Color(0xFF7A8FA6);  // Valencia mute
 const Color kFgFaint = Color(0x40F5EDD8);  // 25% fg
 const Color kDanger  = Color(0xFFE83300);  // Valencia danger
+const Color kSea = Color(0xFF0096C7);
+
+// Gradient definitions (use with LinearGradient / ShaderMask)
+const List<Color> kGradientFire  = [Color(0xFFFF6B00), Color(0xFFE8330A)];
+const List<Color> kGradientGold  = [Color(0xFFFFB703), Color(0xFFFF6B00)];
+const List<Color> kGradientSea   = [Color(0xFF0096C7), Color(0xFF00B4D8)];
 
 // ── Text styles ─────────────────────────────────────────────────────────────
 TextStyle displayStyle({double size = 32, Color color = kFg, double? height}) =>
@@ -35,6 +41,15 @@ TextStyle monoStyle({double size = 10, Color color = kFgFaint}) =>
       letterSpacing: 2.0,
       color: kFgFaint,
     ).copyWith(fontSize: size, color: color);
+
+TextStyle headlineStyle({double size = 44, Color color = kFg, double? letterSpacing}) =>
+    GoogleFonts.spaceGrotesk(
+      fontSize: size,
+      fontWeight: FontWeight.w700,
+      color: color,
+      letterSpacing: letterSpacing ?? -(size * 0.03),
+      height: 0.98,
+    );
 
 // ── App ThemeData ────────────────────────────────────────────────────────────
 ThemeData buildTheme() {

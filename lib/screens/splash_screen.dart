@@ -1,184 +1,244 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-
 import '../theme.dart';
+import '../widgets/grain_overlay.dart';
+import '../widgets/pulse_dot.dart';
 
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
+  const SplashScreen({super.key, this.showStatus = false, this.statusLabel = ''});
+  final bool showStatus;
+  final String statusLabel;
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
 class _SplashScreenState extends State<SplashScreen>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<double> _fade;
-  late final Animation<Offset> _slide;
+    with TickerProviderStateMixin {
+  late final AnimationController _fadeCtrl;
+  late final AnimationController _slideCtrl;
+  late final AnimationController _kenBurnsCtrl;
+  late final AnimationController _gridCtrl;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
-    _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
-    _slide = Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero)
-        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
+    _fadeCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 800));
+    _slideCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 800));
+    _kenBurnsCtrl = AnimationController(
+        vsync: this, duration: const Duration(seconds: 20))
+      ..repeat();
+    _gridCtrl = AnimationController(
+        vsync: this, duration: const Duration(seconds: 4))
+      ..repeat();
 
-    _ctrl.forward();
-
-    // Auto-advance after 2.8s
-    Future.delayed(const Duration(milliseconds: 2800), () {
+    Future.delayed(const Duration(milliseconds: 200), () {
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/intro');
+        _fadeCtrl.forward();
+        _slideCtrl.forward();
       }
     });
+
+    // Auto-advance after 2800ms only when NOT used as the loading gate
+    if (!widget.showStatus) {
+      Future.delayed(const Duration(milliseconds: 2800), () {
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/intro');
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _fadeCtrl.dispose();
+    _slideCtrl.dispose();
+    _kenBurnsCtrl.dispose();
+    _gridCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final fade = CurvedAnimation(parent: _fadeCtrl, curve: const Cubic(0.22, 1, 0.36, 1));
+    final slide = CurvedAnimation(parent: _slideCtrl, curve: const Cubic(0.22, 1, 0.36, 1));
+
     return Scaffold(
+      backgroundColor: kBg,
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Grid overlay
-          CustomPaint(painter: _GridPainter()),
-
-          // Radial vignette
-          Container(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment.center,
-                radius: 1.0,
-                colors: [Colors.transparent, kBg.withValues(alpha: 0.75)],
-                stops: const [0.4, 1.0],
+          // Layer 1: Ken-Burns Valencia photo
+          AnimatedBuilder(
+            animation: _kenBurnsCtrl,
+            builder: (_, __) => Transform.scale(
+              scale: 1.0 + _kenBurnsCtrl.value * 0.08,
+              child: Opacity(
+                opacity: 0.18,
+                child: Image.asset(
+                  'assets/cities/valencia.jpg',
+                  fit: BoxFit.cover,
+                  width: size.width,
+                  height: size.height,
+                ),
               ),
             ),
           ),
-
-          // Content
-          FadeTransition(
-            opacity: _fade,
-            child: SlideTransition(
-              position: _slide,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Logo
-                  Text(
-                    'RUNWAR',
-                    style: GoogleFonts.bebasNeue(
-                      fontSize: 80,
-                      letterSpacing: 6,
-                      foreground: Paint()
-                        ..shader = const LinearGradient(
-                          colors: [kAccent, Color(0xFFFFD060)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ).createShader(const Rect.fromLTWH(0, 0, 300, 100)),
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  // Tagline
-                  const Text(
-                    'INVITATION ONLY',
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 11,
-                      letterSpacing: 4.0,
-                      color: kFgFaint,
-                    ),
-                  ),
-
-                  const SizedBox(height: 48),
-
-                  // Pulse dot
-                  _PulseDot(),
-                ],
+          // Layer 2: Radial orange glow
+          Positioned(
+            left: size.width * 0.5 - 300,
+            top: size.height * 0.65 - 300,
+            child: Container(
+              width: 600,
+              height: 600,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    kAccent.withValues(alpha: 0.18),
+                    kAccent.withValues(alpha: 0),
+                  ],
+                ),
               ),
             ),
           ),
+          // Layer 3: Animated grid
+          AnimatedBuilder(
+            animation: _gridCtrl,
+            builder: (_, __) => CustomPaint(
+              painter: _GridPainter(_gridCtrl.value),
+              size: size,
+              child: const SizedBox.expand(),
+            ),
+          ),
+          // Layer 4: Bottom scrim
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  stops: const [0.0, 0.4, 1.0],
+                  colors: [
+                    kBg.withValues(alpha: 0),
+                    kBg.withValues(alpha: 0.4),
+                    kBg.withValues(alpha: 0.97),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Layer 5: Center content
+          SafeArea(
+            child: FadeTransition(
+              opacity: fade,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.05),
+                  end: Offset.zero,
+                ).animate(slide),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'INVITATION ONLY · VALENCIA',
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 10,
+                        letterSpacing: 4.0,
+                        color: kAccent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ShaderMask(
+                      shaderCallback: (bounds) => const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: kGradientGold,
+                      ).createShader(bounds),
+                      child: Text(
+                        'RUNWAR',
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 96,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                          height: 0.95,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(width: 80, height: 1, color: kBorder),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Claim the streets.',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        color: kFgMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Layer 6: Status label at bottom (only when used as gate)
+          if (widget.showStatus && widget.statusLabel.isNotEmpty)
+            Positioned(
+              bottom: 32 + MediaQuery.paddingOf(context).bottom,
+              left: 0,
+              right: 0,
+              child: FadeTransition(
+                opacity: fade,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    PulseDot(color: kAccent, size: 6),
+                    const SizedBox(width: 8),
+                    Text(
+                      widget.statusLabel,
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 10,
+                        letterSpacing: 3.0,
+                        color: kFgMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          // Layer 7: Grain overlay
+          const GrainOverlay(),
         ],
       ),
     );
   }
 }
 
-// ── Animated pulse indicator ─────────────────────────────────────────────────
-class _PulseDot extends StatefulWidget {
-  @override
-  State<_PulseDot> createState() => _PulseDotState();
-}
-
-class _PulseDotState extends State<_PulseDot> with SingleTickerProviderStateMixin {
-  late AnimationController _c;
-  late Animation<double> _scale;
-  late Animation<double> _opacity;
-
-  @override
-  void initState() {
-    super.initState();
-    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))
-      ..repeat(reverse: true);
-    _scale = Tween<double>(begin: 0.8, end: 1.2).animate(
-      CurvedAnimation(parent: _c, curve: Curves.easeInOut),
-    );
-    _opacity = Tween<double>(begin: 0.3, end: 0.8).animate(
-      CurvedAnimation(parent: _c, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _c,
-      builder: (_, __) => Opacity(
-        opacity: _opacity.value,
-        child: Transform.scale(
-          scale: _scale.value,
-          child: Container(
-            width: 8,
-            height: 8,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: kAccent,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Background grid painter ──────────────────────────────────────────────────
 class _GridPainter extends CustomPainter {
+  const _GridPainter(this.phase);
+  final double phase;
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = const Color(0x0A00F5E1)
       ..strokeWidth = 0.5;
     const step = 48.0;
-    for (double x = 0; x < size.width; x += step) {
+    final offset = phase * step;
+    for (double x = offset % step; x < size.width; x += step) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
     }
-    for (double y = 0; y < size.height; y += step) {
+    for (double y = offset % step; y < size.height; y += step) {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
   }
 
   @override
-  bool shouldRepaint(_GridPainter old) => false;
+  bool shouldRepaint(_GridPainter old) => old.phase != phase;
 }

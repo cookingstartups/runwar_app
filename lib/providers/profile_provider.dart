@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/profile_service.dart';
 import '../services/supabase_service.dart';
 
+
 /// Fetches the profile for a signed-in user so the route guard can decide
 /// which screen to show. Returns null if the profile row doesn't exist.
 /// Extracted from main.dart to allow invalidation from onboarding screens
@@ -23,5 +24,37 @@ final reputationProvider = FutureProvider.family<int, String>((ref, userId) asyn
     return (row?['reputation'] as int?) ?? 100;
   } catch (_) {
     return 100;
+  }
+});
+
+/// Player's referral code from profiles table.
+final referralCodeProvider =
+    FutureProvider.family<String?, String>((ref, userId) async {
+  if (!SupabaseService.instance.isConnected) return null;
+  try {
+    final row = await SupabaseService.instance.supabase
+        .from('profiles')
+        .select('referral_code, phone')
+        .eq('id', userId)
+        .maybeSingle();
+    return row?['referral_code'] as String?;
+  } catch (_) {
+    return null;
+  }
+});
+
+/// Whether the player has linked a phone number.
+final hasPhoneProvider =
+    FutureProvider.family<bool, String>((ref, userId) async {
+  if (!SupabaseService.instance.isConnected) return true; // Don't block offline
+  try {
+    final row = await SupabaseService.instance.supabase
+        .from('profiles')
+        .select('phone')
+        .eq('id', userId)
+        .maybeSingle();
+    return (row?['phone'] as String?)?.isNotEmpty ?? false;
+  } catch (_) {
+    return true;
   }
 });

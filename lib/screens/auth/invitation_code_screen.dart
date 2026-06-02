@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../providers/auth_provider.dart';
 import '../../providers/trust/invitation_providers.dart';
 import '../../services/trust/invitation_service.dart';
 import '../../theme.dart';
 
 class InvitationCodeScreen extends ConsumerStatefulWidget {
-  const InvitationCodeScreen({super.key, required this.userId});
+  const InvitationCodeScreen({super.key, this.userId = ''});
 
   final String userId;
 

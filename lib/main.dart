@@ -17,9 +17,13 @@ import 'screens/intro_screen.dart';
 import 'screens/request_access_screen.dart';
 import 'screens/success_screen.dart';
 import 'screens/auth/login_screen.dart';
-import 'screens/waitlist_gate_screen.dart';
+import 'screens/auth/phone_link_screen.dart';
+import 'screens/auth/cities_selection_screen.dart';
+import 'screens/auth/join_war_confirmation_screen.dart';
+// import 'screens/waitlist_gate_screen.dart'; // kept for named route fallback
 import 'screens/onboarding/onboarding_flow.dart';
 import 'screens/main_shell.dart';
+import 'providers/cities_provider.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -78,11 +82,14 @@ class RunWarApp extends StatelessWidget {
   }
 }
 
-/// Route guard — watches [authProvider] and [profileGateProvider] reactively.
-/// Re-evaluates on every auth state change without requiring an app restart.
-/// Logic mirrors the Spec 1 FutureBuilder-based _resolve():
+/// Route guard — watches [authProvider], [hasPhoneProvider], [joinedCitySlugsProvider],
+/// and [profileGateProvider] reactively.
+/// Re-evaluates on every auth/profile state change without requiring an app restart.
+/// Gate order:
 ///   user == null          → LoginScreen
-///   invited_at == null    → WaitlistGateScreen
+///   no phone linked       → PhoneLinkScreen
+///   no cities joined      → CitiesSelectionScreen
+///   invited_at == null    → JoinWarConfirmationScreen (waitlisted)
 ///   username == ''        → OnboardingFlow
 ///   otherwise             → MainShell
 class _RouteGuard extends ConsumerWidget {
@@ -93,7 +100,7 @@ class _RouteGuard extends ConsumerWidget {
     final authState = ref.watch(authProvider);
 
     if (authState.isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const SplashScreen(showStatus: true, statusLabel: 'BOOTING SYSTEMS');
     }
 
     if (authState.user == null) {
@@ -101,23 +108,37 @@ class _RouteGuard extends ConsumerWidget {
     }
 
     final userId = authState.user!['id'] as String;
-    final profileAsync = ref.watch(profileGateProvider(userId));
 
+    // Gate 1: phone linked?
+    final hasPhoneAsync = ref.watch(hasPhoneProvider(userId));
+    if (hasPhoneAsync.isLoading) {
+      return const SplashScreen(showStatus: true, statusLabel: 'SYNCING TERRITORY');
+    }
+    final hasPhone = hasPhoneAsync.value ?? true;
+    if (!hasPhone) return const PhoneLinkScreen();
+
+    // Gate 2: any cities joined?
+    final joinedAsync = ref.watch(joinedCitySlugsProvider(userId));
+    if (joinedAsync.isLoading) {
+      return const SplashScreen(showStatus: true, statusLabel: 'SYNCING TERRITORY');
+    }
+    final joined = joinedAsync.value ?? [];
+    if (joined.isEmpty) return const CitiesSelectionScreen();
+
+    // Gate 3: profile + invited_at
+    final profileAsync = ref.watch(profileGateProvider(userId));
     return profileAsync.when(
       loading: () =>
-          const Scaffold(body: Center(child: CircularProgressIndicator())),
+          const SplashScreen(showStatus: true, statusLabel: 'SYNCING TERRITORY'),
       error: (e, _) =>
           Scaffold(body: Center(child: Text('Error loading profile: $e'))),
       data: (profile) {
-        // invited_at == null → waiting for invite
         if (profile == null || profile['invited_at'] == null) {
-          return const WaitlistGateScreen();
+          // Has joined cities but no access yet → referral waitlist
+          return const JoinWarConfirmationScreen();
         }
-        // username empty → onboarding incomplete
         final username = (profile['username'] as String?) ?? '';
-        if (username.isEmpty) {
-          return const OnboardingFlow();
-        }
+        if (username.isEmpty) return const OnboardingFlow();
         return const MainShell();
       },
     );
