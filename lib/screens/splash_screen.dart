@@ -1,10 +1,157 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 import '../theme.dart';
 import '../widgets/grain_overlay.dart';
 import '../widgets/pulse_dot.dart';
 
+// ---------------------------------------------------------------------------
+// Zone polygon definitions
+// ---------------------------------------------------------------------------
+List<Polygon> _buildZones() {
+  // Helper: build a rectangle polygon from a center + half-extent
+  List<LatLng> rect(double lat, double lng, double dLat, double dLng) => [
+        LatLng(lat + dLat, lng - dLng),
+        LatLng(lat + dLat, lng + dLng),
+        LatLng(lat - dLat, lng + dLng),
+        LatLng(lat - dLat, lng - dLng),
+      ];
+
+  return [
+    // Ruzafa — orange
+    Polygon(
+      points: rect(39.4608, -0.3779, 0.009, 0.012),
+      borderColor: kAccent.withValues(alpha: 0.70),
+      borderStrokeWidth: 1.5,
+      color: kAccent.withValues(alpha: 0.12),
+    ),
+    // Carmen — sea blue
+    Polygon(
+      points: rect(39.4730, -0.3795, 0.008, 0.010),
+      borderColor: kSea.withValues(alpha: 0.70),
+      borderStrokeWidth: 1.5,
+      color: kSea.withValues(alpha: 0.12),
+    ),
+    // Cabanyal — danger red
+    Polygon(
+      points: rect(39.4695, -0.3327, 0.009, 0.013),
+      borderColor: kDanger.withValues(alpha: 0.70),
+      borderStrokeWidth: 1.5,
+      color: kDanger.withValues(alpha: 0.12),
+    ),
+    // Benimaclet — accent2 gold
+    Polygon(
+      points: rect(39.4790, -0.3680, 0.008, 0.011),
+      borderColor: kAccent2.withValues(alpha: 0.70),
+      borderStrokeWidth: 1.5,
+      color: kAccent2.withValues(alpha: 0.12),
+    ),
+    // Campanar — sea blue
+    Polygon(
+      points: rect(39.4830, -0.3950, 0.009, 0.012),
+      borderColor: kSea.withValues(alpha: 0.60),
+      borderStrokeWidth: 1.5,
+      color: kSea.withValues(alpha: 0.10),
+    ),
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Runner ping positions
+// ---------------------------------------------------------------------------
+const List<LatLng> _pingPositions = [
+  LatLng(39.4608, -0.3779), // Ruzafa
+  LatLng(39.4730, -0.3795), // Carmen
+  LatLng(39.4695, -0.3327), // Cabanyal
+];
+
+// ---------------------------------------------------------------------------
+// Animated ping widget
+// ---------------------------------------------------------------------------
+class _RunnerPing extends StatefulWidget {
+  const _RunnerPing({required this.delay});
+  final Duration delay;
+
+  @override
+  State<_RunnerPing> createState() => _RunnerPingState();
+}
+
+class _RunnerPingState extends State<_RunnerPing>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _scale;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    );
+    _scale = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeOut),
+    );
+    _opacity = Tween<double>(begin: 0.8, end: 0.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeIn),
+    );
+    Future.delayed(widget.delay, () {
+      if (mounted) _ctrl.repeat();
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Expanding ring
+          AnimatedBuilder(
+            animation: _ctrl,
+            builder: (_, __) => Opacity(
+              opacity: _opacity.value,
+              child: Container(
+                width: 12 + _scale.value * 16, // 12 → 28
+                height: 12 + _scale.value * 16,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: kAccent,
+                    width: 1.5,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Core dot
+          Container(
+            width: 10,
+            height: 10,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: kAccent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Splash screen
+// ---------------------------------------------------------------------------
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key, this.showStatus = false, this.statusLabel = ''});
   final bool showStatus;
@@ -18,10 +165,13 @@ class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
   late final AnimationController _fadeCtrl;
   late final AnimationController _slideCtrl;
+  late final List<Polygon> _zones;
 
   @override
   void initState() {
     super.initState();
+    _zones = _buildZones();
+
     _fadeCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));
     _slideCtrl = AnimationController(
@@ -50,6 +200,20 @@ class _SplashScreenState extends State<SplashScreen>
     super.dispose();
   }
 
+  List<Marker> _buildRunnerMarkers() {
+    return [
+      for (int i = 0; i < _pingPositions.length; i++)
+        Marker(
+          point: _pingPositions[i],
+          width: 36,
+          height: 36,
+          child: _RunnerPing(
+            delay: Duration(milliseconds: i * 600),
+          ),
+        ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
@@ -61,11 +225,25 @@ class _SplashScreenState extends State<SplashScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Layer 1: Valencia map — real CartoDB dark tiles, JPEG for full color depth
+          // Layer 1: Embedded live map — CartoDB dark tiles + zone polygons + runner pings
           Positioned.fill(
-            child: Image.asset(
-              'assets/maps/valencia_map.jpg',
-              fit: BoxFit.cover,
+            child: FlutterMap(
+              options: const MapOptions(
+                initialCenter: LatLng(39.4699, -0.3763),
+                initialZoom: 13.5,
+                interactionOptions: InteractionOptions(
+                  flags: InteractiveFlag.none,
+                ),
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate:
+                      'https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.cookingstartups.runwar',
+                ),
+                PolygonLayer(polygons: _zones),
+                MarkerLayer(markers: _buildRunnerMarkers()),
+              ],
             ),
           ),
           // Layer 2: Radial orange glow
@@ -116,7 +294,7 @@ class _SplashScreenState extends State<SplashScreen>
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
+                    const Text(
                       'EARLY ACCESS FOR COMMITTED RUNNERS ONLY',
                       style: TextStyle(
                         fontFamily: 'monospace',
@@ -177,11 +355,11 @@ class _SplashScreenState extends State<SplashScreen>
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    PulseDot(color: kAccent, size: 6),
+                    const PulseDot(color: kAccent, size: 6),
                     const SizedBox(width: 8),
                     Text(
                       widget.statusLabel,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontFamily: 'monospace',
                         fontSize: 10,
                         letterSpacing: 3.0,
@@ -199,4 +377,3 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 }
-
