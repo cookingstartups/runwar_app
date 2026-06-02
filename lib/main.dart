@@ -25,6 +25,8 @@ import 'screens/onboarding/onboarding_flow.dart';
 import 'screens/main_shell.dart';
 import 'providers/cities_provider.dart';
 
+final showcaseSeenProvider = FutureProvider<bool>((ref) => isShowcaseSeen());
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
@@ -104,7 +106,12 @@ class _RouteGuard extends ConsumerWidget {
     }
 
     if (authState.user == null) {
-      return const LoginScreen();
+      final showcaseSeen = ref.watch(showcaseSeenProvider);
+      return showcaseSeen.when(
+        loading: () => const _GateLoading(),
+        error: (_, __) => const LoginScreen(),
+        data: (seen) => seen ? const LoginScreen() : const IntroScreen(),
+      );
     }
 
     final userId = authState.user!['id'] as String;

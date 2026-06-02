@@ -64,6 +64,9 @@ dependencies:
   # Google Sign-In (native, not OAuth redirect)
   google_sign_in: ^6.2.1
 
+  # One-time showcase state
+  shared_preferences: ^2.3.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
