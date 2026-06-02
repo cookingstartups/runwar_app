@@ -9,8 +9,9 @@ import '../../providers/auth_provider.dart';
 import '../../providers/cities_provider.dart';
 import '../../providers/profile_provider.dart';
 import '../../widgets/grain_overlay.dart';
-import '../../widgets/pulse_dot.dart';
+import '../../widgets/milestone_progress_bar.dart';
 import '../../widgets/valencia_button.dart';
+import 'invitation_code_screen.dart';
 
 class JoinWarConfirmationScreen extends ConsumerWidget {
   const JoinWarConfirmationScreen({super.key});
@@ -41,22 +42,7 @@ class JoinWarConfirmationScreen extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Hero block
-                  Row(
-                    children: [
-                      PulseDot(color: kAccent, size: 8),
-                      const SizedBox(width: 10),
-                      Text(
-                        'WAITLISTED',
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 10,
-                          letterSpacing: 3,
-                          color: kAccent,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
+                  const MilestoneProgressBar(currentStep: 2, labels: ['PHONE', 'TERRITORY', 'WAITLIST']),
                   const SizedBox(height: 14),
                   ShaderMask(
                     shaderCallback: (b) => const LinearGradient(
@@ -77,7 +63,7 @@ class JoinWarConfirmationScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    "We'll alert you when $firstName opens.",
+                    "We'll alert you when $firstName opens for runners.",
                     style: GoogleFonts.inter(
                         fontSize: 14, color: kFgMuted, height: 1.5),
                   ),
@@ -273,7 +259,7 @@ class JoinWarConfirmationScreen extends ConsumerWidget {
                               onPressed: () {
                                 SharePlus.instance.share(
                                   ShareParams(
-                                    text: 'Join me to conquer $firstName in RunWar. '
+                                    text: 'Join me in RunWar — the mobile game where runners claim real streets. '
                                         'Use my code $referralCode — we both win lifetime rewards. '
                                         'https://runwar.gg',
                                   ),
@@ -285,7 +271,7 @@ class JoinWarConfirmationScreen extends ConsumerWidget {
                         const SizedBox(height: 12),
                         Center(
                           child: Text(
-                            'LIFETIME 20% CREDIT KICKBACK · YOU + YOUR ALLIES',
+                            'LIFETIME 20% KICKBACK · YOU + EVERY RUNNER YOU INVITE',
                             style: TextStyle(
                               fontFamily: 'monospace',
                               fontSize: 9,
@@ -295,6 +281,15 @@ class JoinWarConfirmationScreen extends ConsumerWidget {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  ValenciaButton(
+                    label: 'I HAVE AN INVITE CODE',
+                    variant: ValenciaButtonVariant.ghost,
+                    onPressed: () => Navigator.push<void>(
+                      context,
+                      MaterialPageRoute(builder: (_) => const InvitationCodeScreen()),
                     ),
                   ),
                   const SizedBox(height: 20),

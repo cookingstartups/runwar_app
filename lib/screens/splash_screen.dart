@@ -155,19 +155,27 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                     const SizedBox(height: 12),
-                    ShaderMask(
-                      shaderCallback: (bounds) => const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: kGradientGold,
-                      ).createShader(bounds),
-                      child: Text(
-                        'RUNWAR',
-                        style: GoogleFonts.spaceGrotesk(
-                          fontSize: 96,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                          height: 0.95,
+                    SizedBox(
+                      width: MediaQuery.sizeOf(context).width - 48,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: ShaderMask(
+                          shaderCallback: (bounds) => const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: kGradientGold,
+                          ).createShader(bounds),
+                          child: Text(
+                            'RUNWAR',
+                            softWrap: false,
+                            maxLines: 1,
+                            style: GoogleFonts.spaceGrotesk(
+                              fontSize: 96,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                              height: 0.95,
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -175,7 +183,7 @@ class _SplashScreenState extends State<SplashScreen>
                     Container(width: 80, height: 1, color: kBorder),
                     const SizedBox(height: 16),
                     Text(
-                      'Claim the streets.',
+                      'The game where runners claim real streets.',
                       style: GoogleFonts.inter(
                         fontSize: 14,
                         color: kFgMuted,

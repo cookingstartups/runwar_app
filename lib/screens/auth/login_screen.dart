@@ -6,7 +6,6 @@ import '../../theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/grain_overlay.dart';
 import '../../widgets/valencia_button.dart';
-import '../auth/invitation_code_screen.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -136,7 +135,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                     ),
                     const SizedBox(height: 14),
                     Text(
-                      'Invitation-only territory war.\nReal GPS. Real ground.',
+                      'A mobile game for runners. Claim real streets.\nGPS-tracked. No fakes.',
                       style: GoogleFonts.inter(fontSize: 15, color: kFgMuted, height: 1.5),
                     ),
                     const SizedBox(height: 40),
@@ -145,27 +144,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                       onPressed: _signInWithGoogle,
                       loading: _loading,
                       icon: const Icon(Icons.g_mobiledata, size: 22),
-                    ),
-                    const SizedBox(height: 16),
-                    Center(
-                      child: TextButton(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => const InvitationCodeScreen()),
-                          );
-                        },
-                        child: Text(
-                          'Already have a code?  REDEEM',
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 10,
-                            letterSpacing: 2.0,
-                            color: kFgMuted,
-                          ),
-                        ),
-                      ),
                     ),
                     const SizedBox(height: 8),
                   ],

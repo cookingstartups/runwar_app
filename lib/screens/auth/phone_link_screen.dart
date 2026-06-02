@@ -7,7 +7,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/profile_provider.dart';
 import '../../services/supabase_service.dart';
 import '../../widgets/grain_overlay.dart';
-import '../../widgets/eyebrow_label.dart';
+import '../../widgets/milestone_progress_bar.dart';
 import '../../widgets/valencia_button.dart';
 
 class PhoneLinkScreen extends ConsumerStatefulWidget {
@@ -85,7 +85,7 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const EyebrowLabel('STEP 1 / 3 · IDENTITY'),
+                    const MilestoneProgressBar(currentStep: 0, labels: ['PHONE', 'TERRITORY', 'WAITLIST']),
                     const SizedBox(height: 32),
                     Text(
                       'Link your\nnumber.',
@@ -99,7 +99,7 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'We notify you when your city opens.\nWe never spam.',
+                      'We alert you when your city goes live for runners.\nNever spam.',
                       style: GoogleFonts.inter(
                           fontSize: 14, color: kFgMuted, height: 1.5),
                     ),

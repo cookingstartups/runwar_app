@@ -8,7 +8,7 @@ import '../../providers/cities_provider.dart';
 import '../../providers/profile_provider.dart';
 import '../../services/database/waitlist_repository.dart';
 import '../../widgets/city_card.dart';
-import '../../widgets/eyebrow_label.dart';
+import '../../widgets/milestone_progress_bar.dart';
 import '../../widgets/grain_overlay.dart';
 import '../../widgets/valencia_button.dart';
 
@@ -112,7 +112,7 @@ class _CitiesSelectionScreenState
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
                     child: Row(
                       children: [
-                        const EyebrowLabel('STEP 2 / 3 · TERRITORY'),
+                        const MilestoneProgressBar(currentStep: 1, labels: ['PHONE', 'TERRITORY', 'WAITLIST']),
                         const Spacer(),
                         Text(
                           '${_selected.length} / 6',
@@ -132,7 +132,7 @@ class _CitiesSelectionScreenState
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'CHOOSE YOUR CITY',
+                          'RUNNERS · PICK YOUR CITY',
                           style: TextStyle(
                             fontFamily: 'monospace',
                             fontSize: 10,
@@ -143,7 +143,7 @@ class _CitiesSelectionScreenState
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Where will\nyou fight?',
+                          'Where will\nyou run?',
                           style: GoogleFonts.spaceGrotesk(
                             fontSize: 36,
                             fontWeight: FontWeight.w700,

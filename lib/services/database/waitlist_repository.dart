@@ -17,9 +17,14 @@ class WaitlistRepository {
                 'referral_source_code': referralSourceCode,
             })
         .toList();
-    await SupabaseService.instance.supabase
+    final result = await SupabaseService.instance.supabase
         .from('city_waitlists')
-        .upsert(rows, onConflict: 'user_id,city_slug');
+        .upsert(rows, onConflict: 'city_waitlists_user_id_city_slug_key')
+        .select();
+    if (result.isEmpty) {
+      throw Exception(
+          'waitlist insert returned 0 rows — verify city_waitlists table exists in prod');
+    }
   }
 
   Future<List<String>> joinedCitySlugs(String userId) async {
