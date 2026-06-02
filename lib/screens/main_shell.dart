@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../theme.dart';
 import '../providers/auth_provider.dart';
 import '../providers/trust/challenge_providers.dart';
+import '../services/database/challenges_repository.dart';
 import '../services/database_service.dart';
 import '../services/realtime_presence_service.dart';
 import '../services/ctf_service.dart';
