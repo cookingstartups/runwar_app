@@ -112,14 +112,14 @@ class _IntroScreenState extends State<IntroScreen> {
   Future<void> _done() async {
     await markShowcaseSeen();
     if (!mounted) return;
-    Navigator.pushReplacementNamed(context, '/request-access');
+    Navigator.pushReplacementNamed(context, '/login');
   }
 
   void _next() {
     if (_page < _slides.length - 1) {
       _controller.nextPage(
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeOutCubic,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeInOutCubic,
       );
     } else {
       _done();
@@ -142,9 +142,10 @@ class _IntroScreenState extends State<IntroScreen> {
       backgroundColor: kBg,
       body: Stack(
         children: [
-          // PageView fills screen — fullBleed slides need no surrounding padding
+          // PageView fills screen — vertical scroll: swipe down = next, swipe up = back
           PageView.builder(
             controller: _controller,
+            scrollDirection: Axis.vertical,
             onPageChanged: (i) => setState(() => _page = i),
             itemCount: _slides.length,
             itemBuilder: (_, i) => _SlidePage(slide: _slides[i]),
@@ -205,7 +206,7 @@ class _IntroScreenState extends State<IntroScreen> {
                             )
                           : null,
                       child: Text(
-                        _page < _slides.length - 1 ? 'NEXT →' : 'REQUEST INVITE →',
+                        _page < _slides.length - 1 ? 'NEXT →' : 'JOIN THE WAR →',
                         style: GoogleFonts.spaceGrotesk(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,

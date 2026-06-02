@@ -66,6 +66,8 @@ class RunWarApp extends StatelessWidget {
             return MaterialPageRoute(builder: (_) => const SplashScreen());
           case '/intro':
             return MaterialPageRoute(builder: (_) => const IntroScreen());
+          case '/login':
+            return MaterialPageRoute(builder: (_) => const LoginScreen());
           case '/request-access':
             final ref = settings.arguments as String?;
             return MaterialPageRoute(
