@@ -132,7 +132,7 @@ class _CitiesSelectionScreenState
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'RUNNERS · PICK YOUR CITY',
+                          'RUNNERS · CHOOSE YOUR GROUND',
                           style: TextStyle(
                             fontFamily: 'monospace',
                             fontSize: 10,
@@ -143,7 +143,7 @@ class _CitiesSelectionScreenState
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Where will\nyou run?',
+                          'Unlock your city.',
                           style: GoogleFonts.spaceGrotesk(
                             fontSize: 36,
                             fontWeight: FontWeight.w700,
