@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/auth_provider.dart';
 import '../providers/profile_provider.dart';
@@ -21,6 +22,7 @@ class ProfileScreen extends ConsumerWidget {
 
     final profileAsync = ref.watch(profileGateProvider(userId));
     final reputationAsync = ref.watch(reputationProvider(userId));
+    final referralCodeAsync = ref.watch(referralCodeProvider(userId));
 
     return Scaffold(
       backgroundColor: kBg,
@@ -72,7 +74,25 @@ class ProfileScreen extends ConsumerWidget {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 24),
+                  // Invite / referral code
+                  _InviteCodeSection(
+                    codeAsync: referralCodeAsync,
+                    onCopy: (code) {
+                      Clipboard.setData(ClipboardData(text: code));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Invite code copied: $code',
+                            style: monoStyle(size: 12),
+                          ),
+                          backgroundColor: kSurface,
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 20),
                   // P3: Reputation badge
                   reputationAsync.maybeWhen(
                     data: (rep) => Row(
@@ -124,6 +144,97 @@ class ProfileScreen extends ConsumerWidget {
           },
         ),
       ),
+    );
+  }
+}
+
+/// Displays the player's referral/invite code with a copy action.
+///
+/// Shows a locked state if the code is null (player not yet eligible to refer).
+/// "Limited uses" copy reflects server-side max_redemptions cap.
+class _InviteCodeSection extends StatelessWidget {
+  const _InviteCodeSection({
+    required this.codeAsync,
+    required this.onCopy,
+  });
+
+  final AsyncValue<String?> codeAsync;
+  final void Function(String code) onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('YOUR INVITE CODE', style: monoStyle(size: 10, color: kFgMuted)),
+        const SizedBox(height: 8),
+        codeAsync.when(
+          loading: () => Container(
+            height: 52,
+            decoration: BoxDecoration(
+              color: kSurface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: kBorder),
+            ),
+            child: const Center(
+              child: SizedBox(
+                width: 14, height: 14,
+                child: CircularProgressIndicator(color: kAccent, strokeWidth: 1.5),
+              ),
+            ),
+          ),
+          error: (_, __) => const SizedBox.shrink(),
+          data: (code) => code == null
+              ? Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: kSurface,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: kBorder),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.lock_outline, size: 14, color: kFgFaint),
+                      const SizedBox(width: 10),
+                      Text(
+                        'Invite others once you join the war.',
+                        style: monoStyle(size: 10, color: kFgFaint),
+                      ),
+                    ],
+                  ),
+                )
+              : GestureDetector(
+                  onTap: () => onCopy(code),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: kSurface,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: kBorder),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            code,
+                            style: monoStyle(size: 22, color: kAccent).copyWith(
+                              letterSpacing: 4,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const Icon(Icons.copy_outlined, size: 16, color: kFgMuted),
+                      ],
+                    ),
+                  ),
+                ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Share to invite runners into the war · limited uses',
+          style: monoStyle(size: 9, color: kFgFaint),
+        ),
+      ],
     );
   }
 }
