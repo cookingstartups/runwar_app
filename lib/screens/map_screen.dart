@@ -21,8 +21,6 @@ import '../services/territory_service.dart';
 import '../services/database/models/zone.dart';
 import '../services/database/models/city_config.dart';
 import '../widgets/attack_sheet.dart';
-import '../widgets/zone_level_badge.dart';
-import '../widgets/zone_legend.dart';
 import '../widgets/dispute_countdown_label.dart';
 import '../widgets/drop_marker.dart';
 import '../widgets/credits_chip.dart';
@@ -549,7 +547,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           right: 16,
           child: CreditsChip(playerId: userId),
         ),
-        // Phase 2 — superpower inventory strip (above ZoneLegend).
+        // Phase 2 — superpower inventory strip.
         Positioned(
           bottom: 80,
           left: 0,
@@ -574,12 +572,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ),
             ),
           ),
-        // Zone legend — bottom-right anchor (design.md §4).
-        const Positioned(
-          bottom: 24,
-          right: 24,
-          child: ZoneLegend(),
-        ),
       ],
     );
   }
@@ -601,7 +593,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         child: GestureDetector(
           key: ValueKey('zone-${z.id}'),
           onTap: () => _handleMapTap(context, centroid, zones, currentUserId),
-          child: ZoneLevelBadge(level: z.influenceLevel),
+          child: const SizedBox(width: 28, height: 28),
         ),
       ));
       if (z.status == ZoneStatus.disputed) {
