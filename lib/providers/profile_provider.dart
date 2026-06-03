@@ -29,8 +29,11 @@ final reputationProvider = FutureProvider.family<int, String>((ref, userId) asyn
   }
 });
 
-/// Player's referral code — format: username[0:3].toUpperCase() + 3 deterministic chars.
-/// Generated on first access, cached in local prefs, backfilled to Supabase.
+/// Player's referral code — format: username[0:3] + 6 monthly-rotating chars.
+///
+/// The 6-char suffix is derived from userId + current year/month, so it
+/// changes automatically on the first access of each new month. The local
+/// cache key is scoped to year+month so stale codes are never returned.
 final referralCodeProvider =
     FutureProvider.family<String?, String>((ref, userId) async {
   // Gate: only players who are invited AND have redeemed an invitation code can refer.
@@ -48,30 +51,20 @@ final referralCodeProvider =
   } catch (_) {
     return null;
   }
-  // 1. Supabase is canonical.
-  if (SupabaseService.instance.isConnected) {
-    try {
-      final row = await SupabaseService.instance.supabase
-          .from('players')
-          .select('referral_code')
-          .eq('id', userId)
-          .maybeSingle();
-      final remote = row?['referral_code'] as String?;
-      if (remote != null && remote.isNotEmpty) return remote;
-    } catch (_) {}
-  }
-  // 2. Local prefs cache (survives offline).
+  final now = DateTime.now();
+  final monthKey = 'referral_code_${userId}_${now.year}_${now.month}';
+  // 1. Local prefs cache scoped to current month (avoids Supabase round-trip).
   try {
     final cached = await DatabaseService.instance.db.query(
       'prefs',
       columns: ['value'],
       where: 'key = ?',
-      whereArgs: ['referral_code_$userId'],
+      whereArgs: [monthKey],
       limit: 1,
     );
     if (cached.isNotEmpty) return cached.first['value'] as String;
   } catch (_) {}
-  // 3. Generate: username[0:3] + 3 chars derived from userId hash.
+  // 2. Generate deterministically from username + userId + year + month.
   String username = '';
   try {
     final rows = await DatabaseService.instance.db.query(
@@ -79,15 +72,15 @@ final referralCodeProvider =
     );
     username = rows.isEmpty ? '' : (rows.first['username'] as String? ?? '');
   } catch (_) {}
-  final code = _buildReferralCode(username, userId);
-  // Persist locally so it never regenerates differently.
+  final code = _buildReferralCode(username, userId, now);
+  // Persist with month-scoped key so next month it regenerates.
   try {
     await DatabaseService.instance.db.insert(
-      'prefs', {'key': 'referral_code_$userId', 'value': code},
-      conflictAlgorithm: ConflictAlgorithm.ignore,
+      'prefs', {'key': monthKey, 'value': code},
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
   } catch (_) {}
-  // Backfill Supabase for existing users.
+  // Sync current code to Supabase (overwrites any previous month's value).
   if (SupabaseService.instance.isConnected) {
     try {
       await SupabaseService.instance.supabase
@@ -98,18 +91,26 @@ final referralCodeProvider =
   return code;
 });
 
-String _buildReferralCode(String username, String userId) {
+/// Builds a 9-char invite code: username[0:3] + 3 monthly-rotating + 3 static.
+///
+/// Middle 3: derived from userId + year + month → rotates each calendar month.
+/// Last 3: derived from userId only → permanent identifier, never rotates.
+String _buildReferralCode(String username, String userId, DateTime now) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   final clean = username.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
   final prefix = (clean.length >= 3 ? clean : (clean + 'XXX')).substring(0, 3);
-  // Derive 3-char suffix deterministically from userId so it's stable across reinstalls.
-  final hash = userId.replaceAll('-', '').codeUnits.fold(0, (a, b) => a * 31 + b);
-  final suffix = [
-    chars[(hash.abs() >> 0) % chars.length],
-    chars[(hash.abs() >> 5) % chars.length],
-    chars[(hash.abs() >> 10) % chars.length],
+  // Monthly-rotating middle 3.
+  final monthlySeed = userId.replaceAll('-', '') + now.year.toString() + now.month.toString();
+  final monthlyHash = monthlySeed.codeUnits.fold(0, (a, b) => a * 31 + b);
+  final rotating = List.generate(3, (i) => chars[(monthlyHash.abs() >> (i * 5)) % chars.length]).join();
+  // Static last 3 — derived from userId alone, never rotates.
+  final staticHash = userId.replaceAll('-', '').codeUnits.fold(0, (a, b) => a * 31 + b);
+  final stable = [
+    chars[(staticHash.abs() >> 0) % chars.length],
+    chars[(staticHash.abs() >> 5) % chars.length],
+    chars[(staticHash.abs() >> 10) % chars.length],
   ].join();
-  return '$prefix$suffix';
+  return '$prefix$rotating$stable';
 }
 
 /// Whether the player has linked a phone number (reads from local SQLite profiles).
