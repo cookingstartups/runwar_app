@@ -52,7 +52,7 @@ const _slides = [
   _Slide(
     tag: 'YOUR TURF',
     tagColor: kAccent,
-    headline: 'YOUR CITY IS\nA BATTLEGROUND.',
+    headline: 'YOUR CITY IS\nYOUR BATTLEGROUND.',
     body: 'Every street is contested. Every block is up for grabs.\nRun it. Own it. Stop — lose it.',
     lottie: 'assets/lottie/pulse.json',
     layout: _Layout.fullBleed,
@@ -151,25 +151,13 @@ class _IntroScreenState extends State<IntroScreen> {
       backgroundColor: kBg,
       body: Stack(
         children: [
-          // PageView fills screen — vertical swipe: up = back, down = next.
-          // GestureDetector adds horizontal swipe: left = next, right = back.
-          GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragEnd: (details) {
-              final v = details.primaryVelocity ?? 0;
-              if (v < -200) {
-                _next();
-              } else if (v > 200) {
-                _prev();
-              }
-            },
-            child: PageView.builder(
-              controller: _controller,
-              scrollDirection: Axis.vertical,
-              onPageChanged: (i) => setState(() => _page = i),
-              itemCount: _slides.length,
-              itemBuilder: (_, i) => _SlidePage(slide: _slides[i]),
-            ),
+          // PageView fills screen — horizontal swipe: left = next, right = back.
+          PageView.builder(
+            controller: _controller,
+            scrollDirection: Axis.horizontal,
+            onPageChanged: (i) => setState(() => _page = i),
+            itemCount: _slides.length,
+            itemBuilder: (_, i) => _SlidePage(slide: _slides[i]),
           ),
 
           // Skip row — floats above PageView
