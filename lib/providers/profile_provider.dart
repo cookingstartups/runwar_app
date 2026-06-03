@@ -29,7 +29,7 @@ final reputationProvider = FutureProvider.family<int, String>((ref, userId) asyn
   }
 });
 
-/// Player's referral code — format: username[0:3] + 6 monthly-rotating chars.
+/// Player's referral code — format: username[0:3] + 3 monthly-rotating chars = 6 chars total.
 ///
 /// The 6-char suffix is derived from userId + current year/month, so it
 /// changes automatically on the first access of each new month. The local
@@ -91,26 +91,17 @@ final referralCodeProvider =
   return code;
 });
 
-/// Builds a 9-char invite code: username[0:3] + 3 monthly-rotating + 3 static.
+/// Builds a 6-char invite code: username[0:3] + 3 monthly-rotating chars.
 ///
-/// Middle 3: derived from userId + year + month → rotates each calendar month.
-/// Last 3: derived from userId only → permanent identifier, never rotates.
+/// Last 3: derived from userId + year + month → rotates each calendar month.
 String _buildReferralCode(String username, String userId, DateTime now) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   final clean = username.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
   final prefix = (clean.length >= 3 ? clean : (clean + 'XXX')).substring(0, 3);
-  // Monthly-rotating middle 3.
-  final monthlySeed = userId.replaceAll('-', '') + now.year.toString() + now.month.toString();
-  final monthlyHash = monthlySeed.codeUnits.fold(0, (a, b) => a * 31 + b);
-  final rotating = List.generate(3, (i) => chars[(monthlyHash.abs() >> (i * 5)) % chars.length]).join();
-  // Static last 3 — derived from userId alone, never rotates.
-  final staticHash = userId.replaceAll('-', '').codeUnits.fold(0, (a, b) => a * 31 + b);
-  final stable = [
-    chars[(staticHash.abs() >> 0) % chars.length],
-    chars[(staticHash.abs() >> 5) % chars.length],
-    chars[(staticHash.abs() >> 10) % chars.length],
-  ].join();
-  return '$prefix$rotating$stable';
+  final seed = userId.replaceAll('-', '') + now.year.toString() + now.month.toString();
+  final hash = seed.codeUnits.fold(0, (a, b) => a * 31 + b);
+  final rotating = List.generate(3, (i) => chars[(hash.abs() >> (i * 5)) % chars.length]).join();
+  return '$prefix$rotating';
 }
 
 /// Whether the player has linked a phone number (reads from local SQLite profiles).
