@@ -987,8 +987,18 @@ class _IntroRivalsMapPainter extends CustomPainter with _IntroPainterHelpers {
 }
 
 // ---------------------------------------------------------------------------
-// 4. IntroFlagDropMap — GPS beacon urgency on real map (slide 4 CTF drop)
+// 4. IntroFlagDropMap — 3 runners race to L'Hemisfèric drop point (slide 4)
+//
+// Drop point: LatLng(39.4553, -0.3510) — L'Hemisfèric, Ciutat de les Arts
+// Map center: LatLng(39.4540, -0.3520), zoom 14
+//
+// Runner A (kAccent orange)  — north start, runs south along Av. de França
+// Runner B (kSea blue)       — northwest start near Ruzafa, runs east
+// Runner C (pink 0xFFFF3B7A) — east start near port, runs west
 // ---------------------------------------------------------------------------
+
+const Color _kRunnerCPink = Color(0xFFFF3B7A);
+
 class IntroFlagDropMap extends StatefulWidget {
   final Color accent;
   const IntroFlagDropMap({required this.accent, super.key});
@@ -998,10 +1008,51 @@ class IntroFlagDropMap extends StatefulWidget {
 
 class _IntroFlagDropMapState extends State<IntroFlagDropMap>
     with SingleTickerProviderStateMixin {
+  // ── Fixed coordinates ──────────────────────────────────────────────────────
   static const _kDropCoord = LatLng(39.4553, -0.3510);
 
+  // Runner A — north start near Av. de França / Gran Via junction.
+  // Route: Gran Via → Av. de França (south) → Av. del Congrés Eucarístic →
+  //        Pont de l'Exposició → drop point.
+  static const _kRouteA = [
+    LatLng(39.4640, -0.3560), // 0: start — Gran Via / Av. de França
+    LatLng(39.4618, -0.3548), // 1: south on Av. de França
+    LatLng(39.4595, -0.3535), // 2: continues south
+    LatLng(39.4575, -0.3523), // 3: Av. del Congrés Eucarístic turn
+    LatLng(39.4560, -0.3515), // 4: approaching Pont de l'Exposició
+    LatLng(39.4553, -0.3510), // 5: DROP POINT
+  ];
+
+  // Runner B — northwest start near Ruzafa / Carrer de la Reina.
+  // Route: east along Carrer de la Reina → Av. de les Corts Valencianes →
+  //        Av. del Saler south → drop point.
+  static const _kRouteB = [
+    LatLng(39.4600, -0.3680), // 0: start — Ruzafa area
+    LatLng(39.4598, -0.3645), // 1: east on Carrer de la Reina
+    LatLng(39.4592, -0.3610), // 2: continues east
+    LatLng(39.4580, -0.3575), // 3: Av. de les Corts Valencianes junction
+    LatLng(39.4568, -0.3545), // 4: south on Av. del Saler
+    LatLng(39.4553, -0.3510), // 5: DROP POINT
+  ];
+
+  // Runner C — east start near beach/port area.
+  // Route: west along Av. del Port → Av. de França turn north → drop point.
+  static const _kRouteC = [
+    LatLng(39.4500, -0.3380), // 0: start — near port/beach
+    LatLng(39.4508, -0.3410), // 1: west on Av. del Port
+    LatLng(39.4516, -0.3440), // 2: continues west
+    LatLng(39.4525, -0.3465), // 3: Av. de França turn north
+    LatLng(39.4537, -0.3488), // 4: north on Av. de França
+    LatLng(39.4553, -0.3510), // 5: DROP POINT
+  ];
+
+  // ── State ──────────────────────────────────────────────────────────────────
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
+
+  List<Offset> _routeA = [];
+  List<Offset> _routeB = [];
+  List<Offset> _routeC = [];
   Offset _dropPt = Offset.zero;
   bool _mapReady = false;
 
@@ -1009,8 +1060,9 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
   void initState() {
     super.initState();
     _ctrl = AnimationController(
-            vsync: this, duration: const Duration(milliseconds: 2800))
-        ..repeat();
+      vsync: this,
+      duration: const Duration(seconds: 5),
+    )..repeat();
   }
 
   @override
@@ -1020,10 +1072,17 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
     super.dispose();
   }
 
-  void _updatePoint() {
-    final p = _mapCtrl.camera.latLngToScreenPoint(_kDropCoord);
+  void _updatePoints() {
+    final cam = _mapCtrl.camera;
+    Offset toScreen(LatLng ll) {
+      final p = cam.latLngToScreenPoint(ll);
+      return Offset(p.x.toDouble(), p.y.toDouble());
+    }
     setState(() {
-      _dropPt = Offset(p.x.toDouble(), p.y.toDouble());
+      _routeA = _kRouteA.map(toScreen).toList();
+      _routeB = _kRouteB.map(toScreen).toList();
+      _routeC = _kRouteC.map(toScreen).toList();
+      _dropPt = toScreen(_kDropCoord);
       _mapReady = true;
     });
   }
@@ -1035,10 +1094,9 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
         _buildIntroMap(
           context: context,
           mapController: _mapCtrl,
-          center: const LatLng(39.4553, -0.3510),
-          zoom: 15.0,
-          onReady: _updatePoint,
-          maxZoom: 19,
+          center: const LatLng(39.4540, -0.3520),
+          zoom: 14.0,
+          onReady: _updatePoints,
         ),
         if (_mapReady)
           Positioned.fill(
@@ -1049,6 +1107,9 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
                   t: _ctrl.value,
                   accent: widget.accent,
                   dropPt: _dropPt,
+                  routeA: _routeA,
+                  routeB: _routeB,
+                  routeC: _routeC,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -1059,130 +1120,257 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
   }
 }
 
-class _IntroFlagDropMapPainter extends CustomPainter {
+class _IntroFlagDropMapPainter extends CustomPainter with _IntroPainterHelpers {
   final double t;
+  @override
   final Color accent;
   final Offset dropPt;
+  final List<Offset> routeA;
+  final List<Offset> routeB;
+  final List<Offset> routeC;
 
-  const _IntroFlagDropMapPainter(
-      {required this.t, required this.accent, required this.dropPt});
+  _IntroFlagDropMapPainter({
+    required this.t,
+    required this.accent,
+    required this.dropPt,
+    required this.routeA,
+    required this.routeB,
+    required this.routeC,
+  });
+
+  // ── Timeline constants ─────────────────────────────────────────────────────
+  // t 0.00–0.30 : runners appear + pulse at start positions
+  // t 0.00–0.75 : all 3 runners move along routes (staggered arrivals)
+  //   A arrives t=0.65, B arrives t=0.70, C arrives t=0.75
+  // t 0.50      : beacon starts pulsing at drop (kAccent2 rings)
+  // t 0.65      : Runner A arrives — "LOOT DROPPED" label flashes
+  // t 0.70      : Runner B arrives — white burst ring
+  // t 0.75      : Runner C arrives — "SPRINT!" tag briefly
+  // t 0.80–1.00 : all runners at drop, rings decay, global fade-out
+
+  // Per-runner movement: each runner travels from 0 to their arrival time.
+  // After arrival they are clamped at the drop point.
+  static const double _arrivalA = 0.65;
+  static const double _arrivalB = 0.70;
+  static const double _arrivalC = 0.75;
+  static const double _beaconStart = 0.50;
+  static const double _fadeStart = 0.80;
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  double _globalFade() {
+    if (t < _fadeStart) return 1.0;
+    return (1.0 - (t - _fadeStart) / (1.0 - _fadeStart)).clamp(0.0, 1.0);
+  }
+
+  /// Returns runner progress (0–1) along its route, clamped at arrival.
+  double _runnerProgress(double arrivalT) {
+    if (t >= arrivalT) return 1.0;
+    // Runners start moving at t=0.05 after initial pulse.
+    const startT = 0.05;
+    if (t < startT) return 0.0;
+    return ((t - startT) / (arrivalT - startT)).clamp(0.0, 1.0);
+  }
+
+  /// Returns Offset position along a route list at fractional progress p.
+  Offset _posOnRoute(List<Offset> pts, double p) {
+    if (pts.isEmpty) return Offset.zero;
+    final segs = pts.length - 1;
+    final totalLen = p.clamp(0.0, 1.0) * segs;
+    final segIdx = totalLen.floor().clamp(0, segs - 1);
+    final segFrac = (totalLen - segIdx).clamp(0.0, 1.0);
+    return Offset.lerp(pts[segIdx], pts[(segIdx + 1).clamp(0, segs)], segFrac)!;
+  }
+
+  void _drawRunnerDot(Canvas canvas, Offset pos, Color color, double fade) {
+    if (fade <= 0) return;
+    canvas.drawCircle(
+        pos,
+        12,
+        Paint()
+          ..color = color.withValues(alpha: 0.22 * fade)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
+    canvas.drawCircle(pos, 4.5, Paint()..color = color.withValues(alpha: fade));
+    canvas.drawCircle(
+        pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.85 * fade));
+  }
+
+  void _drawRouteTrace(Canvas canvas, List<Offset> pts, double progress,
+      Color color, double fade) {
+    if (pts.isEmpty || fade <= 0) return;
+    final segs = pts.length - 1;
+    final totalLen = progress.clamp(0.0, 1.0) * segs;
+    final p = Paint()
+      ..color = color.withValues(alpha: 0.65 * fade)
+      ..strokeWidth = 1.8
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final path = Path()..moveTo(pts[0].dx, pts[0].dy);
+    for (int i = 0; i < segs; i++) {
+      if (totalLen > i) {
+        final segT = (totalLen - i).clamp(0.0, 1.0);
+        final pt = Offset.lerp(pts[i], pts[i + 1], segT)!;
+        path.lineTo(pt.dx, pt.dy);
+      }
+    }
+    canvas.drawPath(path, p);
+  }
+
+  // Start-position pulse: visible in t=0.00–0.30.
+  void _drawStartPulse(Canvas canvas, Offset pos, Color color) {
+    if (t >= 0.30) return;
+    final pulseT = (t / 0.30).clamp(0.0, 1.0);
+    final radius = pulseT * 22;
+    canvas.drawCircle(
+        pos,
+        radius,
+        Paint()
+          ..color = color.withValues(alpha: (1.0 - pulseT) * 0.45)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5);
+  }
+
+  void _drawLabel(Canvas canvas, String text, Offset center, Color color,
+      double opacity) {
+    if (opacity <= 0) return;
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 10,
+          letterSpacing: 2,
+          color: color.withValues(alpha: opacity),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy - tp.height / 2));
+  }
+
+  // ── Beacon at drop point ───────────────────────────────────────────────────
+  void _drawBeacon(Canvas canvas, double fade) {
+    if (t < _beaconStart || fade <= 0) return;
+    final beaconT = (t - _beaconStart) / (1.0 - _beaconStart);
+    final pulseBase = (math.sin(beaconT * math.pi * 6) + 1) / 2;
+
+    // Central glowing dot.
+    canvas.drawCircle(
+        dropPt,
+        6 + pulseBase * 3,
+        Paint()
+          ..color = kAccent2.withValues(alpha: 0.18 * fade)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
+    canvas.drawCircle(
+        dropPt, 5, Paint()..color = kAccent2.withValues(alpha: 0.9 * fade));
+    canvas.drawCircle(
+        dropPt, 2, Paint()..color = Colors.white.withValues(alpha: 0.9 * fade));
+
+    // 3 concentric ring pulses.
+    for (int i = 0; i < 3; i++) {
+      final delay = i * 0.18;
+      final ringProgress = ((beaconT - delay) / 0.54).clamp(0.0, 1.0);
+      if (ringProgress > 0) {
+        canvas.drawCircle(
+            dropPt,
+            ringProgress * 55,
+            Paint()
+              ..color = kAccent2.withValues(alpha: (1.0 - ringProgress) * 0.50 * fade)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1.5);
+      }
+    }
+  }
+
+  // White burst ring when a runner arrives.
+  void _drawArrivalBurst(Canvas canvas, double arrivalT, double fade) {
+    if (t < arrivalT || fade <= 0) return;
+    final burstT = ((t - arrivalT) / 0.08).clamp(0.0, 1.0);
+    if (burstT >= 1.0) return;
+    canvas.drawCircle(
+        dropPt,
+        burstT * 60,
+        Paint()
+          ..color = Colors.white.withValues(alpha: (1.0 - burstT) * 0.55 * fade)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5);
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (dropPt == Offset.zero) return;
+    if (routeA.isEmpty) return;
 
-    final w = size.width;
-    final h = size.height;
-    final cx = dropPt.dx;
-    final cy = dropPt.dy;
+    final fade = _globalFade();
 
-    final dropPhase = (t / 0.25).clamp(0.0, 1.0);
-    final markerY = Offset.lerp(
-      Offset(cx, -20),
-      Offset(cx, cy),
-      Curves.bounceOut.transform(dropPhase),
-    )!
-        .dy;
+    // ── 1. Start-position pulses (t=0.00–0.30) ──────────────────────────────
+    _drawStartPulse(canvas, routeA.first, kAccent);
+    _drawStartPulse(canvas, routeB.first, kSea);
+    _drawStartPulse(canvas, routeC.first, _kRunnerCPink);
 
-    if (t > 0.25 && t < 0.35) {
-      final flashOpacity = (1 - (t - 0.25) / 0.1) * 0.3;
-      canvas.drawCircle(
-          Offset(cx, cy),
-          50,
-          Paint()
-            ..color = accent.withValues(alpha: flashOpacity)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 20));
-    }
+    // ── 2. Runner traces ─────────────────────────────────────────────────────
+    final progressA = _runnerProgress(_arrivalA);
+    final progressB = _runnerProgress(_arrivalB);
+    final progressC = _runnerProgress(_arrivalC);
 
-    for (int i = 0; i < 3; i++) {
-      final delay = i * 0.22;
-      final ringT =
-          (t > 0.3 ? (t - 0.3 - delay) / 0.55 : 0.0).clamp(0.0, 1.0);
-      if (ringT > 0) {
-        canvas.drawCircle(
-            Offset(cx, cy),
-            ringT * (w * 0.42),
-            Paint()
-              ..color = accent.withValues(alpha: (1.0 - ringT) * 0.45)
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 1.5 + (1 - ringT) * 1.5);
-      }
-    }
+    _drawRouteTrace(canvas, routeA, progressA, kAccent, fade);
+    _drawRouteTrace(canvas, routeB, progressB, kSea, fade);
+    _drawRouteTrace(canvas, routeC, progressC, _kRunnerCPink, fade);
 
-    if (t > 0.15) {
-      final markerOpacity = dropPhase.clamp(0.3, 1.0);
-      canvas.drawLine(
-          Offset(cx, markerY),
-          Offset(cx, markerY + 22),
-          Paint()
-            ..color = kFg.withValues(alpha: markerOpacity * 0.9)
-            ..strokeWidth = 2.0
-            ..strokeCap = StrokeCap.round);
-      final pulseSin = (math.sin(t * math.pi * 4) + 1) / 2;
-      canvas.drawCircle(
-          Offset(cx, markerY),
-          14 + pulseSin * 4,
-          Paint()
-            ..color = accent.withValues(alpha: 0.2 * markerOpacity)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
-      canvas.drawCircle(Offset(cx, markerY), 10,
-          Paint()..color = accent.withValues(alpha: markerOpacity));
-      canvas.drawCircle(
-          Offset(cx, markerY),
-          4,
-          Paint()..color = Colors.white.withValues(alpha: markerOpacity * 0.9));
-    }
+    // ── 3. Runner dots ───────────────────────────────────────────────────────
+    // Show dot while en route; once arrived hold at drop point until fade.
+    final posA = progressA < 1.0 ? _posOnRoute(routeA, progressA) : dropPt;
+    final posB = progressB < 1.0 ? _posOnRoute(routeB, progressB) : dropPt;
+    final posC = progressC < 1.0 ? _posOnRoute(routeC, progressC) : dropPt;
 
-    if (dropPhase > 0.8) {
-      final shadowOp = ((dropPhase - 0.8) / 0.2).clamp(0.0, 1.0) * 0.25;
-      canvas.drawOval(
-        Rect.fromCenter(center: Offset(cx, cy + 24), width: 30, height: 8),
-        Paint()
-          ..color = accent.withValues(alpha: shadowOp)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+    // Only draw runner if before arrival or if still fading out post-arrival.
+    _drawRunnerDot(canvas, posA, kAccent, fade);
+    _drawRunnerDot(canvas, posB, kSea, fade);
+    _drawRunnerDot(canvas, posC, _kRunnerCPink, fade);
+
+    // ── 4. Beacon at drop point (t=0.50+) ────────────────────────────────────
+    _drawBeacon(canvas, fade);
+
+    // ── 5. Runner A arrives (t=0.65) — arrival burst + "LOOT DROPPED" ────────
+    _drawArrivalBurst(canvas, _arrivalA, fade);
+    if (t > _arrivalA && t < 0.80) {
+      final lootOpacity = t < 0.725
+          ? ((t - _arrivalA) / 0.075).clamp(0.0, 1.0)
+          : ((1.0 - (t - 0.725) / 0.075)).clamp(0.0, 1.0);
+      _drawLabel(
+        canvas,
+        'LOOT DROPPED',
+        dropPt.translate(0, -28),
+        kAccent2,
+        lootOpacity * fade,
       );
     }
 
-    if (t > 0.4) {
-      final textOp = ((t - 0.4) / 0.15).clamp(0.0, 1.0);
-      final tp = TextPainter(
-        text: TextSpan(
-          text: '▸ NEW OBJECT DROP',
-          style: TextStyle(
-            fontFamily: 'monospace',
-            fontSize: 10,
-            letterSpacing: 2,
-            color: accent.withValues(alpha: textOp * 0.85),
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, Offset(cx - tp.width / 2, cy + h * 0.22));
-    }
+    // ── 6. Runner B arrives (t=0.70) — white burst ring ──────────────────────
+    _drawArrivalBurst(canvas, _arrivalB, fade);
 
-    if (t > 0.5) {
-      const coords = '39.4553° N, 0.3510° W';
-      final tickerOp = ((math.sin(t * math.pi * 8) + 1) / 2) * 0.5 + 0.3;
-      final fadeIn = ((t - 0.5) / 0.15).clamp(0.0, 1.0);
-      final tp2 = TextPainter(
-        text: TextSpan(
-          text: coords,
-          style: TextStyle(
-            fontFamily: 'monospace',
-            fontSize: 8,
-            letterSpacing: 1,
-            color: kFgMuted.withValues(alpha: tickerOp * fadeIn),
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp2.paint(canvas, Offset(cx - tp2.width / 2, cy + h * 0.30));
+    // ── 7. Runner C arrives (t=0.75) — "SPRINT!" tag briefly near route ──────
+    _drawArrivalBurst(canvas, _arrivalC, fade);
+    if (t > _arrivalC && t < 0.90) {
+      final sprintOpacity = t < 0.825
+          ? ((t - _arrivalC) / 0.075).clamp(0.0, 1.0)
+          : ((1.0 - (t - 0.825) / 0.075)).clamp(0.0, 1.0);
+      // Place tag slightly offset from where runner C came from (east).
+      final sprintPos = routeC.length >= 2
+          ? routeC[routeC.length - 2].translate(18, -12)
+          : dropPt.translate(28, -12);
+      _drawLabel(canvas, 'SPRINT!', sprintPos, _kRunnerCPink,
+          sprintOpacity * fade);
     }
   }
 
   @override
   bool shouldRepaint(_IntroFlagDropMapPainter old) =>
-      old.t != t || old.dropPt != dropPt || old.accent != accent;
+      old.t != t ||
+      old.dropPt != dropPt ||
+      old.routeA != routeA ||
+      old.routeB != routeB ||
+      old.routeC != routeC;
 }
 
