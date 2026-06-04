@@ -109,8 +109,8 @@ const _slides = [
   _Slide(
     tag: 'CAPTURE THE FLAG',
     tagColor: kAccent,
-    headline: 'A PIN DROPS.\nONE RUNNER WINS.',
-    body: 'Anywhere. Anytime. A flag lights up the map — and the first pair of legs to touch that GPS spot takes the prize. Hesitate and someone else is already running. Win it. Wear it.',
+    headline: 'A FLAG DROPS.\nONE RUNNER WINS.',
+    body: 'Anywhere. Anytime. A flag lights up the map — first runner to capture it takes the prize. Hesitate and someone else is already sprinting. Win it. Wear it.',
     anim: _Anim.rivals,
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
