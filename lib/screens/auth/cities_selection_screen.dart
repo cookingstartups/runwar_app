@@ -136,6 +136,7 @@ class _CitiesSelectionScreenState
       }
       await WaitlistRepository.instance.joinCities(userId, _selected.toList());
       ref.invalidate(joinedCitySlugsProvider(userId));
+      ref.invalidate(citiesProvider);
       ref.invalidate(profileGateProvider(userId));
     } catch (e) {
       if (mounted) {
