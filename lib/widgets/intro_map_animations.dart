@@ -371,16 +371,18 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
   });
 
   // Segment indices where each block loop closes.
+  // Block 3 uses idx 10 (one before the final point) so the fill can ramp up
+  // before traveled caps at 11.
   static const int _block1CloseIdx = 4;
   static const int _block2CloseIdx = 8;
-  static const int _block3CloseIdx = 11; // also == route.length - 1
+  static const int _block3CloseIdx = 10;
 
   // Fill opacity driven by how far past each close index the runner has traveled.
-  // Ramp window of 0.5 segments; fades out over t=0.93–1.0.
+  // Ramp window of 0.5 segments; holds until t=0.94, then fades out over 0.94–1.0.
   double _fillOpacity(double traveled, double closeIdx, double t) {
     final frac = ((traveled - closeIdx) / 0.5).clamp(0.0, 1.0);
     final fade =
-        t > 0.93 ? (1.0 - (t - 0.93) / 0.07).clamp(0.0, 1.0) : 1.0;
+        t > 0.94 ? (1.0 - (t - 0.94) / 0.06).clamp(0.0, 1.0) : 1.0;
     return frac * fade * 0.28;
   }
 
@@ -388,9 +390,9 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
   void paint(Canvas canvas, Size size) {
     if (route.isEmpty) return;
 
-    // Runner completes all 3 blocks by t=0.90, fills hold to t=0.93, then fade.
+    // Runner completes all 3 blocks by t=0.82, fills hold until t=0.94, then fade.
     final segs = route.length - 1; // 11 segments
-    final routeProgress = (t / 0.90).clamp(0.0, 1.0);
+    final routeProgress = (t / 0.82).clamp(0.0, 1.0);
     final traveled = routeProgress * segs;
 
     // Block fills — appear as the runner closes each loop.
@@ -405,26 +407,26 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
     drawTrace(canvas, route, routeProgress);
 
     // Runner dot — visible while tracing (before fade-out window).
-    if (t < 0.93) {
+    if (t < 0.94) {
       drawRunner(canvas, route, routeProgress);
     }
 
-    // Ping burst when block 1 closes.
+    // Ping burst when block 1 closes — wider window (1.5 segs) for slower pulse.
     final ping1T = traveled - _block1CloseIdx;
-    if (ping1T > 0 && ping1T < 0.10 * segs) {
-      drawPings(canvas, block1, (ping1T / (0.10 * segs)).clamp(0.0, 1.0));
+    if (ping1T > 0 && ping1T < 1.5) {
+      drawPings(canvas, block1, (ping1T / 1.5).clamp(0.0, 1.0));
     }
 
     // Ping burst when block 2 closes.
     final ping2T = traveled - _block2CloseIdx;
-    if (ping2T > 0 && ping2T < 0.8) {
-      drawPings(canvas, block2, (ping2T / 0.8).clamp(0.0, 1.0));
+    if (ping2T > 0 && ping2T < 1.5) {
+      drawPings(canvas, block2, (ping2T / 1.5).clamp(0.0, 1.0));
     }
 
     // Ping burst when block 3 closes.
     final ping3T = traveled - _block3CloseIdx;
-    if (ping3T > 0 && ping3T < 0.8) {
-      drawPings(canvas, block3, (ping3T / 0.8).clamp(0.0, 1.0));
+    if (ping3T > 0 && ping3T < 1.5) {
+      drawPings(canvas, block3, (ping3T / 1.5).clamp(0.0, 1.0));
     }
   }
 
