@@ -52,35 +52,35 @@ const _slides = [
   _Slide(
     tag: 'YOUR TURF',
     tagColor: kAccent,
-    headline: 'YOUR CITY IS\nYOUR BATTLEGROUND.',
-    body: 'Every street is contested. Every block is up for grabs.\nRun it. Own it. Stop — lose it.',
+    headline: 'YOUR CITY.\nYOUR RULES.',
+    body: 'Run it. Own it. Every block you stop on belongs to someone else.',
     lottie: 'assets/lottie/pulse.json',
     layout: _Layout.fullBleed,
   ),
-  // 2 — Stakes
+  // 2 — How it works
   _Slide(
-    tag: 'THE RULES',
+    tag: 'HOW IT WORKS',
     tagColor: kSea,
-    headline: 'RUN IT. OWN IT.\nSTOP. LOSE IT.',
-    body: 'The map rewards presence, not history.\nIf you didn\'t earn it on foot, you don\'t keep it.',
+    headline: 'LASSO A ZONE.\nIT\'S YOURS.',
+    body: 'Draw a loop around any city block while running. If nobody defends it — it\'s yours.',
     lottie: 'assets/lottie/hex_capture.json',
     layout: _Layout.textTopVisualBottom,
   ),
-  // 3 — Live city / social (Pablo's #1 hook)
+  // 3 — Live map
   _Slide(
-    tag: 'LIVE CITY',
+    tag: 'LIVE MAP',
     tagColor: kAccent,
-    headline: 'YOUR RIVALS ARE\nALREADY RUNNING.',
-    body: 'See other runners on the map. In real time. In your city.\nEvery block you see belongs to someone.',
+    headline: 'RIVALS ARE\nRUNNING NOW.',
+    body: 'The map updates live. See who\'s running, what they own, and what you can take.',
     lottie: 'assets/lottie/rivals.json',
     layout: _Layout.textTopVisualBottom,
   ),
-  // 4 — Daily CTF + GPS drops (Pablo confirmed IN MVP)
+  // 4 — Daily drops
   _Slide(
     tag: 'DAILY DROPS',
     tagColor: kAccent2,
-    headline: 'A FLAG JUST\nDROPPED.',
-    body: 'Real GPS locations. Real urgency. First runner to arrive wins.\nMap drops and powers hidden across your city.',
+    headline: 'FIRST HERE\nWINS.',
+    body: 'GPS-pinned loot drops appear across your city. First runner to the spot claims it.',
     lottie: 'assets/lottie/ctf_drop.json',
     layout: _Layout.textTopVisualBottom,
   ),
@@ -88,8 +88,8 @@ const _slides = [
   _Slide(
     tag: 'INVITE ONLY',
     tagColor: kAccent,
-    headline: 'NOT BY LUCK.\nBY HUNGER.',
-    body: 'The runners who feel it most get in first.\nYour city is waiting.',
+    headline: 'YOUR CITY\nIS WAITING.',
+    body: 'Only runners who feel it get in. Are you one of them?',
     lottie: null,
     layout: _Layout.centeredClose,
   ),
@@ -105,12 +105,33 @@ class IntroScreen extends StatefulWidget {
   State<IntroScreen> createState() => _IntroScreenState();
 }
 
-class _IntroScreenState extends State<IntroScreen> {
+class _IntroScreenState extends State<IntroScreen>
+    with TickerProviderStateMixin {
+  late AnimationController _ctrl;
   int _page = 0;
-
-  // Track last navigation axis + direction so AnimatedSwitcher picks the right offset.
+  int _prevPage = 0;
   Axis _axis = Axis.vertical;
-  int _dir = 1; // +1 = forward, -1 = backward
+  int _dir = 1; // +1 forward, -1 backward
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 420),
+    );
+    _ctrl.addStatusListener((s) {
+      if (s == AnimationStatus.completed) {
+        setState(() => _prevPage = _page);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _done() async {
     await markShowcaseSeen();
@@ -118,32 +139,23 @@ class _IntroScreenState extends State<IntroScreen> {
     Navigator.pushReplacementNamed(context, '/login');
   }
 
-  void _next({Axis axis = Axis.vertical}) {
-    if (_page < _slides.length - 1) {
-      setState(() {
-        _axis = axis;
-        _dir = 1;
-        _page++;
-      });
-    } else {
-      _done();
+  void _navigate(int delta, {Axis axis = Axis.vertical}) {
+    final next = (_page + delta).clamp(0, _slides.length - 1);
+    if (next == _page) {
+      if (delta > 0 && _page == _slides.length - 1) _done();
+      return;
     }
+    setState(() {
+      _prevPage = _page;
+      _page = next;
+      _axis = axis;
+      _dir = delta.sign;
+    });
+    _ctrl.forward(from: 0);
   }
 
-  void _prev({Axis axis = Axis.vertical}) {
-    if (_page > 0) {
-      setState(() {
-        _axis = axis;
-        _dir = -1;
-        _page--;
-      });
-    }
-  }
-
-  Widget _buildSlide(int i) => KeyedSubtree(
-        key: ValueKey(i),
-        child: _SlidePage(slide: _slides[i]),
-      );
+  void _next({Axis axis = Axis.vertical}) => _navigate(1, axis: axis);
+  void _prev({Axis axis = Axis.vertical}) => _navigate(-1, axis: axis);
 
   @override
   Widget build(BuildContext context) {
@@ -174,25 +186,44 @@ class _IntroScreenState extends State<IntroScreen> {
         },
         child: Stack(
           children: [
-            // Directional animated carousel — transition axis matches swipe axis.
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 450),
-              switchInCurve: Curves.easeInOutCubic,
-              switchOutCurve: Curves.easeInOutCubic,
-              transitionBuilder: (child, anim) {
-                final isIncoming = child.key == ValueKey(_page);
-                // unit vector: positive = right (horizontal) or down (vertical)
-                final unit = _axis == Axis.vertical
-                    ? Offset(0, _dir.toDouble())
-                    : Offset(_dir.toDouble(), 0);
-                final begin = isIncoming ? unit : Offset.zero;
-                final end = isIncoming ? Offset.zero : -unit;
-                return SlideTransition(
-                  position: Tween<Offset>(begin: begin, end: end).animate(anim),
-                  child: child,
-                );
-              },
-              child: _buildSlide(_page),
+            // Stack-based slide transition — no AnimatedSwitcher flicker
+            ClipRect(
+              child: Stack(
+                children: [
+                  // Outgoing — slides away
+                  SlideTransition(
+                    position: Tween<Offset>(
+                      begin: Offset.zero,
+                      end: _axis == Axis.vertical
+                          ? Offset(0, -_dir.toDouble())
+                          : Offset(-_dir.toDouble(), 0),
+                    ).animate(CurvedAnimation(
+                      parent: _ctrl,
+                      curve: Curves.easeInOutCubic,
+                    )),
+                    child: _SlidePage(
+                      slide: _slides[_prevPage],
+                      key: ValueKey(_prevPage),
+                    ),
+                  ),
+                  // Incoming — slides in
+                  SlideTransition(
+                    position: Tween<Offset>(
+                      begin: _axis == Axis.vertical
+                          ? Offset(0, _dir.toDouble())
+                          : Offset(_dir.toDouble(), 0),
+                      end: Offset.zero,
+                    ).animate(CurvedAnimation(
+                      parent: _ctrl,
+                      curve: Curves.easeInOutCubic,
+                    )),
+                    child: _SlidePage(
+                      slide: _slides[_page],
+                      key: ValueKey(_page),
+                    ),
+                  ),
+                ],
+              ),
             ),
 
             // Tap-border navigation — left edge → prev, right edge → next.
@@ -256,9 +287,9 @@ class _IntroScreenState extends State<IntroScreen> {
                         _slides.length,
                         (i) => AnimatedContainer(
                           duration: const Duration(milliseconds: 300),
-                          margin: const EdgeInsets.symmetric(horizontal: 3),
-                          width: i == _page ? 20 : 6,
-                          height: 6,
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          width: i == _page ? 28 : 6,
+                          height: i == _page ? 8 : 6,
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(3),
                             color: i == _page ? kAccent : kFgFaint,
@@ -275,14 +306,16 @@ class _IntroScreenState extends State<IntroScreen> {
                             ? ElevatedButton.styleFrom(
                                 backgroundColor: kAccent,
                                 foregroundColor: kBg,
+                                shadowColor: kAccent.withValues(alpha: 0.5),
+                                elevation: 8,
                               )
                             : null,
                         child: Text(
                           _page < _slides.length - 1 ? 'NEXT →' : 'JOIN THE WAR →',
                           style: GoogleFonts.spaceGrotesk(
-                            fontSize: 12,
+                            fontSize: 13,
                             fontWeight: FontWeight.w700,
-                            letterSpacing: 2.5,
+                            letterSpacing: 3.0,
                             color: kBg,
                           ),
                         ),
@@ -304,7 +337,7 @@ class _IntroScreenState extends State<IntroScreen> {
 // ---------------------------------------------------------------------------
 class _SlidePage extends StatelessWidget {
   final _Slide slide;
-  const _SlidePage({required this.slide});
+  const _SlidePage({required this.slide, super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -342,6 +375,8 @@ class _FullBleedSlide extends StatelessWidget {
                 slide.lottie!,
                 repeat: true,
                 fit: BoxFit.cover,
+                frameRate: FrameRate.max,
+                errorBuilder: (_, __, ___) => Container(color: kSurface),
                 delegates: LottieDelegates(
                   values: [
                     ValueDelegate.colorFilter(
@@ -375,7 +410,7 @@ class _FullBleedSlide extends StatelessWidget {
 
         // Text — positioned center-left, above scrim
         Positioned(
-          top: top + 60,
+          top: top + 80,
           left: 28,
           right: 28,
           child: Column(
@@ -389,7 +424,7 @@ class _FullBleedSlide extends StatelessWidget {
                 child: Text(
                   slide.headline,
                   style: GoogleFonts.bebasNeue(
-                    fontSize: 58,
+                    fontSize: 64,
                     height: 1.0,
                     color: kFg,
                     letterSpacing: 2,
@@ -488,11 +523,14 @@ class _TextTopSlide extends StatelessWidget {
                         slide.lottie!,
                         repeat: true,
                         fit: BoxFit.contain,
+                        frameRate: FrameRate.max,
+                        errorBuilder: (_, __, ___) => Container(color: kSurface),
                         delegates: LottieDelegates(
                           values: [
                             ValueDelegate.colorFilter(
                               const ['**'],
-                              value: ColorFilter.mode(slide.tagColor, BlendMode.srcIn),
+                              value: ColorFilter.mode(
+                                  slide.tagColor, BlendMode.srcIn),
                             ),
                           ],
                         ),
@@ -509,7 +547,7 @@ class _TextTopSlide extends StatelessWidget {
 
 // ---------------------------------------------------------------------------
 // Layout C — Centered close (slide 5: invite only)
-// Pure dark screen, centered typography, no animation — silence = pressure
+// Pure dark screen, centered typography, pulse ring — silence = pressure
 // ---------------------------------------------------------------------------
 class _CenteredCloseSlide extends StatelessWidget {
   final _Slide slide;
@@ -524,7 +562,9 @@ class _CenteredCloseSlide extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           _TagChip(slide: slide, centered: true),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
+          const _PulseRing(),
+          const SizedBox(height: 20),
           Text(
             slide.headline,
             textAlign: TextAlign.center,
@@ -543,7 +583,9 @@ class _CenteredCloseSlide extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: bodyStyle(size: 15, color: kFgMuted),
           ),
-          const SizedBox(height: 36),
+          const SizedBox(height: 20),
+          Container(width: 40, height: 1, color: kAccent.withValues(alpha: 0.3)),
+          const SizedBox(height: 16),
           // Scarcity signal
           Text(
             'EARLY ACCESS · INVITE ONLY',
@@ -553,6 +595,52 @@ class _CenteredCloseSlide extends StatelessWidget {
       ),
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Pulse ring — radar ping animation for slide 5
+// ---------------------------------------------------------------------------
+class _PulseRing extends StatefulWidget {
+  const _PulseRing();
+
+  @override
+  State<_PulseRing> createState() => _PulseRingState();
+}
+
+class _PulseRingState extends State<_PulseRing>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _c,
+        builder: (_, __) => Container(
+          width: 60 + _c.value * 24,
+          height: 60 + _c.value * 24,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: kAccent.withValues(alpha: (1 - _c.value) * 0.25),
+              width: 1.5,
+            ),
+          ),
+        ),
+      );
 }
 
 // ---------------------------------------------------------------------------
@@ -569,8 +657,8 @@ class _TagChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         border: Border.all(color: slide.tagColor.withValues(alpha: 0.5)),
-        borderRadius: BorderRadius.circular(4),
-        color: slide.tagColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+        color: slide.tagColor.withValues(alpha: 0.12),
       ),
       child: Text(slide.tag, style: monoStyle(size: 9, color: slide.tagColor)),
     );
