@@ -12,9 +12,14 @@ import '../theme.dart';
 /// Does NOT intercept taps — the ring is wrapped in IgnorePointer.
 /// The banner is interactive so it remains readable but never blocks the map.
 class MissionModeOverlay extends StatefulWidget {
-  const MissionModeOverlay({super.key, required this.missionStep});
+  const MissionModeOverlay({
+    super.key,
+    required this.missionStep,
+    this.isRecording = false,
+  });
 
   final MissionStep missionStep;
+  final bool isRecording;
 
   @override
   State<MissionModeOverlay> createState() => _MissionModeOverlayState();
@@ -39,11 +44,25 @@ class _MissionModeOverlayState extends State<MissionModeOverlay>
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(MissionModeOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isRecording != oldWidget.isRecording) {
+      if (widget.isRecording) {
+        _pulse.stop();
+      } else {
+        _pulse.repeat();
+      }
+    }
+  }
+
   String get _bannerText {
-    return switch (widget.missionStep) {
-      MissionStep.mission1Claim => 'TAP THE RUN BUTTON. START WALKING.',
-      MissionStep.mission2Attack => 'WALK A LOOP AROUND THE RIVAL ZONE.',
-    };
+    if (widget.missionStep == MissionStep.mission1Claim) {
+      return widget.isRecording
+          ? 'WALK A LOOP. RETURN TO START.'
+          : 'TAP THE BUTTON. START WALKING.';
+    }
+    return 'WALK A LOOP AROUND THE RIVAL ZONE.';
   }
 
   @override

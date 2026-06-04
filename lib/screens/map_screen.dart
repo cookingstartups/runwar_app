@@ -221,13 +221,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ),
     ];
 
+    final recState = ref.watch(runRecorderProvider);
+    final isRecording = recState == RecorderState.recording;
+
     final mapBody = zonesAsync.when(
       loading: () => _buildMap(context, center, const [],
-          showError: false, city: city, userId: userId, fogCenters: fogCenters),
+          showError: false, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
       error: (e, _) => _buildMap(context, center, const [],
-          showError: true, city: city, userId: userId, fogCenters: fogCenters),
+          showError: true, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
       data: (zones) => _buildMap(context, center, zones,
-          showError: false, city: city, userId: userId, fogCenters: fogCenters),
+          showError: false, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
     );
 
     // When in mission mode, composite MissionModeOverlay on top of the map.
@@ -235,7 +238,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ? Stack(
             children: [
               mapBody,
-              MissionModeOverlay(missionStep: widget.missionStep!),
+              MissionModeOverlay(
+                missionStep: widget.missionStep!,
+                isRecording: isRecording,
+              ),
             ],
           )
         : mapBody;
@@ -491,6 +497,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     String city = '',
     String userId = '',
     List<({LatLng point, double radiusM})> fogCenters = const [],
+    bool isRecording = false,
   }) {
     // Only render zones whose centroid is inside a revealed fog circle.
     final visibleZones = fogCenters.isEmpty
@@ -702,19 +709,25 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         Positioned(
           top: 48,
           right: 16,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              StreakChip(
-                streak: ref
-                    .watch(trialStatusProvider(userId))
-                    .valueOrNull
-                    ?.streak ?? 0,
-                userId: userId,
+          child: Opacity(
+            opacity: widget.missionStep != null && !isRecording ? 0.35 : 1.0,
+            child: IgnorePointer(
+              ignoring: widget.missionStep != null && !isRecording,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  StreakChip(
+                    streak: ref
+                        .watch(trialStatusProvider(userId))
+                        .valueOrNull
+                        ?.streak ?? 0,
+                    userId: userId,
+                  ),
+                  const SizedBox(width: 8),
+                  CreditsChip(playerId: userId),
+                ],
               ),
-              const SizedBox(width: 8),
-              CreditsChip(playerId: userId),
-            ],
+            ),
           ),
         ),
         // Phase 2 — superpower inventory strip.

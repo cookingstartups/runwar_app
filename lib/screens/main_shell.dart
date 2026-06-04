@@ -12,6 +12,7 @@ import '../services/ctf_service.dart';
 import '../services/fcm_service.dart';
 import '../models/daily_mission.dart';
 import '../services/daily_missions_service.dart';
+import '../services/streak_reminder_scheduler.dart';
 import '../services/telemetry_service.dart';
 import '../widgets/daily_login_modal.dart';
 import '../widgets/milestone_reward_modal.dart';
@@ -106,15 +107,28 @@ class _MainShellState extends ConsumerState<MainShell>
         'milestone_reward_shown',
         props: {'day': milestone.day},
       );
+
+      // Fetch subscription tier for paywall gating in the modal.
+      final streak = ref.read(dailyStreakProvider(userId)).valueOrNull;
+      final subscriptionTier = streak?.subscriptionTier ?? 'free';
+
+      if (!mounted) return;
+
       await showDialog<void>(
         context: context,
         builder: (_) => MilestoneRewardModal(
           day: milestone.day,
           creditsAwarded: milestone.credits,
           powerGranted: milestone.power,
+          subscriptionTier: subscriptionTier,
         ),
       );
     }
+
+    await StreakReminderScheduler.scheduleOrCancel(
+      currentStreak: result.streak,
+      lastLoginAt: result.longestStreak > 0 ? DateTime.now() : null,
+    );
   }
 
   static String _todayString() {

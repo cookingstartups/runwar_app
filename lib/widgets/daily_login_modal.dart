@@ -116,6 +116,11 @@ class _DailyLoginModalState extends State<DailyLoginModal>
                       "TODAY'S MISSIONS",
                       style: monoStyle(size: 10, color: kFgMuted),
                     ),
+                    if (widget.streak == 3) ...[
+                      const SizedBox(height: 8),
+                      const _DayBonusBanner(text: '+100 cr · SHIELD 1H'),
+                      const SizedBox(height: 8),
+                    ],
                     const SizedBox(height: 12),
                     // Mission list
                     if (widget.missions.isEmpty)
@@ -143,6 +148,32 @@ class _DailyLoginModalState extends State<DailyLoginModal>
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Banner shown on streak day 3 to highlight the bonus reward.
+class _DayBonusBanner extends StatelessWidget {
+  const _DayBonusBanner({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: kSea.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: kSea.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.shield_outlined, color: kSea, size: 16),
+          const SizedBox(width: 6),
+          Text(text, style: const TextStyle(color: kSea, fontSize: 13, fontWeight: FontWeight.w600)),
+        ],
       ),
     );
   }

@@ -51,6 +51,9 @@ dependencies:
   # Local notifications (declared now; payloads in sibling spec)
   flutter_local_notifications: ^17.1.2
 
+  # Timezone support for scheduled notifications
+  timezone: ^0.9.4
+
   # Supabase
   supabase_flutter: ^2.5.0
 

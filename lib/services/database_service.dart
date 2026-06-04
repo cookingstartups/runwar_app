@@ -37,7 +37,7 @@ class DatabaseService {
     final dbPath = p.join(await getDatabasesPath(), 'runwar.db');
     _db = await openDatabase(
       dbPath,
-      version: 9,
+      version: 10,
       onCreate: (db, version) async {
         await _createSchema(db);
       },
@@ -65,6 +65,9 @@ class DatabaseService {
         }
         if (oldVersion < 9) {
           await _migrateToV9(db);
+        }
+        if (oldVersion < 10) {
+          await _migrateToV10(db);
         }
       },
       onOpen: (db) async {
@@ -103,7 +106,12 @@ class DatabaseService {
         first_mission_completed_at   TEXT,
         first_attack_completed_at    TEXT,
         streak_started_at            TEXT,
-        is_bot                       INTEGER NOT NULL DEFAULT 0
+        is_bot                       INTEGER NOT NULL DEFAULT 0,
+        subscription_tier            TEXT NOT NULL DEFAULT 'free',
+        subscription_expires         TEXT,
+        last_login_at                TEXT,
+        longest_streak               INTEGER NOT NULL DEFAULT 0,
+        milestones_claimed           TEXT NOT NULL DEFAULT '[]'
       )
     ''');
     await db.execute('''
@@ -291,6 +299,20 @@ class DatabaseService {
           ON daily_mission_progress(user_id, date)
       ''');
     } catch (_) {}
+  }
+
+  Future<void> _migrateToV10(Database db) async {
+    for (final col in [
+      "ALTER TABLE profiles ADD COLUMN subscription_tier TEXT NOT NULL DEFAULT 'free'",
+      'ALTER TABLE profiles ADD COLUMN subscription_expires TEXT',
+      'ALTER TABLE profiles ADD COLUMN last_login_at TEXT',
+      'ALTER TABLE profiles ADD COLUMN longest_streak INTEGER NOT NULL DEFAULT 0',
+      "ALTER TABLE profiles ADD COLUMN milestones_claimed TEXT NOT NULL DEFAULT '[]'",
+    ]) {
+      try {
+        await db.execute(col);
+      } catch (_) {}
+    }
   }
 
   Future<void> _migrateToV2(Database db) async {

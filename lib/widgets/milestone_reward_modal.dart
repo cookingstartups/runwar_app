@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../screens/paywall_downsell_screen.dart';
 import '../services/telemetry_service.dart';
 import '../theme.dart';
 
@@ -13,6 +14,7 @@ class MilestoneRewardModal extends StatefulWidget {
     required this.day,
     required this.creditsAwarded,
     this.powerGranted,
+    this.subscriptionTier = 'free',
     super.key,
   });
 
@@ -24,6 +26,9 @@ class MilestoneRewardModal extends StatefulWidget {
 
   /// Optional superpower granted (e.g. 'SHIELD', 'RUSH').
   final String? powerGranted;
+
+  /// Player's current subscription tier.
+  final String subscriptionTier;
 
   @override
   State<MilestoneRewardModal> createState() => _MilestoneRewardModalState();
@@ -118,6 +123,13 @@ class _MilestoneRewardModalState extends State<MilestoneRewardModal>
                     onPressed: () => Navigator.of(context).pop(),
                     child: const Text('CLAIM REWARD'),
                   ),
+                  if (widget.day == 14 && widget.subscriptionTier == 'free') ...[
+                    const SizedBox(height: 16),
+                    _Day14PaywallSection(onDismiss: () {
+                      Navigator.of(context).pop();
+                      Navigator.of(context).push(PaywallDownsellScreen.route());
+                    }),
+                  ],
                   const SizedBox(height: 24),
                 ],
               ),
@@ -125,6 +137,41 @@ class _MilestoneRewardModalState extends State<MilestoneRewardModal>
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Paywall upsell section shown on day-14 milestone for free-tier players.
+class _Day14PaywallSection extends StatelessWidget {
+  const _Day14PaywallSection({required this.onDismiss});
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const Divider(color: kBorder),
+        const SizedBox(height: 12),
+        const Text(
+          'UNLOCK FULL WAR ACCESS',
+          style: TextStyle(color: kAccent2, fontSize: 12, letterSpacing: 1.5),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          '30-day streak earns you a €1 extended trial.',
+          style: TextStyle(color: kFgMuted, fontSize: 13),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: onDismiss,
+            style: ElevatedButton.styleFrom(backgroundColor: kAccent2),
+            child: const Text('SUBSCRIBE — €1 / 30 DAYS', style: TextStyle(color: kBg)),
+          ),
+        ),
+      ],
     );
   }
 }

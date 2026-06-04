@@ -29,6 +29,7 @@ import 'screens/first_attack_briefing_screen.dart';
 import 'providers/cities_provider.dart';
 import 'providers/mission_provider.dart';
 import 'providers/daily_missions_provider.dart';
+import 'services/streak_reminder_scheduler.dart';
 import 'services/trial_service.dart';
 
 final showcaseSeenProvider = FutureProvider<bool>((ref) => isShowcaseSeen());
@@ -43,6 +44,7 @@ final trialStatusProvider =
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  StreakReminderScheduler.ensureTimezoneInitialized();
   await Firebase.initializeApp();
   FirebaseMessaging.onBackgroundMessage(handleBackgroundMessage);
   try {
@@ -140,6 +142,13 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
         ref.invalidate(missionStatusProvider(userId));
         ref.invalidate(todaysMissionsProvider(userId));
         ref.invalidate(dailyStreakProvider(userId));
+      }
+      final streak = ref.read(dailyStreakProvider(userId ?? '')).valueOrNull;
+      if (streak != null) {
+        StreakReminderScheduler.scheduleOrCancel(
+          currentStreak: streak.current,
+          lastLoginAt: streak.lastLoginAt,
+        ).catchError((_) {});
       }
     }
   }

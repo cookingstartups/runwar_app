@@ -58,12 +58,14 @@ class DailyStreak {
     required this.longest,
     this.lastLoginAt,
     this.milestonesClaimed = const [],
+    this.subscriptionTier = 'free',
   });
 
   final int current;
   final int longest;
   final DateTime? lastLoginAt;
   final List<int> milestonesClaimed;
+  final String subscriptionTier;
 
   factory DailyStreak.fromMap(Map<String, dynamic> row) {
     final rawMilestones = row['milestones_claimed'];
@@ -79,10 +81,11 @@ class DailyStreak {
       } catch (_) {}
     }
     return DailyStreak(
-      current: (row['streak'] as num?)?.toInt() ?? 0,
+      current: (row['current_streak'] as num?)?.toInt() ?? 0,
       longest: (row['longest_streak'] as num?)?.toInt() ?? 0,
       lastLoginAt: lastLogin,
       milestonesClaimed: milestones,
+      subscriptionTier: (row['subscription_tier'] as String?) ?? 'free',
     );
   }
 }

@@ -29,7 +29,7 @@ final dailyStreakProvider = FutureProvider.family<DailyStreak, String>(
     final client = ref.read(supabaseClientProvider);
     final row = await client
         .from('players')
-        .select('streak, longest_streak, last_login_at, milestones_claimed')
+        .select('current_streak, longest_streak, last_login_at, milestones_claimed, subscription_tier')
         .eq('id', userId)
         .single();
     return DailyStreak.fromMap(row);
