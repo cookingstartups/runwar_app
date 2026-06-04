@@ -222,7 +222,6 @@ class _IntroScreenState extends State<IntroScreen>
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).padding.bottom;
     final top = MediaQuery.of(context).padding.top;
-    final isClose = _slides[_page].layout == _Layout.centeredClose;
     final screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
@@ -364,30 +363,6 @@ class _IntroScreenState extends State<IntroScreen>
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(3),
                             color: i == _page ? kAccent : kFgFaint,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _next,
-                        style: isClose
-                            ? ElevatedButton.styleFrom(
-                                backgroundColor: kAccent,
-                                foregroundColor: kBg,
-                                shadowColor: kAccent.withValues(alpha: 0.5),
-                                elevation: 8,
-                              )
-                            : null,
-                        child: Text(
-                          _page < _slides.length - 1 ? 'NEXT →' : 'JOIN THE WAR →',
-                          style: GoogleFonts.spaceGrotesk(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 3.0,
-                            color: kBg,
                           ),
                         ),
                       ),
