@@ -54,51 +54,57 @@ class _Slide {
 }
 
 const _slides = [
-  // 1 — Identity
+  // 1 — Provocation
   _Slide(
     tag: 'YOUR TURF',
     tagColor: kAccent,
     headline: 'SOMEONE OWNS\nYOUR STREET.',
-    body: 'Every block around you is claimed by the last runner who looped it. Take it back, or stay a tourist on your own pavement.',
+    body: 'Every block you sweat on belongs to the last runner who looped it. Their name. Your pavement. Take it back — or keep paying rent in shoe rubber.',
     anim: _Anim.pulse,
     layout: _Layout.fullBleed,
   ),
-  // 2 — How it works
+  // 2 — Comeback
   _Slide(
-    tag: 'HOW IT WORKS',
+    tag: 'CLAIM IT',
     tagColor: kSea,
-    headline: 'LASSO A ZONE.\nIT\'S YOURS.',
-    body:
-        'Draw a loop around any city block while running. If nobody defends it — it\'s yours.',
+    headline: 'LASSO IT.\nRIP IT BACK.',
+    body: 'Draw a loop while you run. Every meter you close is a meter you steal. Chip away at the giants — one block today, the whole neighbourhood by Sunday.',
     anim: _Anim.hexCapture,
     layout: _Layout.textTopVisualBottom,
   ),
-  // 3 — Live map
+  // 3 — Mastery / Fortify
   _Slide(
-    tag: 'LIVE MAP',
+    tag: 'FORTIFY',
     tagColor: kAccent,
-    headline: 'RIVALS ARE\nRUNNING NOW.',
-    body:
-        'The map updates live. See who\'s running, what they own, and what you can take.',
-    anim: _Anim.rivals,
+    headline: 'RUN IT. OWN IT.\nFORTIFY IT.',
+    body: 'Lap your zone again and it levels up — once, twice, five times. Level 5 turf is a fortress. The harder you train it, the more pain it costs them to take it.',
+    anim: _Anim.pulse,
     layout: _Layout.visualTopTextBottom,
   ),
-  // 4 — Daily drops
+  // 4 — Loot drops
   _Slide(
-    tag: 'DAILY DROPS',
+    tag: 'LOOT DROPS',
     tagColor: kAccent2,
-    headline: 'FIRST HERE\nWINS.',
-    body:
-        'GPS-pinned loot drops appear across your city. First runner to the spot claims it.',
+    headline: 'FIRST FEET\nTAKE IT ALL.',
+    body: 'GPS drops hit the map without warning. Cash, crates, killer gear — pinned to a spot somewhere in your city. One winner: whoever\'s lungs get there first.',
     anim: _Anim.ctfDrop,
     layout: _Layout.textTopVisualBottom,
   ),
-  // 5 — Invite close
+  // 5 — Special events / CTF
+  _Slide(
+    tag: 'FLAG WAR',
+    tagColor: kAccent,
+    headline: 'A FLAG DROPS.\nA DISTRICT FALLS.',
+    body: 'Once a week the city goes to war. A flag lands somewhere on the map — first crew to reach it owns the entire district until next Sunday. Pick your team.',
+    anim: _Anim.rivals,
+    layout: _Layout.visualTopTextBottom,
+  ),
+  // 6 — Invite only
   _Slide(
     tag: 'INVITE ONLY',
     tagColor: kAccent,
-    headline: 'YOUR CITY\nIS WAITING.',
-    body: 'Only runners who feel it get in. Are you one of them?',
+    headline: 'THE CITY\'S WAITING.\nMOST WON\'T GET IN.',
+    body: 'RunWar isn\'t for joggers. It\'s for the ones who feel it in their chest before the alarm goes off. If that\'s you — knock.',
     anim: _Anim.none,
     layout: _Layout.centeredClose,
   ),
