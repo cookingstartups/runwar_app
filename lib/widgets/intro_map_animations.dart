@@ -145,48 +145,51 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
 
-  // Block 1 route: Cuba–Sueca–Dénia triangle near Ruzafa, Valencia.
-  // Loop closes at LatLng(39.462671, -0.375937) — Sueca/Dénia SE junction.
+  // Single continuous route through two adjacent Ruzafa blocks (OSM-verified).
+  //
+  // Block 1 — Carrer de Buenos Aires / Carrer de Dénia / Carrer de Sueca:
+  //   [0] A  Sueca/Buenos Aires junction
+  //   [1] B  Buenos Aires NW end (Cuba approach)
+  //   [2] C  Dénia/Cuba junction
+  //   [3] D  Sueca/Dénia SE junction  ← shared corner
+  //   [4] A  loop closes → block 1 fill snaps on  (_kBlock1CloseIdx = 4)
+  //
+  // Block 2 — Carrer de Sueca / Gran Via de les Germanies / Carrer de Dénia:
+  //   [5] D  retrace to shared corner
+  //   [6] E  end of Carrer de Sueca (Sueca/Gran Via NW corner)
+  //   [7] F  Gran Via/Castelló NE junction
+  //   [8] G  Cadis/Dénia SE junction
+  //   [9] D  loop closes → block 2 fill snaps on  (_kBlock2CloseIdx = 9)
   static const _kRoute = [
-    LatLng(39.462155, -0.377171),
-    LatLng(39.461576, -0.376751),
-    LatLng(39.461123, -0.376444),
-    LatLng(39.461568, -0.375167),
-    LatLng(39.462077, -0.375522),
-    LatLng(39.462671, -0.375937),
-    LatLng(39.462155, -0.377171),
+    LatLng(39.462077, -0.375522), // 0: A — Sueca/Buenos Aires
+    LatLng(39.461576, -0.376751), // 1: B — Buenos Aires NW
+    LatLng(39.462155, -0.377171), // 2: C — Dénia/Cuba junction
+    LatLng(39.462671, -0.375937), // 3: D — Sueca/Dénia (shared)
+    LatLng(39.462077, -0.375522), // 4: A — BLOCK 1 CLOSES
+    LatLng(39.462671, -0.375937), // 5: D — retrace to shared corner
+    LatLng(39.463595, -0.376553), // 6: E — Sueca/Gran Via NW corner
+    LatLng(39.464001, -0.376109), // 7: F — Gran Via NE junction
+    LatLng(39.463243, -0.374594), // 8: G — Cadis/Dénia SE
+    LatLng(39.462671, -0.375937), // 9: D — BLOCK 2 CLOSES
   ];
 
+  // Corner polygons for fill rendering.
   static const _kBlock1 = [
-    LatLng(39.462155, -0.377171),
-    LatLng(39.461576, -0.376751),
-    LatLng(39.461123, -0.376444),
-    LatLng(39.462671, -0.375937),
-  ];
-
-  // Block 2 route: adjacent block to the east, sharing the Sueca/Dénia SE
-  // corner with block 1. Bounded by Carrer de Sueca (SW edge), Gran Via de
-  // les Germanies (north edge), and Carrer de Dénia (SE diagonal back).
-  // Starts and ends at LatLng(39.462671, -0.375937) for seamless runner flow.
-  static const _kRoute2 = [
-    LatLng(39.462671, -0.375937), // SW — shared junction with block 1
-    LatLng(39.463469, -0.376515), // NW mid — Carrer de Sueca heading NE
-    LatLng(39.463595, -0.376553), // NW corner — Sueca meets Gran Via
-    LatLng(39.464001, -0.376109), // NE corner — Gran Via primary junction
-    LatLng(39.463243, -0.374594), // SE corner — Carrer de Dénia / Cadis node
-    LatLng(39.462671, -0.375937), // back to start (closed)
+    LatLng(39.462077, -0.375522), // A
+    LatLng(39.461576, -0.376751), // B
+    LatLng(39.462155, -0.377171), // C
+    LatLng(39.462671, -0.375937), // D
   ];
 
   static const _kBlock2 = [
-    LatLng(39.462671, -0.375937), // SW
-    LatLng(39.463595, -0.376553), // NW
-    LatLng(39.464001, -0.376109), // NE
-    LatLng(39.463243, -0.374594), // SE
+    LatLng(39.462671, -0.375937), // D — SW
+    LatLng(39.463595, -0.376553), // E — NW
+    LatLng(39.464001, -0.376109), // F — NE
+    LatLng(39.463243, -0.374594), // G — SE
   ];
 
   List<Offset> _route = [];
   List<Offset> _block1 = [];
-  List<Offset> _route2 = [];
   List<Offset> _block2 = [];
   bool _mapReady = false;
 
@@ -207,7 +210,6 @@ class _IntroPulseMapState extends State<IntroPulseMap>
     setState(() {
       _route = _kRoute.map(toScreen).toList();
       _block1 = _kBlock1.map(toScreen).toList();
-      _route2 = _kRoute2.map(toScreen).toList();
       _block2 = _kBlock2.map(toScreen).toList();
       _mapReady = true;
     });
@@ -226,7 +228,7 @@ class _IntroPulseMapState extends State<IntroPulseMap>
           _buildIntroMap(
             context: context,
             mapController: _mapCtrl,
-            center: const LatLng(39.4638, -0.3771),
+            center: const LatLng(39.4625, -0.3765),
             zoom: 16.0,
             onReady: _updatePoints,
           ),
@@ -239,7 +241,6 @@ class _IntroPulseMapState extends State<IntroPulseMap>
                   accent: widget.accent,
                   route: _route,
                   block1: _block1,
-                  route2: _route2,
                   block2: _block2,
                 ),
                 child: const SizedBox.expand(),
@@ -255,7 +256,6 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
   final Color accent;
   final List<Offset> route;
   final List<Offset> block1;
-  final List<Offset> route2;
   final List<Offset> block2;
 
   _IntroPulseMapPainter({
@@ -263,81 +263,60 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
     required this.accent,
     required this.route,
     required this.block1,
-    required this.route2,
     required this.block2,
   });
 
-  // Phase 1: runner completes loop 1 at t=0.55 — fill snaps on immediately.
-  static const double _fillPhase1 = 0.55;
-  // Phase 2: runner completes loop 2 at t=0.88 — fill 2 snaps on immediately.
-  static const double _fillPhase2 = 0.88;
+  // Segment indices where each block loop closes (matches _kBlock1CloseIdx /
+  // _kBlock2CloseIdx in the state class — kept as local constants here so the
+  // painter has no dependency on the state).
+  static const int _block1CloseIdx = 4;
+  static const int _block2CloseIdx = 9; // also == route.length - 1
 
-  // Block 1 fill opacity:
-  //   t < 0.55              → 0
-  //   0.55–0.58             → snap 0→0.28 (quick flash, ≤0.03t ramp)
-  //   0.58–0.94             → hold 0.28
-  //   0.94–1.00             → fade to 0
-  double _block1Opacity(double t) {
-    if (t < _fillPhase1) return 0.0;
-    if (t < _fillPhase1 + 0.03) return ((t - _fillPhase1) / 0.03) * 0.28;
-    if (t < 0.94) return 0.28;
-    return ((1.0 - (t - 0.94) / 0.06) * 0.28).clamp(0.0, 0.28);
+  // Fill opacity helpers driven by `traveled` (segments traversed, 0–9).
+  // Ramp window of 0.15 segments gives a snappy-but-not-jarring flash.
+  double _fill1Opacity(double traveled) {
+    final frac = ((traveled - _block1CloseIdx) / 0.15).clamp(0.0, 1.0);
+    // Fade out over last 7 % of animation (t = 0.93 → 1.0).
+    final hold = (t < 0.93 ? 1.0 : (1.0 - (t - 0.93) / 0.07)).clamp(0.0, 1.0);
+    return frac * hold * 0.28;
   }
 
-  // Block 2 fill opacity:
-  //   t < 0.88              → 0
-  //   0.88–0.91             → snap 0→0.28 (quick flash, ≤0.03t ramp)
-  //   0.91–0.94             → hold 0.28
-  //   0.94–1.00             → fade to 0
-  double _block2Opacity(double t) {
-    if (t < _fillPhase2) return 0.0;
-    if (t < _fillPhase2 + 0.03) return ((t - _fillPhase2) / 0.03) * 0.28;
-    if (t < 0.94) return 0.28;
-    return ((1.0 - (t - 0.94) / 0.06) * 0.28).clamp(0.0, 0.28);
+  double _fill2Opacity(double traveled) {
+    final frac = ((traveled - _block2CloseIdx) / 0.15).clamp(0.0, 1.0);
+    final hold = (t < 0.93 ? 1.0 : (1.0 - (t - 0.93) / 0.07)).clamp(0.0, 1.0);
+    return frac * hold * 0.28;
   }
 
   @override
   void paint(Canvas canvas, Size size) {
     if (route.isEmpty) return;
 
-    // --- Phase 1: runner traces loop 1 (t = 0.00 → 0.55) ---
-    // Scale route progress so the runner completes the full loop by t=0.55.
-    final routeProgress = (t / 0.55).clamp(0.0, 1.0);
+    // Single continuous progress — runner traces the full route over t=0–0.92.
+    final segs = route.length - 1; // 9 segments
+    final traveled = (t / 0.92).clamp(0.0, 1.0) * segs;
 
-    drawFill(canvas, block1, _block1Opacity(t));
-    drawTrace(canvas, route, routeProgress);
+    // Block fills — appear as the runner closes each loop.
+    drawFill(canvas, block1, _fill1Opacity(traveled));
+    drawFill(canvas, block2, _fill2Opacity(traveled));
 
-    // Phase 1 runner: visible only while loop 1 is in progress.
-    if (t < _fillPhase1) {
-      drawRunner(canvas, route, routeProgress);
+    // Single trace covering both blocks.
+    drawTrace(canvas, route, traveled / segs);
+
+    // Runner dot — visible while tracing (before fade-out window).
+    if (t < 0.93) {
+      drawRunner(canvas, route, traveled / segs);
     }
 
-    // Ping burst when block 1 captures.
-    if (t > _fillPhase1 && t < _fillPhase1 + 0.10) {
-      drawPings(canvas, block1, ((t - _fillPhase1) / 0.10).clamp(0.0, 1.0));
+    // Ping burst when block 1 closes.
+    final ping1T = traveled - _block1CloseIdx;
+    if (ping1T > 0 && ping1T < 0.10 * segs) {
+      drawPings(canvas, block1, (ping1T / (0.10 * segs)).clamp(0.0, 1.0));
     }
 
-    // --- Phase 2: runner traces loop 2 (t = 0.55 → 0.88) ---
-    // Seamless continuation — route2 starts at the same coord loop1 ends.
-    if (route2.isNotEmpty) {
-      final route2Progress =
-          t >= _fillPhase1 ? ((t - _fillPhase1) / 0.33).clamp(0.0, 1.0) : 0.0;
-
-      if (t >= _fillPhase1) {
-        drawTrace(canvas, route2, route2Progress);
-      }
-
-      // Phase 2 runner: visible from loop 1 close until loop 2 close.
-      if (t >= _fillPhase1 && t < _fillPhase2) {
-        drawRunner(canvas, route2, route2Progress);
-      }
-
-      drawFill(canvas, block2, _block2Opacity(t));
-
-      // Ping burst when block 2 captures.
-      if (t > _fillPhase2 && t < _fillPhase2 + 0.08) {
-        drawPings(canvas, block2, ((t - _fillPhase2) / 0.08).clamp(0.0, 1.0));
-      }
+    // Ping burst when block 2 closes.
+    final ping2T = traveled - _block2CloseIdx;
+    if (ping2T > 0 && ping2T < 0.8) {
+      drawPings(canvas, block2, (ping2T / 0.8).clamp(0.0, 1.0));
     }
   }
 
@@ -346,7 +325,6 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
       old.t != t ||
       old.route != route ||
       old.block1 != block1 ||
-      old.route2 != route2 ||
       old.block2 != block2;
 }
 
