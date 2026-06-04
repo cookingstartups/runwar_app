@@ -4,23 +4,6 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import '../theme.dart';
 
-// ---------------------------------------------------------------------------
-// 1. IntroPulseMap — Ruzafa GPS route capture on real map (slide 1 full-bleed)
-//    10-second loop: runner traces ONE continuous route through Ruzafa streets
-//    (Cadis → Puerto Rico → Sueca → Buenos Aires → Cuba), naturally enclosing
-//    three city blocks in sequence. Each block fills as the runner passes the
-//    point where it has been looped.
-//
-//    Phase table (t = AnimationController.value):
-//      0.00–0.30  Runner follows Cadis → Puerto Rico → Sueca approach
-//      0.30       Block 1 fill appears (Cadis/Puerto Rico/Sueca parallelogram)
-//      0.30–0.58  Runner continues west on Sueca → Buenos Aires junction
-//      0.58       Block 2 fill appears (Sueca/Buenos Aires/Cuba block)
-//      0.58–0.82  Runner follows Cuba NW toward upper Sueca
-//      0.82       Block 3 fill appears (Cuba/upper-Sueca block)
-//      0.82–0.95  Runner completes route, all 3 fills visible
-//      0.95–1.00  All fills fade to 0, reset
-// ---------------------------------------------------------------------------
 class IntroPulseMap extends StatefulWidget {
   final Color accent;
   const IntroPulseMap({required this.accent, super.key});
@@ -33,59 +16,31 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
 
-  // Single continuous GPS route along real Ruzafa streets (OSM-verified nodes).
-  // Path: Cadis (NW→SE) → Puerto Rico (S) → Sueca (W) → Buenos Aires (SW) →
-  //       Cuba (NW) → upper Sueca (NE end)
   static const _kRoute = [
-    LatLng(39.46408, -0.37519), // 1. Cadis start (NW, near interior road)
-    LatLng(39.46324, -0.37459), // 2. Cadis diagonal
-    LatLng(39.46268, -0.37419), // 3. Cadis & Doctor Serrano
-    LatLng(39.46213, -0.37381), // 4. Cadis & Puerto Rico (turn south)
-    LatLng(39.46157, -0.37517), // 5. Puerto Rico & Sueca (turn west)
-    LatLng(39.46208, -0.37552), // 6. Sueca heading west
-    LatLng(39.46267, -0.37594), // 7. Sueca & Buenos Aires junction
-    LatLng(39.46158, -0.37675), // 8. Buenos Aires meets Cuba (turn NW on Cuba)
-    LatLng(39.46221, -0.37720), // 9. Cuba heading NW
-    LatLng(39.46293, -0.37771), // 10. Cuba continuing NW
-    LatLng(39.46303, -0.37781), // 11. Cuba NW end
-    LatLng(39.46347, -0.37652), // 12. Upper Sueca heading NE
-    LatLng(39.46359, -0.37655), // 13. Sueca end
+    LatLng(39.4787577, -0.3762760),
+    LatLng(39.4788475, -0.3765466),
+    LatLng(39.4789977, -0.3771593),
+    LatLng(39.4789949, -0.3774266),
+    LatLng(39.4790307, -0.3781721),
+    LatLng(39.4795237, -0.3779472),
+    LatLng(39.4802212, -0.3773612),
+    LatLng(39.4799543, -0.3771725),
+    LatLng(39.4794183, -0.3765902),
+    LatLng(39.4795250, -0.3761129),
+    LatLng(39.4789167, -0.3760236),
+    LatLng(39.4787577, -0.3762760),
   ];
 
-  // Block 1 polygon — city block enclosed by Cadis (N), Puerto Rico (E),
-  // Sueca (S), and Doctor Serrano (W). Corners at street intersections.
   static const _kBlock1 = [
-    LatLng(39.46268, -0.37419), // Cadis & Doctor Serrano (N)
-    LatLng(39.46213, -0.37381), // Cadis & Puerto Rico (NE)
-    LatLng(39.46157, -0.37517), // Puerto Rico & Sueca (SE)
-    LatLng(39.46208, -0.37552), // Sueca mid (S)
-    LatLng(39.46254, -0.37395), // Doctor Serrano approx (NW, interpolated)
-  ];
-
-  // Block 2 polygon — city block enclosed by Sueca (N), Buenos Aires (E),
-  // Cuba (S/W). Corners at street intersections.
-  static const _kBlock2 = [
-    LatLng(39.46267, -0.37594), // Sueca & Buenos Aires (N)
-    LatLng(39.46208, -0.37552), // Sueca NE corner
-    LatLng(39.46158, -0.37675), // Buenos Aires & Cuba (SE)
-    LatLng(39.46221, -0.37720), // Cuba (SW)
-    LatLng(39.46267, -0.37660), // approximate NW closure
-  ];
-
-  // Block 3 polygon — city block enclosed by Cuba (SE), upper Sueca (NE),
-  // and the streets further NW.
-  static const _kBlock3 = [
-    LatLng(39.46347, -0.37652), // upper Sueca NE
-    LatLng(39.46267, -0.37594), // Sueca & Buenos Aires
-    LatLng(39.46158, -0.37675), // Buenos Aires/Cuba SE
-    LatLng(39.46221, -0.37720), // Cuba
-    LatLng(39.46293, -0.37771), // Cuba NW
-    LatLng(39.46303, -0.37781), // Cuba far NW
-    LatLng(39.46359, -0.37655), // Sueca W end
+    LatLng(39.4787577, -0.3762760),
+    LatLng(39.4790307, -0.3781721),
+    LatLng(39.4802212, -0.3773612),
+    LatLng(39.4795250, -0.3761129),
+    LatLng(39.4789167, -0.3760236),
   ];
 
   List<Offset> _route = [];
-  List<Offset> _block1 = [], _block2 = [], _block3 = [];
+  List<Offset> _block1 = [];
   bool _mapReady = false;
 
   @override
@@ -104,8 +59,6 @@ class _IntroPulseMapState extends State<IntroPulseMap>
     setState(() {
       _route  = _kRoute.map(toScreen).toList();
       _block1 = _kBlock1.map(toScreen).toList();
-      _block2 = _kBlock2.map(toScreen).toList();
-      _block3 = _kBlock3.map(toScreen).toList();
       _mapReady = true;
     });
   }
@@ -123,8 +76,8 @@ class _IntroPulseMapState extends State<IntroPulseMap>
           FlutterMap(
             mapController: _mapCtrl,
             options: MapOptions(
-              initialCenter: const LatLng(39.4625, -0.3760),
-              initialZoom: 15,
+              initialCenter: const LatLng(39.4790, -0.3758),
+              initialZoom: 16,
               onMapReady: _updatePoints,
               interactionOptions:
                   const InteractionOptions(flags: InteractiveFlag.none),
@@ -132,7 +85,7 @@ class _IntroPulseMapState extends State<IntroPulseMap>
             children: [
               TileLayer(
                 urlTemplate:
-                    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                    'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
                 subdomains: const ['a', 'b', 'c', 'd'],
                 retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
                 userAgentPackageName: 'app.runwar.runwar_app',
@@ -148,8 +101,6 @@ class _IntroPulseMapState extends State<IntroPulseMap>
                   accent: widget.accent,
                   route: _route,
                   block1: _block1,
-                  block2: _block2,
-                  block3: _block3,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -163,27 +114,16 @@ class _IntroPulseMapPainter extends CustomPainter {
   final Color accent;
   final List<Offset> route;
   final List<Offset> block1;
-  final List<Offset> block2;
-  final List<Offset> block3;
 
   _IntroPulseMapPainter({
     required this.t,
     required this.accent,
     required this.route,
     required this.block1,
-    required this.block2,
-    required this.block3,
   });
 
-  static const double _fillPhase1 = 0.30;
-  static const double _fillPhase2 = 0.58;
-  static const double _fillPhase3 = 0.82;
+  static const double _fillPhase1 = 0.82;
 
-  /// Returns fill opacity for a block based on route progress t.
-  /// - 0 before fillPhase
-  /// - ramps 0→0.22 over the 0.04t window after fillPhase
-  /// - holds at 0.22 until t > 0.95
-  /// - fades 0.22→0 from 0.95→1.0
   double _blockOpacity(double t, double fillPhase) {
     if (t < fillPhase) return 0;
     if (t < fillPhase + 0.04) return ((t - fillPhase) / 0.04) * 0.22;
@@ -264,28 +204,15 @@ class _IntroPulseMapPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (route.isEmpty) return;
 
-    // --- block fills (drawn first, below the route trail) ---
     _drawFill(canvas, block1, _blockOpacity(t, _fillPhase1));
-    _drawFill(canvas, block2, _blockOpacity(t, _fillPhase2));
-    _drawFill(canvas, block3, _blockOpacity(t, _fillPhase3));
-
-    // --- single continuous route trace up to current t ---
     _drawTrace(canvas, route, t);
 
-    // --- runner dot (hidden during final fade-out) ---
     if (t < 0.95) {
       _drawRunner(canvas, route, t);
     }
 
-    // --- corner pings for 0.12t after each fill phase ---
     if (t > _fillPhase1 && t < _fillPhase1 + 0.12) {
       _drawPings(canvas, block1, ((t - _fillPhase1) / 0.12).clamp(0.0, 1.0));
-    }
-    if (t > _fillPhase2 && t < _fillPhase2 + 0.12) {
-      _drawPings(canvas, block2, ((t - _fillPhase2) / 0.12).clamp(0.0, 1.0));
-    }
-    if (t > _fillPhase3 && t < _fillPhase3 + 0.12) {
-      _drawPings(canvas, block3, ((t - _fillPhase3) / 0.12).clamp(0.0, 1.0));
     }
   }
 
@@ -293,9 +220,7 @@ class _IntroPulseMapPainter extends CustomPainter {
   bool shouldRepaint(_IntroPulseMapPainter old) =>
       old.t != t ||
       old.route != route ||
-      old.block1 != block1 ||
-      old.block2 != block2 ||
-      old.block3 != block3;
+      old.block1 != block1;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,11 +241,11 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   bool _mapReady = false;
 
   static const _kRouteCoords = [
-    LatLng(39.4725, -0.3815),
-    LatLng(39.4725, -0.3800),
-    LatLng(39.4710, -0.3800),
-    LatLng(39.4710, -0.3815),
-    LatLng(39.4725, -0.3815),
+    LatLng(39.4787577, -0.3762760),
+    LatLng(39.4790307, -0.3781721),
+    LatLng(39.4802212, -0.3773612),
+    LatLng(39.4795250, -0.3761129),
+    LatLng(39.4787577, -0.3762760),
   ];
 
   @override
@@ -355,8 +280,8 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
         FlutterMap(
           mapController: _mapCtrl,
           options: MapOptions(
-            initialCenter: const LatLng(39.4718, -0.3808),
-            initialZoom: 16.0,
+            initialCenter: const LatLng(39.4787, -0.3758),
+            initialZoom: 17,
             interactionOptions:
                 const InteractionOptions(flags: InteractiveFlag.none),
             onMapReady: _updatePoints,
@@ -364,7 +289,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
           children: [
             TileLayer(
               urlTemplate:
-                  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                  'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
               subdomains: const ['a', 'b', 'c', 'd'],
               retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
               userAgentPackageName: 'app.runwar.runwar_app',
@@ -511,25 +436,25 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
   bool _mapReady = false;
 
   static const _kRunner1Coords = [
-    LatLng(39.4750, -0.3820),
-    LatLng(39.4750, -0.3740),
-    LatLng(39.4710, -0.3740),
-    LatLng(39.4710, -0.3820),
-    LatLng(39.4750, -0.3820),
+    LatLng(39.4802, -0.3773),
+    LatLng(39.4790, -0.3782),
+    LatLng(39.4787, -0.3763),
+    LatLng(39.4795, -0.3761),
+    LatLng(39.4802, -0.3773),
   ];
   static const _kRunner2Coords = [
-    LatLng(39.4660, -0.3720),
-    LatLng(39.4660, -0.3670),
-    LatLng(39.4620, -0.3670),
-    LatLng(39.4620, -0.3720),
-    LatLng(39.4660, -0.3720),
+    LatLng(39.4820, -0.3710),
+    LatLng(39.4820, -0.3660),
+    LatLng(39.4780, -0.3660),
+    LatLng(39.4780, -0.3710),
+    LatLng(39.4820, -0.3710),
   ];
   static const _kRunner3Coords = [
-    LatLng(39.4710, -0.3790),
-    LatLng(39.4710, -0.3755),
-    LatLng(39.4685, -0.3755),
-    LatLng(39.4685, -0.3790),
-    LatLng(39.4710, -0.3790),
+    LatLng(39.4750, -0.3820),
+    LatLng(39.4750, -0.3790),
+    LatLng(39.4720, -0.3790),
+    LatLng(39.4720, -0.3820),
+    LatLng(39.4750, -0.3820),
   ];
 
   List<Offset> _toScreen(List<LatLng> coords) => coords
@@ -567,8 +492,8 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
         FlutterMap(
           mapController: _mapCtrl,
           options: MapOptions(
-            initialCenter: const LatLng(39.4697, -0.3773),
-            initialZoom: 13.0,
+            initialCenter: const LatLng(39.4768, -0.3762),
+            initialZoom: 14,
             interactionOptions:
                 const InteractionOptions(flags: InteractiveFlag.none),
             onMapReady: _onMapReady,
@@ -576,7 +501,7 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
           children: [
             TileLayer(
               urlTemplate:
-                  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                  'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
               subdomains: const ['a', 'b', 'c', 'd'],
               retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
               userAgentPackageName: 'app.runwar.runwar_app',
@@ -678,7 +603,7 @@ class IntroFlagDropMap extends StatefulWidget {
 
 class _IntroFlagDropMapState extends State<IntroFlagDropMap>
     with SingleTickerProviderStateMixin {
-  static const _kDropCoord = LatLng(39.4757, -0.3778);
+  static const _kDropCoord = LatLng(39.4795, -0.3757);
 
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
@@ -716,7 +641,7 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
           mapController: _mapCtrl,
           options: MapOptions(
             initialCenter: _kDropCoord,
-            initialZoom: 15.0,
+            initialZoom: 16,
             interactionOptions:
                 const InteractionOptions(flags: InteractiveFlag.none),
             onMapReady: _updatePoint,
@@ -724,7 +649,7 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
           children: [
             TileLayer(
               urlTemplate:
-                  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                  'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
               subdomains: const ['a', 'b', 'c', 'd'],
               maxZoom: 19,
               retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
@@ -854,7 +779,7 @@ class _IntroFlagDropMapPainter extends CustomPainter {
     }
 
     if (t > 0.5) {
-      const coords = '39.4757° N, 0.3778° W';
+      const coords = '39.4795° N, 0.3757° W';
       final tickerOp = ((math.sin(t * math.pi * 8) + 1) / 2) * 0.5 + 0.3;
       final fadeIn = ((t - 0.5) / 0.15).clamp(0.0, 1.0);
       final tp2 = TextPainter(
