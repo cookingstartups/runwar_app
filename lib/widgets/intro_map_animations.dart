@@ -351,7 +351,10 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
 }
 
 // ---------------------------------------------------------------------------
-// 2. IntroCaptureMap — El Carmen block capture on real map (slide 2)
+// 2. IntroCaptureMap — rival attacker lasso capture (slide 2)
+//    Rival (kSea blue) enters from off-screen left, runs east along real
+//    Ruzafa streets, draws a lasso closing back onto an earlier waypoint,
+//    then the enclosed area snaps to captured fill.
 // ---------------------------------------------------------------------------
 class IntroCaptureMap extends StatefulWidget {
   final Color accent;
@@ -364,22 +367,46 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
-  List<Offset> _pts = [];
-  bool _mapReady = false;
 
-  static const _kRouteCoords = [
-    LatLng(39.4787577, -0.3762760),
-    LatLng(39.4790307, -0.3781721),
-    LatLng(39.4802212, -0.3773612),
-    LatLng(39.4795250, -0.3761129),
-    LatLng(39.4787577, -0.3762760),
+  // Full route — rival enters from off-screen left (pt0, lon ~-0.380) and runs
+  // east along real Ruzafa streets. The route closes at pt6 == pt2 to form the
+  // lasso polygon.
+  //
+  // Street mapping (OSM-verified, Overpass query around:300,39.4635,-0.3748):
+  //   pt0  — off-screen west entry (~140 m west of left edge at zoom 16)
+  //   pt1  — Carrer de Cadis / Gran Via approach from west
+  //   pt2  — Carrer de Cadis / Carrer de Castelló junction  ← LASSO ANCHOR
+  //   pt3  — Carrer de Cadis south junction (Cadis/Xella node)
+  //   pt4  — Carrer de Sevilla / Cadis east node
+  //   pt5  — Carrer de Sevilla heading north-west back
+  //   pt6  — = pt2: lasso closes here (Cadis/Castelló junction again)
+  static const _kRoute = [
+    LatLng(39.464000, -0.380000), // 0: off-screen left
+    LatLng(39.464200, -0.376200), // 1: Cadis/Gran Via approach
+    LatLng(39.464220, -0.375291), // 2: Cadis/Castelló junction  ← LASSO ANCHOR
+    LatLng(39.463243, -0.374594), // 3: Cadis south junction
+    LatLng(39.463829, -0.374090), // 4: Sevilla/Cadis east
+    LatLng(39.464402, -0.374410), // 5: Sevilla heading NW back
+    LatLng(39.464220, -0.375291), // 6: LASSO CLOSE = pt2
   ];
+
+  // Sub-polygon for the captured fill — the loop from index 2 through 6.
+  static const _kLassoPolygon = [
+    LatLng(39.464220, -0.375291), // 2
+    LatLng(39.463243, -0.374594), // 3
+    LatLng(39.463829, -0.374090), // 4
+    LatLng(39.464402, -0.374410), // 5
+  ];
+
+  List<Offset> _route = [];
+  List<Offset> _lassoPolygon = [];
+  bool _mapReady = false;
 
   @override
   void initState() {
     super.initState();
     _ctrl =
-        AnimationController(vsync: this, duration: const Duration(seconds: 4))
+        AnimationController(vsync: this, duration: const Duration(seconds: 8))
           ..repeat();
   }
 
@@ -392,11 +419,13 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
 
   void _updatePoints() {
     final cam = _mapCtrl.camera;
+    Offset toScreen(LatLng ll) {
+      final p = cam.latLngToScreenPoint(ll);
+      return Offset(p.x.toDouble(), p.y.toDouble());
+    }
     setState(() {
-      _pts = _kRouteCoords.map((ll) {
-        final p = cam.latLngToScreenPoint(ll);
-        return Offset(p.x.toDouble(), p.y.toDouble());
-      }).toList();
+      _route = _kRoute.map(toScreen).toList();
+      _lassoPolygon = _kLassoPolygon.map(toScreen).toList();
       _mapReady = true;
     });
   }
@@ -408,8 +437,8 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
         _buildIntroMap(
           context: context,
           mapController: _mapCtrl,
-          center: const LatLng(39.4787, -0.3758),
-          zoom: 17,
+          center: const LatLng(39.4635, -0.3748),
+          zoom: 16.0,
           onReady: _updatePoints,
         ),
         if (_mapReady)
@@ -419,7 +448,8 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
               painter: _IntroCaptureMapPainter(
                 t: _ctrl.value,
                 accent: widget.accent,
-                pts: _pts,
+                route: _route,
+                lassoPolygon: _lassoPolygon,
               ),
               child: const SizedBox.expand(),
             ),
@@ -429,111 +459,92 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   }
 }
 
-class _IntroCaptureMapPainter extends CustomPainter {
+class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
   final double t;
+  @override
   final Color accent;
-  final List<Offset> pts;
-  _IntroCaptureMapPainter(
-      {required this.t, required this.accent, required this.pts});
+  final List<Offset> route;
+  final List<Offset> lassoPolygon;
+
+  _IntroCaptureMapPainter({
+    required this.t,
+    required this.accent,
+    required this.route,
+    required this.lassoPolygon,
+  });
+
+  // t=0.00–0.70: runner traces full route (lasso closes at t=0.70)
+  // t=0.70: fill snaps on (0.03t ramp)
+  // t=0.70–0.88: fill holds at 0.28, runner disappears
+  // t=0.88–1.00: fill fades to 0, reset
+  static const double _lassoCloseT = 0.70;
+
+  double _fillOpacity(double t) {
+    if (t < _lassoCloseT) return 0.0;
+    if (t < _lassoCloseT + 0.03) {
+      return ((t - _lassoCloseT) / 0.03) * 0.28;
+    }
+    if (t < 0.88) return 0.28;
+    return ((1.0 - (t - 0.88) / 0.12) * 0.28).clamp(0.0, 0.28);
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (pts.isEmpty) return;
+    if (route.isEmpty) return;
 
-    final route = pts;
-    final segs = route.length - 1;
+    // Route progress: runner completes the full route by t=0.70.
+    final routeProgress = (t / _lassoCloseT).clamp(0.0, 1.0);
 
-    final cornerCount = (pts.length - 1).clamp(1, pts.length);
-    double sumX = 0, sumY = 0;
-    for (int i = 0; i < cornerCount; i++) {
-      sumX += pts[i].dx;
-      sumY += pts[i].dy;
+    // Captured area fill — snaps on when lasso closes.
+    drawFill(canvas, lassoPolygon, _fillOpacity(t));
+
+    // Trace: draw from start up to current progress.
+    drawTrace(canvas, route, routeProgress);
+
+    // Runner dot: visible only while tracing (before lasso close).
+    if (t < _lassoCloseT) {
+      drawRunner(canvas, route, routeProgress);
     }
-    final centroid = Offset(sumX / cornerCount, sumY / cornerCount);
 
-    final decayT = t > 0.8 ? ((t - 0.8) / 0.2).clamp(0.0, 1.0) : 0.0;
-
-    final fillOpacity = t > 0.72
-        ? ((t - 0.72) / 0.08).clamp(0.0, 1.0) * (1.0 - decayT) * 0.28
-        : 0.0;
-    if (fillOpacity > 0) {
-      final fillP = Paint()
-        ..color = accent.withValues(alpha: fillOpacity)
-        ..style = PaintingStyle.fill;
-      final fp = Path()..moveTo(route[0].dx, route[0].dy);
-      for (int i = 1; i < route.length; i++) {
-        fp.lineTo(route[i].dx, route[i].dy);
+    // "OWNED" label at polygon centroid — appears briefly after capture.
+    if (t > 0.72 && t < 0.82 && lassoPolygon.isNotEmpty) {
+      double sumX = 0, sumY = 0;
+      for (final pt in lassoPolygon) {
+        sumX += pt.dx;
+        sumY += pt.dy;
       }
-      fp.close();
-      canvas.drawPath(fp, fillP);
-    }
+      final centroid =
+          Offset(sumX / lassoPolygon.length, sumY / lassoPolygon.length);
 
-    final drawPhase = (t / 0.72).clamp(0.0, 1.0);
-    final totalLen = drawPhase * segs;
-    final trailOpacity = 1.0 - decayT * 0.8;
-    final routeP = Paint()
-      ..color = accent.withValues(alpha: 0.65 * trailOpacity)
-      ..strokeWidth = 2.0
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final rp = Path()..moveTo(route[0].dx, route[0].dy);
-    for (int i = 0; i < segs; i++) {
-      if (totalLen > i) {
-        final segT = (totalLen - i).clamp(0.0, 1.0);
-        final next = (i + 1).clamp(0, segs);
-        rp.lineTo(
-          Offset.lerp(route[i], route[next], segT)!.dx,
-          Offset.lerp(route[i], route[next], segT)!.dy,
-        );
-      }
-    }
-    canvas.drawPath(rp, routeP);
+      final labelOpacity = t < 0.77
+          ? ((t - 0.72) / 0.05).clamp(0.0, 1.0)
+          : ((1.0 - (t - 0.77) / 0.05) * 1.0).clamp(0.0, 1.0);
 
-    if (t < 0.85) {
-      final segIdx = totalLen.floor().clamp(0, segs - 1);
-      final segT = (totalLen - segIdx).clamp(0.0, 1.0);
-      final pos =
-          Offset.lerp(route[segIdx], route[(segIdx + 1).clamp(0, segs)], segT)!;
-      final runnerOpacity = 1.0 - (decayT * 0.9);
-      canvas.drawCircle(
-          pos,
-          14,
-          Paint()
-            ..color = accent.withValues(alpha: 0.2 * runnerOpacity)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
-      canvas.drawCircle(
-          pos, 5, Paint()..color = accent.withValues(alpha: runnerOpacity));
-      canvas.drawCircle(
-          pos,
-          2,
-          Paint()..color = Colors.white.withValues(alpha: runnerOpacity * 0.9));
-    }
-
-    if (t > 0.75 && t < 0.82) {
-      final labelOpacity =
-          (math.sin((t - 0.75) / 0.07 * math.pi)).clamp(0.0, 1.0);
-      final tp = TextPainter(
-        text: TextSpan(
-          text: 'OWNED',
-          style: TextStyle(
-            fontFamily: 'monospace',
-            fontSize: 11,
-            letterSpacing: 2,
-            color: accent.withValues(alpha: labelOpacity),
-            fontWeight: FontWeight.w700,
+      if (labelOpacity > 0) {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: 'OWNED',
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11,
+              letterSpacing: 2,
+              color: accent.withValues(alpha: labelOpacity),
+              fontWeight: FontWeight.w700,
+            ),
           ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas,
-          Offset(centroid.dx - tp.width / 2, centroid.dy - tp.height / 2));
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(
+            canvas,
+            Offset(
+                centroid.dx - tp.width / 2, centroid.dy - tp.height / 2));
+      }
     }
   }
 
   @override
   bool shouldRepaint(_IntroCaptureMapPainter old) =>
-      old.t != t || old.pts != pts;
+      old.t != t || old.route != route || old.lassoPolygon != lassoPolygon;
 }
 
 // ---------------------------------------------------------------------------
