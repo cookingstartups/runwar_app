@@ -107,12 +107,13 @@ const _slides = [
   ),
   // 6 — Special events / CTF
   _Slide(
-    tag: 'FLAG WAR',
+    tag: 'FLAG HUNT',
     tagColor: kAccent,
-    headline: 'A FLAG DROPS.\nA DISTRICT FALLS.',
-    body: 'Once a week the city goes to war. A flag lands somewhere on the map — first crew to reach it owns the entire district until next Sunday. Pick your team.',
+    headline: 'A PIN DROPS.\nONE RUNNER WINS.',
+    body: 'Anywhere. Anytime. A flag lights up the map — and the first pair of legs to touch that GPS spot takes the prize. Hesitate and someone else is already running. Win it. Wear it.',
     anim: _Anim.rivals,
     layout: _Layout.visualTopTextBottom,
+    bodyMaxLines: 4,
   ),
   // 7 — Invite only
   _Slide(
