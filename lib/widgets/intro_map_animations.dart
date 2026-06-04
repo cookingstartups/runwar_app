@@ -166,6 +166,91 @@ mixin _IntroPainterHelpers {
     canvas.drawCircle(
         pos, 1.5, Paint()..color = Colors.white.withValues(alpha: 0.85));
   }
+
+  /// Draw a list of inherited (already-owned) zone polygons as muted fills.
+  /// Uses kAccent at alpha 0.55 so they read as "prior territory" without
+  /// competing with the current slide's active animation.
+  void drawInheritedBlocks(Canvas canvas, List<List<Offset>> blocks) {
+    for (final block in blocks) {
+      drawFillColor(canvas, block, kAccent, 0.55);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared GPS polygon data — referenced by multiple slide painters.
+// ---------------------------------------------------------------------------
+abstract final class IntroZones {
+  // ── Slide 1 blocks (Ruzafa) — from IntroPulseMap ──────────────────────────
+  static const kS1Block1 = [
+    LatLng(39.462077, -0.375522), // A
+    LatLng(39.461576, -0.376751), // B
+    LatLng(39.462155, -0.377171), // C
+    LatLng(39.462671, -0.375937), // D
+  ];
+
+  static const kS1Block2 = [
+    LatLng(39.462077, -0.375522), // A
+    LatLng(39.461568, -0.375167), // E
+    LatLng(39.460440, -0.375966), // F
+    LatLng(39.461050, -0.376394), // G
+    LatLng(39.461576, -0.376751), // B
+  ];
+
+  static const kS1Block3 = [
+    LatLng(39.461576, -0.376751), // B
+    LatLng(39.460846, -0.378471), // H
+    LatLng(39.460335, -0.378112), // I
+    LatLng(39.461050, -0.376394), // G
+  ];
+
+  static const kS1All = [kS1Block1, kS1Block2, kS1Block3];
+
+  // ── Slide 2 net-new blocks (IntroCaptureMap owned territory) ──────────────
+  static const kS2OwnedBlock1 = [
+    LatLng(39.4503, -0.3774),
+    LatLng(39.4497, -0.3780),
+    LatLng(39.4503, -0.3785),
+    LatLng(39.4509, -0.3779),
+  ];
+
+  static const kS2OwnedBlock2 = [
+    LatLng(39.4509, -0.3779),
+    LatLng(39.4503, -0.3785),
+    LatLng(39.4497, -0.3791),
+    LatLng(39.4503, -0.3796),
+    LatLng(39.4511, -0.3788),
+  ];
+
+  /// Slide 2 sees: all of slide 1 + slide 2's own captures.
+  static const kS2All = [
+    ...kS1All,
+    kS2OwnedBlock1,
+    kS2OwnedBlock2,
+  ];
+
+  // ── Slide 3 net-new blocks (IntroRivalsMap owned territory) ───────────────
+  static const kS3OwnedBlock1 = [
+    LatLng(39.4490, -0.3774),
+    LatLng(39.4484, -0.3780),
+    LatLng(39.4490, -0.3785),
+    LatLng(39.4496, -0.3779),
+  ];
+
+  static const kS3OwnedBlock2 = [
+    LatLng(39.4496, -0.3779),
+    LatLng(39.4490, -0.3785),
+    LatLng(39.4484, -0.3791),
+    LatLng(39.4490, -0.3796),
+    LatLng(39.4498, -0.3788),
+  ];
+
+  /// Slide 3 sees: all of slides 1+2 + slide 3's own blocks.
+  static const kS3All = [
+    ...kS2All,
+    kS3OwnedBlock1,
+    kS3OwnedBlock2,
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -217,29 +302,6 @@ class _IntroPulseMapState extends State<IntroPulseMap>
     LatLng(39.461050, -0.376394), // [11] G  — BLOCK 3 CLOSES
   ];
 
-  // Corner polygons for fill rendering — exactly match the area each lasso loop encloses.
-  static const _kBlock1 = [
-    LatLng(39.462077, -0.375522), // A
-    LatLng(39.461576, -0.376751), // B
-    LatLng(39.462155, -0.377171), // C
-    LatLng(39.462671, -0.375937), // D
-  ];
-
-  static const _kBlock2 = [
-    LatLng(39.462077, -0.375522), // A
-    LatLng(39.461568, -0.375167), // E
-    LatLng(39.460440, -0.375966), // F
-    LatLng(39.461050, -0.376394), // G
-    LatLng(39.461576, -0.376751), // B
-  ];
-
-  static const _kBlock3 = [
-    LatLng(39.461576, -0.376751), // B
-    LatLng(39.460846, -0.378471), // H
-    LatLng(39.460335, -0.378112), // I
-    LatLng(39.461050, -0.376394), // G
-  ];
-
   List<Offset> _route = [];
   List<Offset> _block1 = [];
   List<Offset> _block2 = [];
@@ -262,9 +324,9 @@ class _IntroPulseMapState extends State<IntroPulseMap>
     }
     setState(() {
       _route = _kRoute.map(toScreen).toList();
-      _block1 = _kBlock1.map(toScreen).toList();
-      _block2 = _kBlock2.map(toScreen).toList();
-      _block3 = _kBlock3.map(toScreen).toList();
+      _block1 = IntroZones.kS1Block1.map(toScreen).toList();
+      _block2 = IntroZones.kS1Block2.map(toScreen).toList();
+      _block3 = IntroZones.kS1Block3.map(toScreen).toList();
       _mapReady = true;
     });
   }
@@ -407,21 +469,6 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
 
-  // Static owned territory — two orange blocks already captured (slide 1 legacy).
-  static const _kOwnedBlock1 = [
-    LatLng(39.4503, -0.3774),
-    LatLng(39.4497, -0.3780),
-    LatLng(39.4503, -0.3785),
-    LatLng(39.4509, -0.3779),
-  ];
-  static const _kOwnedBlock2 = [
-    LatLng(39.4509, -0.3779),
-    LatLng(39.4503, -0.3785),
-    LatLng(39.4497, -0.3791),
-    LatLng(39.4503, -0.3796),
-    LatLng(39.4511, -0.3788),
-  ];
-
   // Attacker route — blue rival (kSea) enters from off-screen left, runs a
   // lasso that overlaps part of the owned territory, closes at t=0.70.
   //
@@ -463,6 +510,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
     LatLng(39.4499, -0.3780),
   ];
 
+  List<List<Offset>> _inheritedPts = [];
   List<Offset> _ownedBlock1 = [];
   List<Offset> _ownedBlock2 = [];
   List<Offset> _attackerRoute = [];
@@ -492,8 +540,12 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
       return Offset(p.x.toDouble(), p.y.toDouble());
     }
     setState(() {
-      _ownedBlock1 = _kOwnedBlock1.map(toScreen).toList();
-      _ownedBlock2 = _kOwnedBlock2.map(toScreen).toList();
+      // Inherited blocks from slide 1 — rendered as pre-filled territory.
+      _inheritedPts = IntroZones.kS1All
+          .map((block) => block.map(toScreen).toList())
+          .toList();
+      _ownedBlock1 = IntroZones.kS2OwnedBlock1.map(toScreen).toList();
+      _ownedBlock2 = IntroZones.kS2OwnedBlock2.map(toScreen).toList();
       _attackerRoute = _kAttackerRoute.map(toScreen).toList();
       _attackerLasso = _kAttackerLasso.map(toScreen).toList();
       _disputedArea = _kDisputedArea.map(toScreen).toList();
@@ -519,6 +571,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
               painter: _IntroCaptureMapPainter(
                 t: _ctrl.value,
                 accent: widget.accent,
+                inheritedPts: _inheritedPts,
                 ownedBlock1: _ownedBlock1,
                 ownedBlock2: _ownedBlock2,
                 attackerRoute: _attackerRoute,
@@ -537,6 +590,7 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
   final double t;
   @override
   final Color accent;
+  final List<List<Offset>> inheritedPts;
   final List<Offset> ownedBlock1;
   final List<Offset> ownedBlock2;
   final List<Offset> attackerRoute;
@@ -546,6 +600,7 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
   _IntroCaptureMapPainter({
     required this.t,
     required this.accent,
+    required this.inheritedPts,
     required this.ownedBlock1,
     required this.ownedBlock2,
     required this.attackerRoute,
@@ -579,7 +634,10 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
 
     final fade = _globalFade(t);
 
-    // 1. Static orange owned territory fills — always visible.
+    // 0. Inherited blocks from slide 1 — pre-filled, no animation.
+    drawInheritedBlocks(canvas, inheritedPts);
+
+    // 1. Static orange owned territory fills for this slide — always visible.
     drawFillColor(canvas, ownedBlock1, kAccent, 0.22 * fade);
     drawFillColor(canvas, ownedBlock2, kAccent, 0.22 * fade);
 
@@ -656,7 +714,8 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
       old.attackerRoute != attackerRoute ||
       old.disputedArea != disputedArea ||
       old.ownedBlock1 != ownedBlock1 ||
-      old.ownedBlock2 != ownedBlock2;
+      old.ownedBlock2 != ownedBlock2 ||
+      old.inheritedPts != inheritedPts;
 }
 
 // ---------------------------------------------------------------------------
@@ -677,21 +736,6 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
 
-  // Static owned territory (~100m south of slide 2 blocks, lat ~39.4482).
-  static const _kOwnedBlock1 = [
-    LatLng(39.4490, -0.3774),
-    LatLng(39.4484, -0.3780),
-    LatLng(39.4490, -0.3785),
-    LatLng(39.4496, -0.3779),
-  ];
-  static const _kOwnedBlock2 = [
-    LatLng(39.4496, -0.3779),
-    LatLng(39.4490, -0.3785),
-    LatLng(39.4484, -0.3791),
-    LatLng(39.4490, -0.3796),
-    LatLng(39.4498, -0.3788),
-  ];
-
   // Blue attacker partial lasso — runs from t=0.0 to t=0.45 (interrupted).
   static const _kAttackerRoute = [
     LatLng(39.4480, -0.3810), // 0: off-screen left
@@ -710,6 +754,7 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
     LatLng(39.4486, -0.3779),
   ];
 
+  List<List<Offset>> _inheritedPts = [];
   List<Offset> _ownedBlock1 = [];
   List<Offset> _ownedBlock2 = [];
   List<Offset> _attackerRoute = [];
@@ -723,8 +768,12 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
 
   void _onMapReady() {
     setState(() {
-      _ownedBlock1 = _toScreen(_kOwnedBlock1);
-      _ownedBlock2 = _toScreen(_kOwnedBlock2);
+      // Inherited blocks from slides 1+2 — rendered as pre-filled territory.
+      _inheritedPts = IntroZones.kS2All
+          .map((block) => _toScreen(block))
+          .toList();
+      _ownedBlock1 = _toScreen(IntroZones.kS3OwnedBlock1);
+      _ownedBlock2 = _toScreen(IntroZones.kS3OwnedBlock2);
       _attackerRoute = _toScreen(_kAttackerRoute);
       _partialDisputed = _toScreen(_kPartialDisputedArea);
       _mapReady = true;
@@ -764,6 +813,7 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
               painter: _IntroRivalsMapPainter(
                 t: _ctrl.value,
                 accent: widget.accent,
+                inheritedPts: _inheritedPts,
                 ownedBlock1: _ownedBlock1,
                 ownedBlock2: _ownedBlock2,
                 attackerRoute: _attackerRoute,
@@ -781,6 +831,7 @@ class _IntroRivalsMapPainter extends CustomPainter with _IntroPainterHelpers {
   final double t;
   @override
   final Color accent;
+  final List<List<Offset>> inheritedPts;
   final List<Offset> ownedBlock1;
   final List<Offset> ownedBlock2;
   final List<Offset> attackerRoute;
@@ -789,6 +840,7 @@ class _IntroRivalsMapPainter extends CustomPainter with _IntroPainterHelpers {
   _IntroRivalsMapPainter({
     required this.t,
     required this.accent,
+    required this.inheritedPts,
     required this.ownedBlock1,
     required this.ownedBlock2,
     required this.attackerRoute,
@@ -842,6 +894,9 @@ class _IntroRivalsMapPainter extends CustomPainter with _IntroPainterHelpers {
     if (ownedBlock1.isEmpty) return;
 
     final centroid = _ownedCentroid();
+
+    // 0. Inherited blocks from slides 1+2 — pre-filled, no animation.
+    drawInheritedBlocks(canvas, inheritedPts);
 
     // 1. Static orange owned territory — opacity pulses during FORTIFY.
     final ownedOp = _ownedOpacity(t);
@@ -983,7 +1038,8 @@ class _IntroRivalsMapPainter extends CustomPainter with _IntroPainterHelpers {
       old.ownedBlock1 != ownedBlock1 ||
       old.ownedBlock2 != ownedBlock2 ||
       old.attackerRoute != attackerRoute ||
-      old.partialDisputed != partialDisputed;
+      old.partialDisputed != partialDisputed ||
+      old.inheritedPts != inheritedPts;
 }
 
 // ---------------------------------------------------------------------------
@@ -1373,4 +1429,3 @@ class _IntroFlagDropMapPainter extends CustomPainter with _IntroPainterHelpers {
       old.routeB != routeB ||
       old.routeC != routeC;
 }
-
