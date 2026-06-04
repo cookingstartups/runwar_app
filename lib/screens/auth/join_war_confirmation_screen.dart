@@ -91,13 +91,28 @@ class JoinWarConfirmationScreen extends ConsumerWidget {
                               children: [
                                 Row(
                                   children: [
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(100),
-                                      child: Image.asset(
-                                        'assets/cities/${c.slug}.jpg',
-                                        width: 48,
-                                        height: 48,
-                                        fit: BoxFit.cover,
+                                    SizedBox(
+                                      width: 48,
+                                      height: 48,
+                                      child: Stack(
+                                        fit: StackFit.expand,
+                                        children: [
+                                          ClipRRect(
+                                            borderRadius: BorderRadius.circular(100),
+                                            child: Image.asset(
+                                              'assets/cities/${c.slug}.jpg',
+                                              width: 48,
+                                              height: 48,
+                                              fit: BoxFit.cover,
+                                              color: c.isUnlocked ? null : Colors.black.withValues(alpha: 0.45),
+                                              colorBlendMode: c.isUnlocked ? null : BlendMode.darken,
+                                            ),
+                                          ),
+                                          if (!c.isUnlocked)
+                                            const Center(
+                                              child: Icon(Icons.lock_outline, size: 16, color: Colors.white),
+                                            ),
+                                        ],
                                       ),
                                     ),
                                     const SizedBox(width: 12),
@@ -110,7 +125,7 @@ class JoinWarConfirmationScreen extends ConsumerWidget {
                                               style: GoogleFonts.spaceGrotesk(
                                                   fontSize: 16,
                                                   fontWeight: FontWeight.w700,
-                                                  color: kFg)),
+                                                  color: c.isUnlocked ? kFg : kFg.withValues(alpha: 0.4))),
                                           Text('${c.flag}  ${c.country}',
                                               style: TextStyle(
                                                 fontFamily: 'monospace',

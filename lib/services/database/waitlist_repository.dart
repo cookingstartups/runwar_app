@@ -1,4 +1,5 @@
 import 'package:sqflite/sqflite.dart';
+import '../../config/supabase_config.dart';
 import '../database_service.dart';
 import '../supabase_service.dart';
 
@@ -20,20 +21,17 @@ class WaitlistRepository {
         conflictAlgorithm: ConflictAlgorithm.ignore,
       );
     }
-    // Best-effort Supabase sync.
+    // Best-effort remote sync via edge function.
     if (SupabaseService.instance.isConnected) {
       try {
-        final rows = slugs
-            .map((s) => {
-                  'user_id': userId,
-                  'city_slug': s,
-                  if (referralSourceCode != null)
-                    'referral_source_code': referralSourceCode,
-                })
-            .toList();
-        await SupabaseService.instance.supabase
-            .from('city_waitlists')
-            .upsert(rows, onConflict: 'city_waitlists_user_id_city_slug_key');
+        await SupabaseService.instance.supabase.functions.invoke(
+          SupabaseConfig.fnJoinCityWaitlists,
+          body: {
+            'slugs': slugs,
+            if (referralSourceCode != null)
+              'referral_source_code': referralSourceCode,
+          },
+        );
       } catch (_) {
         // Sync failure is non-fatal; local record is the source of truth.
       }
