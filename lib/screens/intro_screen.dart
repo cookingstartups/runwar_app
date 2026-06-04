@@ -26,9 +26,10 @@ enum _Anim { pulse, hexCapture, rivals, ctfDrop, none }
 // Layout modes
 // ---------------------------------------------------------------------------
 enum _Layout {
-  fullBleed, // Painter fills screen, text overlays with scrim — slide 1
-  textTopVisualBottom, // Text flex 4 / Painter panel flex 5 — slides 2-4
-  centeredClose, // Pure dark, centered typography, no painter — slide 5
+  fullBleed,
+  textTopVisualBottom,
+  visualTopTextBottom,
+  centeredClose,
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +81,7 @@ const _slides = [
     body:
         'The map updates live. See who\'s running, what they own, and what you can take.',
     anim: _Anim.rivals,
-    layout: _Layout.textTopVisualBottom,
+    layout: _Layout.visualTopTextBottom,
   ),
   // 4 — Daily drops
   _Slide(
@@ -114,10 +115,8 @@ class IntroScreen extends StatefulWidget {
 }
 
 class _IntroScreenState extends State<IntroScreen>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
-  late AnimationController _loop;
-  late AnimationController _rotation;
   int _page = 0;
   int _prevPage = 0;
   Axis _axis = Axis.vertical;
@@ -135,21 +134,11 @@ class _IntroScreenState extends State<IntroScreen>
         setState(() => _prevPage = _page);
       }
     });
-    _loop = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 3000),
-    )..repeat();
-    _rotation = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 5),
-    )..repeat();
   }
 
   @override
   void dispose() {
     _ctrl.dispose();
-    _loop.dispose();
-    _rotation.dispose();
     super.dispose();
   }
 
@@ -207,9 +196,9 @@ class _IntroScreenState extends State<IntroScreen>
         child: Stack(
           children: [
             // Pre-warm FlutterMap tile cache for all slides before user reaches them.
-            Offstage(
+            const Offstage(
               offstage: true,
-              child: Column(children: const [
+              child: Column(children: [
                 IntroPulseMap(accent: kAccent),
                 IntroCaptureMap(accent: kSea),
                 IntroRivalsMap(accent: kAccent),
@@ -233,8 +222,6 @@ class _IntroScreenState extends State<IntroScreen>
                     )),
                     child: _SlidePage(
                       slide: _slides[_prevPage],
-                      loop: _loop,
-                      rotation: _rotation,
                       key: ValueKey(_prevPage),
                     ),
                   ),
@@ -251,8 +238,6 @@ class _IntroScreenState extends State<IntroScreen>
                     )),
                     child: _SlidePage(
                       slide: _slides[_page],
-                      loop: _loop,
-                      rotation: _rotation,
                       key: ValueKey(_page),
                     ),
                   ),
@@ -371,22 +356,17 @@ class _IntroScreenState extends State<IntroScreen>
 // ---------------------------------------------------------------------------
 class _SlidePage extends StatelessWidget {
   final _Slide slide;
-  final Animation<double> loop;
-  final Animation<double> rotation;
-  const _SlidePage({
-    required this.slide,
-    required this.loop,
-    required this.rotation,
-    super.key,
-  });
+  const _SlidePage({required this.slide, super.key});
 
   @override
   Widget build(BuildContext context) {
     switch (slide.layout) {
       case _Layout.fullBleed:
-        return _FullBleedSlide(slide: slide, loop: loop);
+        return _FullBleedSlide(slide: slide);
       case _Layout.textTopVisualBottom:
-        return _TextTopSlide(slide: slide, loop: loop, rotation: rotation);
+        return _SplitBleedSlide(slide: slide, visualOnTop: false);
+      case _Layout.visualTopTextBottom:
+        return _SplitBleedSlide(slide: slide, visualOnTop: true);
       case _Layout.centeredClose:
         return _CenteredCloseSlide(slide: slide);
     }
@@ -399,8 +379,7 @@ class _SlidePage extends StatelessWidget {
 // ---------------------------------------------------------------------------
 class _FullBleedSlide extends StatelessWidget {
   final _Slide slide;
-  final Animation<double> loop;
-  const _FullBleedSlide({required this.slide, required this.loop});
+  const _FullBleedSlide({required this.slide});
 
   @override
   Widget build(BuildContext context) {
@@ -471,105 +450,107 @@ class _FullBleedSlide extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout B — Text top / Map animation panel bottom (slides 2-4)
+// Layout B — Full-bleed split (slides 2-4)
+// Map fills the entire screen; a gradient dissolves it into kBg on one half
+// so that the text block floats on a clean dark surface.
 // ---------------------------------------------------------------------------
-class _TextTopSlide extends StatelessWidget {
+class _SplitBleedSlide extends StatelessWidget {
   final _Slide slide;
-  final Animation<double> loop;
-  final Animation<double> rotation;
-  const _TextTopSlide({
-    required this.slide,
-    required this.loop,
-    required this.rotation,
-  });
+  final bool visualOnTop;
+  const _SplitBleedSlide({required this.slide, required this.visualOnTop});
 
   Widget _animWidget(_Anim anim, Color accent) => switch (anim) {
-        _Anim.pulse => IntroPulseMap(accent: accent),
+        _Anim.pulse      => IntroPulseMap(accent: accent),
         _Anim.hexCapture => IntroCaptureMap(accent: accent),
-        _Anim.rivals => IntroRivalsMap(accent: accent),
-        _Anim.ctfDrop => IntroFlagDropMap(accent: accent),
-        _Anim.none => const SizedBox.shrink(),
+        _Anim.rivals     => IntroRivalsMap(accent: accent),
+        _Anim.ctfDrop    => IntroFlagDropMap(accent: accent),
+        _Anim.none       => const SizedBox.shrink(),
       };
 
   @override
   Widget build(BuildContext context) {
-    // Reserve space for floating skip row (36px) + top padding
     final top = MediaQuery.of(context).padding.top;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(height: top + 52),
 
-        // Text
-        Expanded(
-          flex: 4,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 28),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _TagChip(slide: slide),
-                const SizedBox(height: 14),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.topLeft,
-                  child: Text(
-                    slide.headline,
-                    style: GoogleFonts.bebasNeue(
-                      fontSize: 52,
-                      height: 1.0,
-                      color: kFg,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  slide.body,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: bodyStyle(size: 13, color: kFgMuted),
-                ),
-              ],
+    final List<Color> gradColors = visualOnTop
+        ? [
+            kBg.withValues(alpha: 0.0),
+            kBg.withValues(alpha: 0.0),
+            kBg.withValues(alpha: 0.55),
+            kBg.withValues(alpha: 0.92),
+            kBg,
+            kBg,
+          ]
+        : [
+            kBg,
+            kBg,
+            kBg.withValues(alpha: 0.92),
+            kBg.withValues(alpha: 0.55),
+            kBg.withValues(alpha: 0.0),
+            kBg.withValues(alpha: 0.0),
+          ];
+    const gradStops = [0.0, 0.10, 0.42, 0.58, 0.72, 1.0];
+
+    final textBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _TagChip(slide: slide),
+        const SizedBox(height: 14),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.topLeft,
+          child: Text(
+            slide.headline,
+            style: GoogleFonts.bebasNeue(
+              fontSize: 54,
+              height: 1.0,
+              color: kFg,
+              letterSpacing: 2,
             ),
           ),
         ),
+        const SizedBox(height: 12),
+        Text(
+          slide.body,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: bodyStyle(size: 13, color: kFgMuted),
+        ),
+      ],
+    );
 
-        // Live FlutterMap animation panel
-        Expanded(
-          flex: 5,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 80),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: kBorder.withValues(alpha: 0.4)),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: kBg.withValues(alpha: 0.4),
-                      blurRadius: 24,
-                      spreadRadius: -12,
-                    ),
-                  ],
-                ),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    // Live Valencia FlutterMap + GPS-anchored painter
-                    _animWidget(slide.anim, slide.tagColor),
-                    // Scrim so headline text stays readable above the map
-                    Container(
-                      color: kBg.withValues(alpha: 0.45),
-                    ),
-                  ],
-                ),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _animWidget(slide.anim, slide.tagColor),
+
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: gradStops,
+                colors: gradColors,
               ),
             ),
           ),
         ),
+
+        if (visualOnTop)
+          Positioned(
+            left: 28,
+            right: 28,
+            bottom: 148,
+            child: textBlock,
+          )
+        else
+          Positioned(
+            top: top + 56,
+            left: 28,
+            right: 28,
+            child: textBlock,
+          ),
       ],
     );
   }

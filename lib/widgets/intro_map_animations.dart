@@ -839,7 +839,7 @@ class _IntroFlagDropMapPainter extends CustomPainter {
       final textOp = ((t - 0.4) / 0.15).clamp(0.0, 1.0);
       final tp = TextPainter(
         text: TextSpan(
-          text: '▸ LOCATION LOCKED',
+          text: '▸ NEW OBJECT DROP',
           style: TextStyle(
             fontFamily: 'monospace',
             fontSize: 10,
