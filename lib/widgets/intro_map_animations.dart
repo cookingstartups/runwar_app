@@ -206,28 +206,13 @@ abstract final class IntroZones {
 
   static const kS1All = [kS1Block1, kS1Block2, kS1Block3];
 
-  // ── Slide 2 net-new blocks (IntroCaptureMap owned territory) ──────────────
-  static const kS2OwnedBlock1 = [
-    LatLng(39.4503, -0.3774),
-    LatLng(39.4497, -0.3780),
-    LatLng(39.4503, -0.3785),
-    LatLng(39.4509, -0.3779),
-  ];
+  // ── Slide 2 net-new blocks — empty; dispute is over existing territory ──────
+  static const kS2OwnedBlock1 = <LatLng>[];
+  static const kS2OwnedBlock2 = <LatLng>[];
 
-  static const kS2OwnedBlock2 = [
-    LatLng(39.4509, -0.3779),
-    LatLng(39.4503, -0.3785),
-    LatLng(39.4497, -0.3791),
-    LatLng(39.4503, -0.3796),
-    LatLng(39.4511, -0.3788),
-  ];
-
-  /// Slide 2 sees: all of slide 1 + slide 2's own captures.
-  static const kS2All = [
-    ...kS1All,
-    kS2OwnedBlock1,
-    kS2OwnedBlock2,
-  ];
+  /// Slide 2 sees: same territory as slide 1 (no new captures yet — conflict
+  /// is over existing orange blocks).
+  static const kS2All = [...kS1All];
 
   // ── Slide 3 net-new blocks (IntroRivalsMap owned territory) ───────────────
   static const kS3OwnedBlock1 = [
@@ -469,45 +454,48 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
 
-  // Attacker route — blue rival (kSea) enters from off-screen left, runs a
-  // lasso that overlaps part of the owned territory, closes at t=0.70.
+  // Attacker route — blue rival (kSea) enters from off-screen south, runs
+  // north along Carrer de Cuba into existing orange territory, closes a lasso
+  // that clips the southern portion of kS1Block2 (vertices F & G).
   //
-  //   pt0 — off-screen far left (off map, w < 0)
-  //   pt1 — enters map near western edge on Carrer de Sueca approach
-  //   pt2 — LASSO ANCHOR (corner to which lasso closes)
-  //   pt3 — continues south overlapping owned block edge
-  //   pt4 — loops east past owned territory
-  //   pt5 — turns north-west cutting through overlap zone
-  //   pt6 — pt7 approaches anchor
-  //   pt7 — LASSO CLOSE = pt2
+  //   pt0 — off-screen south (below visible area at zoom 16)
+  //   pt1 — enters map heading north on Carrer de Cuba
+  //   pt2 — continues north on Carrer del Literat approach
+  //   pt3 — LASSO ANCHOR near southern tip of kS1Block2
+  //   pt4 — loop west along Carrer de Cuba
+  //   pt5 — loop north, clipping through kS1Block2 lower edge (near F/G)
+  //   pt6 — loop east on Carrer de Sueca approach
+  //   pt7 — loop south back toward anchor
+  //   pt8 — LASSO CLOSE = pt3
   static const _kAttackerRoute = [
-    LatLng(39.4493, -0.3820), // 0: off-screen left entry
-    LatLng(39.4493, -0.3795), // 1: enters map western edge
-    LatLng(39.4497, -0.3783), // 2: LASSO ANCHOR
-    LatLng(39.4491, -0.3781), // 3: south along owned edge
-    LatLng(39.4488, -0.3775), // 4: loops east past owned territory
-    LatLng(39.4490, -0.3769), // 5: turns north-east
-    LatLng(39.4496, -0.3770), // 6: heading back north-west
-    LatLng(39.4497, -0.3783), // 7: LASSO CLOSE = pt2
+    LatLng(39.4570, -0.3760), // 0: off-screen south (below visible area)
+    LatLng(39.4585, -0.3760), // 1: heading north on Carrer de Cuba
+    LatLng(39.4595, -0.3762), // 2: continuing north, Carrer del Literat
+    LatLng(39.4605, -0.3764), // 3: LASSO ANCHOR — southern tip of kS1Block2
+    LatLng(39.4603, -0.3770), // 4: loop west along Carrer de Cuba
+    LatLng(39.4610, -0.3769), // 5: loop north clipping kS1Block2 near G/F
+    LatLng(39.4612, -0.3761), // 6: loop east near Carrer de Sueca
+    LatLng(39.4607, -0.3757), // 7: loop south-west back toward anchor
+    LatLng(39.4605, -0.3764), // 8: LASSO CLOSE = pt3
   ];
 
-  // The polygon enclosed by the attacker's lasso (pts 2–7).
+  // The polygon enclosed by the attacker's lasso (pts 3–8).
   static const _kAttackerLasso = [
-    LatLng(39.4497, -0.3783), // 2
-    LatLng(39.4491, -0.3781), // 3
-    LatLng(39.4488, -0.3775), // 4
-    LatLng(39.4490, -0.3769), // 5
-    LatLng(39.4496, -0.3770), // 6
+    LatLng(39.4605, -0.3764), // 3: anchor
+    LatLng(39.4603, -0.3770), // 4: west
+    LatLng(39.4610, -0.3769), // 5: north-west (overlaps kS1Block2 G/F zone)
+    LatLng(39.4612, -0.3761), // 6: north-east
+    LatLng(39.4607, -0.3757), // 7: south-east
   ];
 
-  // Disputed area — approximate overlap between attacker lasso and owned blocks.
+  // Disputed area — overlap between attacker lasso and southern kS1Block2
+  // (near vertices F LatLng(39.460440,-0.375966) and G LatLng(39.461050,-0.376394)).
   static const _kDisputedArea = [
-    LatLng(39.4497, -0.3783),
-    LatLng(39.4494, -0.3782),
-    LatLng(39.4491, -0.3781),
-    LatLng(39.4492, -0.3778),
-    LatLng(39.4497, -0.3779),
-    LatLng(39.4499, -0.3780),
+    LatLng(39.4605, -0.3764),
+    LatLng(39.4604, -0.3768),
+    LatLng(39.4608, -0.3768),
+    LatLng(39.4610, -0.3763),
+    LatLng(39.4607, -0.3760),
   ];
 
   List<List<Offset>> _inheritedPts = [];
@@ -560,7 +548,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
         _buildIntroMap(
           context: context,
           mapController: _mapCtrl,
-          center: const LatLng(39.4491, -0.3760),
+          center: const LatLng(39.4615, -0.3768),
           zoom: 16.0,
           onReady: _updatePoints,
         ),
