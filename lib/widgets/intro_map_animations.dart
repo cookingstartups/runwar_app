@@ -6,17 +6,19 @@ import '../theme.dart';
 
 // ---------------------------------------------------------------------------
 // 1. IntroPulseMap — Ruzafa GPS route capture on real map (slide 1 full-bleed)
-//    9-second loop: runner traces and conquers three adjacent Ruzafa blocks
-//    one after another; each captured block stays orange-filled while the
-//    next is traced.
+//    10-second loop: runner traces ONE continuous route through Ruzafa streets
+//    (Cadis → Puerto Rico → Sueca → Buenos Aires → Cuba), naturally enclosing
+//    three city blocks in sequence. Each block fills as the runner passes the
+//    point where it has been looped.
 //
 //    Phase table (t = AnimationController.value):
-//      0.00–0.27  Block 1 trace
-//      0.27–0.33  Block 1 fill (stays)
-//      0.33–0.57  Block 2 trace; Block 1 stays
-//      0.57–0.63  Block 2 fill; Blocks 1+2 stay
-//      0.63–0.87  Block 3 trace; Blocks 1+2 stay
-//      0.87–0.95  Block 3 fill; all three fills visible
+//      0.00–0.30  Runner follows Cadis → Puerto Rico → Sueca approach
+//      0.30       Block 1 fill appears (Cadis/Puerto Rico/Sueca parallelogram)
+//      0.30–0.58  Runner continues west on Sueca → Buenos Aires junction
+//      0.58       Block 2 fill appears (Sueca/Buenos Aires/Cuba block)
+//      0.58–0.82  Runner follows Cuba NW toward upper Sueca
+//      0.82       Block 3 fill appears (Cuba/upper-Sueca block)
+//      0.82–0.95  Runner completes route, all 3 fills visible
 //      0.95–1.00  All fills fade to 0, reset
 // ---------------------------------------------------------------------------
 class IntroPulseMap extends StatefulWidget {
@@ -30,48 +32,66 @@ class _IntroPulseMapState extends State<IntroPulseMap>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
-  List<Offset> _pts1 = [];
-  List<Offset> _pts2 = [];
-  List<Offset> _pts3 = [];
-  bool _mapReady = false;
 
-  // Block 1 — OSM-verified Ruzafa intersections (Cadis / Dénia / Sueca / Puerto Rico)
+  // Single continuous GPS route along real Ruzafa streets (OSM-verified nodes).
+  // Path: Cadis (NW→SE) → Puerto Rico (S) → Sueca (W) → Buenos Aires (SW) →
+  //       Cuba (NW) → upper Sueca (NE end)
+  static const _kRoute = [
+    LatLng(39.46408, -0.37519), // 1. Cadis start (NW, near interior road)
+    LatLng(39.46324, -0.37459), // 2. Cadis diagonal
+    LatLng(39.46268, -0.37419), // 3. Cadis & Doctor Serrano
+    LatLng(39.46213, -0.37381), // 4. Cadis & Puerto Rico (turn south)
+    LatLng(39.46157, -0.37517), // 5. Puerto Rico & Sueca (turn west)
+    LatLng(39.46208, -0.37552), // 6. Sueca heading west
+    LatLng(39.46267, -0.37594), // 7. Sueca & Buenos Aires junction
+    LatLng(39.46158, -0.37675), // 8. Buenos Aires meets Cuba (turn NW on Cuba)
+    LatLng(39.46221, -0.37720), // 9. Cuba heading NW
+    LatLng(39.46293, -0.37771), // 10. Cuba continuing NW
+    LatLng(39.46303, -0.37781), // 11. Cuba NW end
+    LatLng(39.46347, -0.37652), // 12. Upper Sueca heading NE
+    LatLng(39.46359, -0.37655), // 13. Sueca end
+  ];
+
+  // Block 1 polygon — city block enclosed by Cadis (N), Puerto Rico (E),
+  // Sueca (S), and Doctor Serrano (W). Corners at street intersections.
   static const _kBlock1 = [
-    LatLng(39.46213, -0.37381), // Cadis & Puerto Rico
-    LatLng(39.46268, -0.37419), // Cadis & Doctor Serrano
-    LatLng(39.46324, -0.37459), // Cadis & Dénia
-    LatLng(39.46267, -0.37594), // Dénia & Sueca
-    LatLng(39.46208, -0.37552), // Buenos Aires & Sueca
-    LatLng(39.46157, -0.37517), // Puerto Rico & Sueca
-    LatLng(39.46213, -0.37381), // close
+    LatLng(39.46268, -0.37419), // Cadis & Doctor Serrano (N)
+    LatLng(39.46213, -0.37381), // Cadis & Puerto Rico (NE)
+    LatLng(39.46157, -0.37517), // Puerto Rico & Sueca (SE)
+    LatLng(39.46208, -0.37552), // Sueca mid (S)
+    LatLng(39.46254, -0.37395), // Doctor Serrano approx (NW, interpolated)
   ];
 
-  // Block 2 — immediately east of Block 1 (shares Puerto Rico side)
-  // Bounded: Cadis (N), Sueca (S), Puerto Rico (W, ~-0.37381),
-  //          Carrer de Russafa (E, ~-0.37170)
+  // Block 2 polygon — city block enclosed by Sueca (N), Buenos Aires (E),
+  // Cuba (S/W). Corners at street intersections.
   static const _kBlock2 = [
-    LatLng(39.46213, -0.37381), // Cadis & Puerto Rico
-    LatLng(39.46160, -0.37211), // Cadis & Russafa
-    LatLng(39.46104, -0.37249), // Russafa & Sueca
-    LatLng(39.46157, -0.37517), // Puerto Rico & Sueca
-    LatLng(39.46213, -0.37381), // close
+    LatLng(39.46267, -0.37594), // Sueca & Buenos Aires (N)
+    LatLng(39.46208, -0.37552), // Sueca NE corner
+    LatLng(39.46158, -0.37675), // Buenos Aires & Cuba (SE)
+    LatLng(39.46221, -0.37720), // Cuba (SW)
+    LatLng(39.46267, -0.37660), // approximate NW closure
   ];
 
-  // Block 3 — immediately west of Block 1 (shares Dénia side)
-  // Bounded: Cadis (N), Sueca (S), Dénia (E, ~-0.37594),
-  //          Carrer de Cuba (W, ~-0.37800)
+  // Block 3 polygon — city block enclosed by Cuba (SE), upper Sueca (NE),
+  // and the streets further NW.
   static const _kBlock3 = [
-    LatLng(39.46324, -0.37459), // Cadis & Dénia
-    LatLng(39.46378, -0.37596), // Cadis & Cuba
-    LatLng(39.46321, -0.37734), // Cuba & Sueca
-    LatLng(39.46267, -0.37594), // Dénia & Sueca
-    LatLng(39.46324, -0.37459), // close
+    LatLng(39.46347, -0.37652), // upper Sueca NE
+    LatLng(39.46267, -0.37594), // Sueca & Buenos Aires
+    LatLng(39.46158, -0.37675), // Buenos Aires/Cuba SE
+    LatLng(39.46221, -0.37720), // Cuba
+    LatLng(39.46293, -0.37771), // Cuba NW
+    LatLng(39.46303, -0.37781), // Cuba far NW
+    LatLng(39.46359, -0.37655), // Sueca W end
   ];
+
+  List<Offset> _route = [];
+  List<Offset> _block1 = [], _block2 = [], _block3 = [];
+  bool _mapReady = false;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 9))
+    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 10))
       ..repeat();
   }
 
@@ -82,9 +102,10 @@ class _IntroPulseMapState extends State<IntroPulseMap>
       return Offset(p.x.toDouble(), p.y.toDouble());
     }
     setState(() {
-      _pts1 = _kBlock1.map(toScreen).toList();
-      _pts2 = _kBlock2.map(toScreen).toList();
-      _pts3 = _kBlock3.map(toScreen).toList();
+      _route  = _kRoute.map(toScreen).toList();
+      _block1 = _kBlock1.map(toScreen).toList();
+      _block2 = _kBlock2.map(toScreen).toList();
+      _block3 = _kBlock3.map(toScreen).toList();
       _mapReady = true;
     });
   }
@@ -102,7 +123,7 @@ class _IntroPulseMapState extends State<IntroPulseMap>
           FlutterMap(
             mapController: _mapCtrl,
             options: MapOptions(
-              initialCenter: const LatLng(39.4638, -0.3742),
+              initialCenter: const LatLng(39.4625, -0.3760),
               initialZoom: 15,
               onMapReady: _updatePoints,
               interactionOptions:
@@ -125,9 +146,10 @@ class _IntroPulseMapState extends State<IntroPulseMap>
                 painter: _IntroPulseMapPainter(
                   t: _ctrl.value,
                   accent: widget.accent,
-                  pts1: _pts1,
-                  pts2: _pts2,
-                  pts3: _pts3,
+                  route: _route,
+                  block1: _block1,
+                  block2: _block2,
+                  block3: _block3,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -139,37 +161,34 @@ class _IntroPulseMapState extends State<IntroPulseMap>
 class _IntroPulseMapPainter extends CustomPainter {
   final double t;
   final Color accent;
-  final List<Offset> pts1;
-  final List<Offset> pts2;
-  final List<Offset> pts3;
+  final List<Offset> route;
+  final List<Offset> block1;
+  final List<Offset> block2;
+  final List<Offset> block3;
 
   _IntroPulseMapPainter({
     required this.t,
     required this.accent,
-    required this.pts1,
-    required this.pts2,
-    required this.pts3,
+    required this.route,
+    required this.block1,
+    required this.block2,
+    required this.block3,
   });
 
-  // Phase boundaries
-  static const double _b1TraceEnd   = 0.27;
-  static const double _b1FillEnd    = 0.33;
-  static const double _b2TraceEnd   = 0.57;
-  static const double _b2FillEnd    = 0.63;
-  static const double _b3TraceEnd   = 0.87;
-  static const double _b3FillEnd    = 0.95;
+  static const double _fillPhase1 = 0.30;
+  static const double _fillPhase2 = 0.58;
+  static const double _fillPhase3 = 0.82;
 
-  /// Returns fill opacity for a block:
-  ///   - 0 before its fill phase starts
-  ///   - ramps 0→0.22 during the 0.06t fill window
-  ///   - holds at 0.22 until fade-out phase (t > 0.95)
-  ///   - fades 0.22→0 during t 0.95→1.0
-  double _fillOpacity(double fillStart, double fillEnd) {
-    if (t < fillStart) return 0.0;
-    if (t < fillEnd) return ((t - fillStart) / (fillEnd - fillStart)).clamp(0.0, 1.0) * 0.22;
-    if (t < _b3FillEnd) return 0.22;
-    // fade-out 0.95→1.0
-    return (1.0 - (t - _b3FillEnd) / (1.0 - _b3FillEnd)).clamp(0.0, 1.0) * 0.22;
+  /// Returns fill opacity for a block based on route progress t.
+  /// - 0 before fillPhase
+  /// - ramps 0→0.22 over the 0.04t window after fillPhase
+  /// - holds at 0.22 until t > 0.95
+  /// - fades 0.22→0 from 0.95→1.0
+  double _blockOpacity(double t, double fillPhase) {
+    if (t < fillPhase) return 0;
+    if (t < fillPhase + 0.04) return ((t - fillPhase) / 0.04) * 0.22;
+    if (t < 0.95) return 0.22;
+    return (1.0 - (t - 0.95) / 0.05).clamp(0, 1) * 0.22;
   }
 
   void _drawFill(Canvas canvas, List<Offset> pts, double opacity) {
@@ -187,10 +206,10 @@ class _IntroPulseMapPainter extends CustomPainter {
     );
   }
 
-  void _drawTrace(Canvas canvas, List<Offset> pts, double phase) {
+  void _drawTrace(Canvas canvas, List<Offset> pts, double routeT) {
     if (pts.isEmpty) return;
     final segs = pts.length - 1;
-    final totalLen = phase.clamp(0.0, 1.0) * segs;
+    final totalLen = routeT.clamp(0.0, 1.0) * segs;
     final routeP = Paint()
       ..color = accent.withValues(alpha: 0.7)
       ..strokeWidth = 1.8
@@ -210,10 +229,10 @@ class _IntroPulseMapPainter extends CustomPainter {
     canvas.drawPath(rp, routeP);
   }
 
-  void _drawRunner(Canvas canvas, List<Offset> pts, double phase) {
+  void _drawRunner(Canvas canvas, List<Offset> pts, double routeT) {
     if (pts.isEmpty) return;
     final segs = pts.length - 1;
-    final totalLen = phase.clamp(0.0, 1.0) * segs;
+    final totalLen = routeT.clamp(0.0, 1.0) * segs;
     final segIdx = totalLen.floor().clamp(0, segs - 1);
     final segFrac = (totalLen - segIdx).clamp(0.0, 1.0);
     final pos = Offset.lerp(pts[segIdx], pts[(segIdx + 1).clamp(0, segs)], segFrac)!;
@@ -243,57 +262,40 @@ class _IntroPulseMapPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (pts1.isEmpty || pts2.isEmpty || pts3.isEmpty) return;
+    if (route.isEmpty) return;
 
-    // --- fills (drawn first, below trace lines) ---
-    _drawFill(canvas, pts1, _fillOpacity(_b1TraceEnd, _b1FillEnd));
-    _drawFill(canvas, pts2, _fillOpacity(_b2TraceEnd, _b2FillEnd));
-    _drawFill(canvas, pts3, _fillOpacity(_b3TraceEnd, _b3FillEnd));
+    // --- block fills (drawn first, below the route trail) ---
+    _drawFill(canvas, block1, _blockOpacity(t, _fillPhase1));
+    _drawFill(canvas, block2, _blockOpacity(t, _fillPhase2));
+    _drawFill(canvas, block3, _blockOpacity(t, _fillPhase3));
 
-    // --- active trace + runner ---
-    if (t < _b1FillEnd) {
-      // Block 1 being traced
-      final phase = (t / _b1TraceEnd).clamp(0.0, 1.0);
-      _drawTrace(canvas, pts1, phase);
-      if (t < _b1TraceEnd) _drawRunner(canvas, pts1, phase);
-    } else if (t < _b2FillEnd) {
-      // Block 1 fully traced (keep its line); Block 2 being traced
-      _drawTrace(canvas, pts1, 1.0);
-      final phase = ((t - _b1FillEnd) / (_b2TraceEnd - _b1FillEnd)).clamp(0.0, 1.0);
-      _drawTrace(canvas, pts2, phase);
-      if (t < _b2TraceEnd) _drawRunner(canvas, pts2, phase);
-    } else if (t < _b3FillEnd) {
-      // Blocks 1+2 fully traced; Block 3 being traced
-      _drawTrace(canvas, pts1, 1.0);
-      _drawTrace(canvas, pts2, 1.0);
-      final phase = ((t - _b2FillEnd) / (_b3TraceEnd - _b2FillEnd)).clamp(0.0, 1.0);
-      _drawTrace(canvas, pts3, phase);
-      if (t < _b3TraceEnd) _drawRunner(canvas, pts3, phase);
-    } else {
-      // All blocks traced (fade-out window)
-      _drawTrace(canvas, pts1, 1.0);
-      _drawTrace(canvas, pts2, 1.0);
-      _drawTrace(canvas, pts3, 1.0);
+    // --- single continuous route trace up to current t ---
+    _drawTrace(canvas, route, t);
+
+    // --- runner dot (hidden during final fade-out) ---
+    if (t < 0.95) {
+      _drawRunner(canvas, route, t);
     }
 
-    // --- corner pings (fire for 0.15t after each fill completes) ---
-    // Block 1 pings: _b1FillEnd → _b1FillEnd+0.15
-    if (t > _b1FillEnd && t < _b1FillEnd + 0.15) {
-      _drawPings(canvas, pts1, ((t - _b1FillEnd) / 0.15).clamp(0.0, 1.0));
+    // --- corner pings for 0.12t after each fill phase ---
+    if (t > _fillPhase1 && t < _fillPhase1 + 0.12) {
+      _drawPings(canvas, block1, ((t - _fillPhase1) / 0.12).clamp(0.0, 1.0));
     }
-    // Block 2 pings: _b2FillEnd → _b2FillEnd+0.15
-    if (t > _b2FillEnd && t < _b2FillEnd + 0.15) {
-      _drawPings(canvas, pts2, ((t - _b2FillEnd) / 0.15).clamp(0.0, 1.0));
+    if (t > _fillPhase2 && t < _fillPhase2 + 0.12) {
+      _drawPings(canvas, block2, ((t - _fillPhase2) / 0.12).clamp(0.0, 1.0));
     }
-    // Block 3 pings: _b3FillEnd → _b3FillEnd+0.15
-    if (t > _b3FillEnd && t < _b3FillEnd + 0.15) {
-      _drawPings(canvas, pts3, ((t - _b3FillEnd) / 0.15).clamp(0.0, 1.0));
+    if (t > _fillPhase3 && t < _fillPhase3 + 0.12) {
+      _drawPings(canvas, block3, ((t - _fillPhase3) / 0.12).clamp(0.0, 1.0));
     }
   }
 
   @override
   bool shouldRepaint(_IntroPulseMapPainter old) =>
-      old.t != t || old.pts1 != pts1 || old.pts2 != pts2 || old.pts3 != pts3;
+      old.t != t ||
+      old.route != route ||
+      old.block1 != block1 ||
+      old.block2 != block2 ||
+      old.block3 != block3;
 }
 
 // ---------------------------------------------------------------------------
