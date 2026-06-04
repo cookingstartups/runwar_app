@@ -432,6 +432,28 @@ class AuthService {
     return true;
   }
 
+  /// Restores _currentUser from a persisted Supabase session on app restart.
+  /// Called once from main() after SupabaseService.init(). No-ops if no session
+  /// or if the user's SQLite row doesn't exist (fresh install after DB reset).
+  Future<void> restoreSessionFromSupabase() async {
+    final supabaseUid = SupabaseService.instance.currentUserId;
+    if (supabaseUid == null) return;
+    final db = DatabaseService.instance.db;
+    final rows = await db.query(
+      'users',
+      where: 'id = ?',
+      whereArgs: [supabaseUid],
+      limit: 1,
+    );
+    if (rows.isEmpty) return;
+    _currentUser = {
+      'id': supabaseUid,
+      'email': rows.first['email'] as String? ?? '$supabaseUid@runwar',
+      'created_at': rows.first['created_at'],
+    };
+    debugPrint('[AuthService] session restored for $supabaseUid');
+  }
+
   /// Clears in-memory session and signs out of Supabase Auth. SQLite untouched.
   Future<void> signOut() async {
     _currentUser = null;

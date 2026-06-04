@@ -56,6 +56,8 @@ Future<void> main() async {
     // Establish Supabase anon session for DB/Realtime access.
     // Do NOT create a local SQLite user here — let the login screen handle auth.
     await SupabaseService.instance.signIn();
+    // Restore in-memory session from persisted Supabase session (e.g. Google sign-in).
+    await AuthService.instance.restoreSessionFromSupabase();
     debugPrint('[main] isConnected=${SupabaseService.instance.isConnected} session=${SupabaseService.instance.supabase.auth.currentSession?.user.id}');
     // Presence + CTF init deferred to MainShell (after login provides profile data).
     await TerritoryService.instance.runDailyDecayIfDue('Valencia');

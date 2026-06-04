@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../providers/trust/invitation_providers.dart';
-import '../../services/trust/invitation_service.dart';
+import '../../providers/auth_provider.dart';
 import '../../theme.dart';
 
 class InvitationCodeScreen extends ConsumerStatefulWidget {
@@ -29,14 +28,18 @@ class _InvitationCodeScreenState extends ConsumerState<InvitationCodeScreen> {
   Future<void> _submit() async {
     final code = _codeController.text.trim().toUpperCase();
     if (code.isEmpty) return;
+    final userId = ref.read(authProvider).user?['id'] as String? ?? '';
     setState(() { _loading = true; _errorText = null; });
     try {
-      await ref.read(invitationServiceProvider).redeemCode(code);
-      // Route guard watches authProvider — once invited_at is set it
-      // rebuilds to the next destination automatically.
-      if (mounted) Navigator.of(context).pop();
-    } on InvitationException catch (e) {
-      if (mounted) setState(() => _errorText = e.message);
+      final success = await ref.read(authProvider.notifier).redeemInvitationCode(code, userId);
+      if (mounted) {
+        if (success) {
+          Navigator.of(context).pop();
+        } else {
+          setState(() => _errorText =
+              ref.read(authProvider).error ?? 'Failed to redeem invite code.');
+        }
+      }
     } catch (_) {
       if (mounted) setState(() => _errorText = 'Something went wrong. Try again.');
     } finally {
