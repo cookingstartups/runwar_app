@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/profile_provider.dart';
 import '../../theme.dart';
 
 class InvitationCodeScreen extends ConsumerStatefulWidget {
@@ -34,6 +35,8 @@ class _InvitationCodeScreenState extends ConsumerState<InvitationCodeScreen> {
       final success = await ref.read(authProvider.notifier).redeemInvitationCode(code, userId);
       if (mounted) {
         if (success) {
+          // Force the route guard to re-read invited_at from SQLite.
+          ref.invalidate(profileGateProvider(userId));
           Navigator.of(context).pop();
         } else {
           setState(() => _errorText =

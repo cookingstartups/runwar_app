@@ -206,6 +206,16 @@ class _IntroScreenState extends State<IntroScreen>
         },
         child: Stack(
           children: [
+            // Pre-warm FlutterMap tile cache for all slides before user reaches them.
+            Offstage(
+              offstage: true,
+              child: Column(children: const [
+                IntroPulseMap(accent: kAccent),
+                IntroCaptureMap(accent: kSea),
+                IntroRivalsMap(accent: kAccent),
+                IntroFlagDropMap(accent: kAccent2),
+              ]),
+            ),
             // Stack-based slide transition — no AnimatedSwitcher flicker
             ClipRect(
               child: Stack(

@@ -39,7 +39,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     setState(() => _loading = true);
     try {
       await ref.read(authProvider.notifier).signInWithGoogle();
-      // _RouteGuard re-evaluates automatically — no navigation needed here
+      // Surface any error from the notifier (it catches internally + stores in state).
+      if (mounted) {
+        final err = ref.read(authProvider).error;
+        if (err != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(err),
+              backgroundColor: kDanger,
+              duration: const Duration(seconds: 8),
+            ),
+          );
+        }
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
