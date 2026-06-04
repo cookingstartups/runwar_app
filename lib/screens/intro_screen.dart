@@ -94,6 +94,7 @@ const _slides = [
     body: 'GPS drops hit the map without warning. Cash, crates, killer gear — pinned to a spot somewhere in your city. One winner: whoever\'s lungs get there first.',
     anim: _Anim.ctfDrop,
     layout: _Layout.textTopVisualBottom,
+    bodyMaxLines: 4,
   ),
   // 5 — Superpowers
   _Slide(
