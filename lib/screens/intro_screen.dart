@@ -58,7 +58,7 @@ const _slides = [
     tag: 'YOUR TURF',
     tagColor: kAccent,
     headline: 'SOMEONE OWNS\nYOUR STREET.',
-    body: 'Every block in Valencia is claimed by the last runner who looped it. Take it back, or stay a tourist on your own pavement.',
+    body: 'Every block around you is claimed by the last runner who looped it. Take it back, or stay a tourist on your own pavement.',
     anim: _Anim.pulse,
     layout: _Layout.fullBleed,
   ),
