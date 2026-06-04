@@ -221,6 +221,7 @@ class AuthService {
               'influence_level': u['influence'],
               'invited_at': nowIso,
               'is_tester': 0,
+              'is_bot': 1,
               'created_at': nowIso,
             },
             conflictAlgorithm: ConflictAlgorithm.ignore);

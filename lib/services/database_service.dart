@@ -37,7 +37,7 @@ class DatabaseService {
     final dbPath = p.join(await getDatabasesPath(), 'runwar.db');
     _db = await openDatabase(
       dbPath,
-      version: 6,
+      version: 8,
       onCreate: (db, version) async {
         await _createSchema(db);
       },
@@ -56,6 +56,12 @@ class DatabaseService {
         }
         if (oldVersion < 6) {
           await _migrateToV6(db);
+        }
+        if (oldVersion < 7) {
+          await _migrateToV7(db);
+        }
+        if (oldVersion < 8) {
+          await _migrateToV8(db);
         }
       },
       onOpen: (db) async {
@@ -76,15 +82,25 @@ class DatabaseService {
     ''');
     await db.execute('''
       CREATE TABLE IF NOT EXISTS profiles (
-        id               TEXT PRIMARY KEY,
-        username         TEXT NOT NULL DEFAULT '',
-        city             TEXT NOT NULL DEFAULT '',
-        color            TEXT NOT NULL DEFAULT '#FF7A00',
-        influence_level  INTEGER NOT NULL DEFAULT 1,
-        invited_at       TEXT,
-        is_tester        INTEGER NOT NULL DEFAULT 0,
-        phone            TEXT,
-        created_at       TEXT NOT NULL
+        id                    TEXT PRIMARY KEY,
+        username              TEXT NOT NULL DEFAULT '',
+        city                  TEXT NOT NULL DEFAULT '',
+        color                 TEXT NOT NULL DEFAULT '#FF7A00',
+        influence_level       INTEGER NOT NULL DEFAULT 1,
+        invited_at            TEXT,
+        is_tester             INTEGER NOT NULL DEFAULT 0,
+        phone                 TEXT,
+        created_at            TEXT NOT NULL,
+        trial_started_at      TEXT,
+        trial_days_remaining  INTEGER NOT NULL DEFAULT 14,
+        trial_last_tick_date  TEXT,
+        freeze_tokens                INTEGER NOT NULL DEFAULT 2,
+        freeze_refreshed_at          TEXT,
+        current_streak               INTEGER NOT NULL DEFAULT 0,
+        first_mission_completed_at   TEXT,
+        first_attack_completed_at    TEXT,
+        streak_started_at            TEXT,
+        is_bot                       INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute('''
@@ -195,6 +211,41 @@ class DatabaseService {
   Future<void> _migrateToV3(Database db) async {
     try {
       await db.execute('ALTER TABLE zones ADD COLUMN contested_by_id TEXT');
+    } catch (_) {}
+  }
+
+  Future<void> _migrateToV7(Database db) async {
+    for (final col in [
+      'ALTER TABLE profiles ADD COLUMN trial_started_at TEXT',
+      'ALTER TABLE profiles ADD COLUMN trial_days_remaining INTEGER NOT NULL DEFAULT 14',
+      'ALTER TABLE profiles ADD COLUMN trial_last_tick_date TEXT',
+      'ALTER TABLE profiles ADD COLUMN freeze_tokens INTEGER NOT NULL DEFAULT 2',
+      'ALTER TABLE profiles ADD COLUMN freeze_refreshed_at TEXT',
+      'ALTER TABLE profiles ADD COLUMN current_streak INTEGER NOT NULL DEFAULT 0',
+    ]) {
+      try {
+        await db.execute(col);
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _migrateToV8(Database db) async {
+    for (final col in [
+      'ALTER TABLE profiles ADD COLUMN first_mission_completed_at TEXT',
+      'ALTER TABLE profiles ADD COLUMN first_attack_completed_at TEXT',
+      'ALTER TABLE profiles ADD COLUMN streak_started_at TEXT',
+      'ALTER TABLE profiles ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0',
+    ]) {
+      try {
+        await db.execute(col);
+      } catch (_) {}
+    }
+    // Backfill bot flag for demo seed accounts.
+    try {
+      await db.execute(
+        "UPDATE profiles SET is_bot = 1 WHERE EXISTS "
+        "(SELECT 1 FROM users WHERE users.id = profiles.id AND users.email LIKE '%@runwar.demo')",
+      );
     } catch (_) {}
   }
 
