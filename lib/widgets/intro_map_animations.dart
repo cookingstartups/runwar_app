@@ -214,20 +214,21 @@ abstract final class IntroZones {
   /// is over existing orange blocks).
   static const kS2All = [...kS1All];
 
-  // ── Slide 3 net-new blocks (IntroRivalsMap owned territory) ───────────────
+  // ── Slide 3 net-new blocks — north of kS1All, Carrer de Cuba area ──────────
+  // Player has pushed north from Ruzafa into the Cuba/Sueca corridor.
   static const kS3OwnedBlock1 = [
-    LatLng(39.4490, -0.3774),
-    LatLng(39.4484, -0.3780),
-    LatLng(39.4490, -0.3785),
-    LatLng(39.4496, -0.3779),
+    LatLng(39.4627, -0.3755), // NE corner
+    LatLng(39.4622, -0.3762), // SW corner
+    LatLng(39.4628, -0.3766), // S corner
+    LatLng(39.4633, -0.3759), // E corner
   ];
 
   static const kS3OwnedBlock2 = [
-    LatLng(39.4496, -0.3779),
-    LatLng(39.4490, -0.3785),
-    LatLng(39.4484, -0.3791),
-    LatLng(39.4490, -0.3796),
-    LatLng(39.4498, -0.3788),
+    LatLng(39.4628, -0.3766),
+    LatLng(39.4622, -0.3762),
+    LatLng(39.4623, -0.3773),
+    LatLng(39.4630, -0.3778),
+    LatLng(39.4635, -0.3771),
   ];
 
   /// Slide 3 sees: all of slides 1+2 + slide 3's own blocks.
@@ -494,48 +495,45 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
 
-  // Attacker route — blue rival (kSea) enters from off-screen south, runs
-  // north along Carrer de Cuba into existing orange territory, closes a lasso
-  // that clips the southern portion of kS1Block2 (vertices F & G).
+  // Attacker route — blue rival (kSea) follows real Carrer de Cuba GPS coords
+  // (OSM-verified) entering from off-screen south, hooks onto Carrer de
+  // Puerto Rico to lasso the G/F vertices of kS1Block2.
   //
-  //   pt0 — off-screen south (below visible area at zoom 16)
-  //   pt1 — enters map heading north on Carrer de Cuba
-  //   pt2 — continues north on Carrer del Literat approach
-  //   pt3 — LASSO ANCHOR near southern tip of kS1Block2
-  //   pt4 — loop west along Carrer de Cuba
-  //   pt5 — loop north, clipping through kS1Block2 lower edge (near F/G)
-  //   pt6 — loop east on Carrer de Sueca approach
-  //   pt7 — loop south back toward anchor
-  //   pt8 — LASSO CLOSE = pt3
+  //   pt0 — off-screen south (below viewport)
+  //   pt1–pt4 — Carrer de Cuba (real OSM: lat 39.4577→39.4604, lng -0.374→-0.376)
+  //   pt5 — LASSO ANCHOR near kS1Block2 F vertex
+  //   pt6 — Puerto Rico E (OSM G vertex ≈ 39.4610, -0.3764)
+  //   pt7 — Puerto Rico heading west
+  //   pt8 — south back toward anchor
+  //   pt9 — LASSO CLOSE = pt5
   static const _kAttackerRoute = [
-    LatLng(39.4570, -0.3760), // 0: off-screen south (below visible area)
-    LatLng(39.4585, -0.3760), // 1: heading north on Carrer de Cuba
-    LatLng(39.4595, -0.3762), // 2: continuing north, Carrer del Literat
-    LatLng(39.4605, -0.3764), // 3: LASSO ANCHOR — southern tip of kS1Block2
-    LatLng(39.4603, -0.3770), // 4: loop west along Carrer de Cuba
-    LatLng(39.4610, -0.3769), // 5: loop north clipping kS1Block2 near G/F
-    LatLng(39.4612, -0.3761), // 6: loop east near Carrer de Sueca
-    LatLng(39.4607, -0.3757), // 7: loop south-west back toward anchor
-    LatLng(39.4605, -0.3764), // 8: LASSO CLOSE = pt3
+    LatLng(39.4556, -0.3732), // 0: off-screen south on Cuba approach
+    LatLng(39.4577, -0.3740), // 1: Cuba southern start (OSM)
+    LatLng(39.4586, -0.3747), // 2: Cuba mid (OSM)
+    LatLng(39.4598, -0.3755), // 3: Cuba continuing NW (OSM)
+    LatLng(39.4604, -0.3760), // 4: Cuba at kS1Block2 F area (OSM)
+    LatLng(39.4605, -0.3764), // 5: LASSO ANCHOR — Cuba/Puerto Rico junction
+    LatLng(39.4610, -0.3763), // 6: Puerto Rico E (near G vertex, OSM)
+    LatLng(39.4610, -0.3769), // 7: Puerto Rico heading west (OSM)
+    LatLng(39.4605, -0.3770), // 8: south back toward anchor
+    LatLng(39.4605, -0.3764), // 9: LASSO CLOSE = pt5
   ];
 
-  // The polygon enclosed by the attacker's lasso (pts 3–8).
+  // The polygon enclosed by the attacker's lasso (pts 5–9).
   static const _kAttackerLasso = [
-    LatLng(39.4605, -0.3764), // 3: anchor
-    LatLng(39.4603, -0.3770), // 4: west
-    LatLng(39.4610, -0.3769), // 5: north-west (overlaps kS1Block2 G/F zone)
-    LatLng(39.4612, -0.3761), // 6: north-east
-    LatLng(39.4607, -0.3757), // 7: south-east
+    LatLng(39.4605, -0.3764), // 5: anchor
+    LatLng(39.4610, -0.3763), // 6: Puerto Rico E (near G vertex)
+    LatLng(39.4610, -0.3769), // 7: Puerto Rico W
+    LatLng(39.4605, -0.3770), // 8: south
   ];
 
-  // Disputed area — overlap between attacker lasso and southern kS1Block2
-  // (near vertices F LatLng(39.460440,-0.375966) and G LatLng(39.461050,-0.376394)).
+  // Disputed area — overlap of attacker lasso with kS1Block2 near G/F vertices.
   static const _kDisputedArea = [
     LatLng(39.4605, -0.3764),
-    LatLng(39.4604, -0.3768),
-    LatLng(39.4608, -0.3768),
     LatLng(39.4610, -0.3763),
-    LatLng(39.4607, -0.3760),
+    LatLng(39.4610, -0.3765),
+    LatLng(39.4608, -0.3768),
+    LatLng(39.4605, -0.3767),
   ];
 
   List<List<Offset>> _inheritedPts = [];
@@ -847,22 +845,23 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
 
-  // Blue attacker partial lasso — runs from t=0.0 to t=0.45 (interrupted).
+  // Blue attacker partial lasso — approaches from west along Carrer de Cuba
+  // area (lat ~39.463), interrupted at t=0.45 by FORTIFY.
   static const _kAttackerRoute = [
-    LatLng(39.4480, -0.3810), // 0: off-screen left
-    LatLng(39.4482, -0.3793), // 1: enters map area
-    LatLng(39.4485, -0.3782), // 2: approaches owned territory
-    LatLng(39.4480, -0.3778), // 3: overlapping south edge
-    LatLng(39.4478, -0.3772), // 4: loops east — partial close never completes
+    LatLng(39.4630, -0.3800), // 0: off-screen west
+    LatLng(39.4630, -0.3790), // 1: enters map from west on Cuba
+    LatLng(39.4630, -0.3780), // 2: heading east on Cuba
+    LatLng(39.4631, -0.3773), // 3: approaches kS3OwnedBlock2 west edge
+    LatLng(39.4630, -0.3767), // 4: overlapping — partial lasso interrupted
   ];
 
   // Partial disputed area at the overlap zone (appears at t=0.45, rejected at t=0.50).
   static const _kPartialDisputedArea = [
-    LatLng(39.4485, -0.3782),
-    LatLng(39.4482, -0.3781),
-    LatLng(39.4480, -0.3778),
-    LatLng(39.4483, -0.3776),
-    LatLng(39.4486, -0.3779),
+    LatLng(39.4630, -0.3773),
+    LatLng(39.4628, -0.3771),
+    LatLng(39.4629, -0.3768),
+    LatLng(39.4632, -0.3769),
+    LatLng(39.4632, -0.3773),
   ];
 
   List<List<Offset>> _inheritedPts = [];
@@ -913,8 +912,8 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
         _buildIntroMap(
           context: context,
           mapController: _mapCtrl,
-          center: const LatLng(39.4482, -0.3760),
-          zoom: 14.0,
+          center: const LatLng(39.4665, -0.3768),
+          zoom: 16.0,
           onReady: _onMapReady,
         ),
         if (_mapReady)
