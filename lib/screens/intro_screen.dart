@@ -107,7 +107,7 @@ const _slides = [
   ),
   // 6 — Special events / CTF
   _Slide(
-    tag: 'FLAG HUNT',
+    tag: 'CAPTURE THE FLAG',
     tagColor: kAccent,
     headline: 'A PIN DROPS.\nONE RUNNER WINS.',
     body: 'Anywhere. Anytime. A flag lights up the map — and the first pair of legs to touch that GPS spot takes the prize. Hesitate and someone else is already running. Win it. Wear it.',
