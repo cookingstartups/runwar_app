@@ -16,27 +16,28 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
 
+  // Closed lasso around the C/Cuba – C/Sueca – C/Dénia block in Ruzafa,
+  // just south of Plaza de Toros de Valencia.
+  // Streets used:
+  //   Segment 1→3 : Carrer de Cuba (residential) — NW→SE
+  //   Segment 3→5 : Carrer de Sueca (residential) — SW→NE (reversed approach)
+  //   Segment 5→7 : Carrer de Sueca (residential) — NE end → C/Dénia junction
+  //   Segment 7→8 : Carrer de Dénia (residential) — S→N back to Cuba
   static const _kRoute = [
-    LatLng(39.4787577, -0.3762760),
-    LatLng(39.4788475, -0.3765466),
-    LatLng(39.4789977, -0.3771593),
-    LatLng(39.4789949, -0.3774266),
-    LatLng(39.4790307, -0.3781721),
-    LatLng(39.4795237, -0.3779472),
-    LatLng(39.4802212, -0.3773612),
-    LatLng(39.4799543, -0.3771725),
-    LatLng(39.4794183, -0.3765902),
-    LatLng(39.4795250, -0.3761129),
-    LatLng(39.4789167, -0.3760236),
-    LatLng(39.4787577, -0.3762760),
+    LatLng(39.462155, -0.377171), // 1. C/Cuba × C/Dénia junction (NW)
+    LatLng(39.461576, -0.376751), // 2. C/Cuba SE (mid-stretch)
+    LatLng(39.461123, -0.376444), // 3. C/Cuba SE (lower)
+    LatLng(39.461568, -0.375167), // 4. C/Sueca western start
+    LatLng(39.462077, -0.375522), // 5. C/Sueca east
+    LatLng(39.462671, -0.375937), // 6. C/Sueca × C/Dénia junction (SE)
+    LatLng(39.462155, -0.377171), // 7. C/Dénia N → close at start
   ];
 
   static const _kBlock1 = [
-    LatLng(39.4787577, -0.3762760),
-    LatLng(39.4790307, -0.3781721),
-    LatLng(39.4802212, -0.3773612),
-    LatLng(39.4795250, -0.3761129),
-    LatLng(39.4789167, -0.3760236),
+    LatLng(39.462155, -0.377171), // C/Cuba × C/Dénia NW corner
+    LatLng(39.461576, -0.376751), // C/Cuba mid
+    LatLng(39.461123, -0.376444), // C/Cuba SE corner
+    LatLng(39.462671, -0.375937), // C/Sueca × C/Dénia SE corner
   ];
 
   List<Offset> _route = [];
@@ -76,8 +77,8 @@ class _IntroPulseMapState extends State<IntroPulseMap>
           FlutterMap(
             mapController: _mapCtrl,
             options: MapOptions(
-              initialCenter: const LatLng(39.4790, -0.3758),
-              initialZoom: 16,
+              initialCenter: const LatLng(39.4655, -0.3771),
+              initialZoom: 16.0,
               onMapReady: _updatePoints,
               interactionOptions:
                   const InteractionOptions(flags: InteractiveFlag.none),
