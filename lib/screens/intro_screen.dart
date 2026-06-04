@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme.dart';
 import '../widgets/intro_map_animations.dart';
+import '../widgets/pulse_ring.dart';
+import '../widgets/tag_chip.dart';
 
 const _kShowcaseKey = 'showcase_seen';
 
@@ -42,6 +44,7 @@ class _Slide {
   final Color tagColor;
   final _Anim anim;
   final _Layout layout;
+  final int bodyMaxLines;
 
   const _Slide({
     required this.tag,
@@ -50,6 +53,8 @@ class _Slide {
     required this.layout,
     this.tagColor = kAccent,
     this.anim = _Anim.none,
+    // ignore: unused_element_parameter
+    this.bodyMaxLines = 3,
   });
 }
 
@@ -61,7 +66,7 @@ const _slides = [
     headline: 'SOMEONE OWNS\nYOUR STREET.',
     body: 'Every block you sweat on belongs to the last runner who looped it. Their name. Your pavement. Take it back — or keep paying rent in shoe rubber.',
     anim: _Anim.pulse,
-    layout: _Layout.fullBleed,
+    layout: _Layout.textTopVisualBottom,
   ),
   // 2 — Comeback
   _Slide(
@@ -77,7 +82,7 @@ const _slides = [
     tag: 'FORTIFY',
     tagColor: kAccent,
     headline: 'RUN IT. OWN IT.\nFORTIFY IT.',
-    body: 'Lap your zone again and it levels up — once, twice, five times. Level 5 turf is a fortress. The harder you train it, the more pain it costs them to take it.',
+    body: 'Lap your zone again and it levels up — all the way to level 15. The higher the level, the more it costs to take it back. The streets remember who trained hardest.',
     anim: _Anim.pulse,
     layout: _Layout.visualTopTextBottom,
   ),
@@ -90,7 +95,16 @@ const _slides = [
     anim: _Anim.ctfDrop,
     layout: _Layout.textTopVisualBottom,
   ),
-  // 5 — Special events / CTF
+  // 5 — Superpowers
+  _Slide(
+    tag: 'EARN YOUR EDGE',
+    tagColor: kSea,
+    headline: 'EARNED IN STREETS.\nDEPLOYED FROM HOME.',
+    body: 'Superpowers can\'t be bought. You earn them by running — then unleash them anywhere in the city without leaving your couch. Pay with kilometres, not cash.',
+    anim: _Anim.pulse,
+    layout: _Layout.textTopVisualBottom,
+  ),
+  // 6 — Special events / CTF
   _Slide(
     tag: 'FLAG WAR',
     tagColor: kAccent,
@@ -99,7 +113,7 @@ const _slides = [
     anim: _Anim.rivals,
     layout: _Layout.visualTopTextBottom,
   ),
-  // 6 — Invite only
+  // 7 — Invite only
   _Slide(
     tag: 'INVITE ONLY',
     tagColor: kAccent,
@@ -109,6 +123,38 @@ const _slides = [
     layout: _Layout.centeredClose,
   ),
 ];
+
+// ---------------------------------------------------------------------------
+// Shared top-level helper — resolves _Anim enum to its widget
+// ---------------------------------------------------------------------------
+Widget _buildAnimWidget(_Anim anim, Color accent) => switch (anim) {
+      _Anim.pulse      => IntroPulseMap(accent: accent),
+      _Anim.hexCapture => IntroCaptureMap(accent: accent),
+      _Anim.rivals     => IntroRivalsMap(accent: accent),
+      _Anim.ctfDrop    => IntroFlagDropMap(accent: accent),
+      _Anim.none       => const SizedBox.shrink(),
+    };
+
+// ---------------------------------------------------------------------------
+// Shared gradient helper for split-bleed slides
+// ---------------------------------------------------------------------------
+LinearGradient _splitBleedGradient({required bool visualOnTop}) {
+  const stops = [0.0, 0.10, 0.42, 0.58, 0.72, 1.0];
+  final colors = [
+    kBg.withValues(alpha: 0.0),
+    kBg.withValues(alpha: 0.0),
+    kBg.withValues(alpha: 0.55),
+    kBg.withValues(alpha: 0.92),
+    kBg,
+    kBg,
+  ];
+  return LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    stops: stops,
+    colors: visualOnTop ? colors : colors.reversed.toList(),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // IntroScreen
@@ -380,7 +426,7 @@ class _SlidePage extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout A — Full bleed (slide 1: identity)
+// Layout A — Full bleed (fallback layout; kept for future use)
 // Real Valencia FlutterMap fills screen, scrim darkens bottom, text overlays.
 // ---------------------------------------------------------------------------
 class _FullBleedSlide extends StatelessWidget {
@@ -393,9 +439,8 @@ class _FullBleedSlide extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Live Valencia map — full-bleed background (no scrim on slide 1)
         Positioned.fill(
-          child: IntroPulseMap(accent: slide.tagColor),
+          child: _buildAnimWidget(slide.anim, slide.tagColor),
         ),
 
         // Bottom scrim — keeps CTA area readable
@@ -425,7 +470,7 @@ class _FullBleedSlide extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _TagChip(slide: slide),
+              TagChip(label: slide.tag, color: slide.tagColor),
               const SizedBox(height: 16),
               FittedBox(
                 fit: BoxFit.scaleDown,
@@ -443,7 +488,7 @@ class _FullBleedSlide extends StatelessWidget {
               const SizedBox(height: 14),
               Text(
                 slide.body,
-                maxLines: 3,
+                maxLines: slide.bodyMaxLines,
                 overflow: TextOverflow.ellipsis,
                 style: bodyStyle(size: 14, color: kFgMuted),
               ),
@@ -456,7 +501,7 @@ class _FullBleedSlide extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout B — Full-bleed split (slides 2-4)
+// Layout B — Full-bleed split (slides 2-6)
 // Map fills the entire screen; a gradient dissolves it into kBg on one half
 // so that the text block floats on a clean dark surface.
 // ---------------------------------------------------------------------------
@@ -465,42 +510,15 @@ class _SplitBleedSlide extends StatelessWidget {
   final bool visualOnTop;
   const _SplitBleedSlide({required this.slide, required this.visualOnTop});
 
-  Widget _animWidget(_Anim anim, Color accent) => switch (anim) {
-        _Anim.pulse      => IntroPulseMap(accent: accent),
-        _Anim.hexCapture => IntroCaptureMap(accent: accent),
-        _Anim.rivals     => IntroRivalsMap(accent: accent),
-        _Anim.ctfDrop    => IntroFlagDropMap(accent: accent),
-        _Anim.none       => const SizedBox.shrink(),
-      };
-
   @override
   Widget build(BuildContext context) {
     final top = MediaQuery.of(context).padding.top;
-
-    final List<Color> gradColors = visualOnTop
-        ? [
-            kBg.withValues(alpha: 0.0),
-            kBg.withValues(alpha: 0.0),
-            kBg.withValues(alpha: 0.55),
-            kBg.withValues(alpha: 0.92),
-            kBg,
-            kBg,
-          ]
-        : [
-            kBg,
-            kBg,
-            kBg.withValues(alpha: 0.92),
-            kBg.withValues(alpha: 0.55),
-            kBg.withValues(alpha: 0.0),
-            kBg.withValues(alpha: 0.0),
-          ];
-    const gradStops = [0.0, 0.10, 0.42, 0.58, 0.72, 1.0];
 
     final textBlock = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        _TagChip(slide: slide),
+        TagChip(label: slide.tag, color: slide.tagColor),
         const SizedBox(height: 14),
         FittedBox(
           fit: BoxFit.scaleDown,
@@ -518,7 +536,7 @@ class _SplitBleedSlide extends StatelessWidget {
         const SizedBox(height: 12),
         Text(
           slide.body,
-          maxLines: 3,
+          maxLines: slide.bodyMaxLines,
           overflow: TextOverflow.ellipsis,
           style: bodyStyle(size: 13, color: kFgMuted),
         ),
@@ -528,17 +546,12 @@ class _SplitBleedSlide extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        _animWidget(slide.anim, slide.tagColor),
+        _buildAnimWidget(slide.anim, slide.tagColor),
 
         Positioned.fill(
           child: DecoratedBox(
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                stops: gradStops,
-                colors: gradColors,
-              ),
+              gradient: _splitBleedGradient(visualOnTop: visualOnTop),
             ),
           ),
         ),
@@ -563,7 +576,7 @@ class _SplitBleedSlide extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout C — Centered close (slide 5: invite only)
+// Layout C — Centered close (slide 7: invite only)
 // Pure dark screen, centered typography, pulse ring — silence = pressure
 // ---------------------------------------------------------------------------
 class _CenteredCloseSlide extends StatelessWidget {
@@ -578,9 +591,9 @@ class _CenteredCloseSlide extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          _TagChip(slide: slide, centered: true),
+          Center(child: TagChip(label: slide.tag, color: slide.tagColor)),
           const SizedBox(height: 16),
-          const _PulseRing(),
+          const PulseRing(),
           const SizedBox(height: 20),
           Text(
             slide.headline,
@@ -596,7 +609,7 @@ class _CenteredCloseSlide extends StatelessWidget {
           Text(
             slide.body,
             textAlign: TextAlign.center,
-            maxLines: 3,
+            maxLines: slide.bodyMaxLines,
             overflow: TextOverflow.ellipsis,
             style: bodyStyle(size: 15, color: kFgMuted),
           ),
@@ -611,92 +624,5 @@ class _CenteredCloseSlide extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Pulse ring — radar ping animation for slide 5
-// ---------------------------------------------------------------------------
-class _PulseRing extends StatefulWidget {
-  const _PulseRing();
-
-  @override
-  State<_PulseRing> createState() => _PulseRingState();
-}
-
-class _PulseRingState extends State<_PulseRing>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _c;
-
-  @override
-  void initState() {
-    super.initState();
-    _c = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1800),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-        width: 84,
-        height: 84,
-        child: AnimatedBuilder(
-          animation: _c,
-          builder: (_, __) => CustomPaint(
-            painter: _PulseRingPainter(_c.value),
-          ),
-        ),
-      );
-}
-
-class _PulseRingPainter extends CustomPainter {
-  final double t;
-  const _PulseRingPainter(this.t);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = 30 + t * 12;
-    canvas.drawCircle(
-      center,
-      radius,
-      Paint()
-        ..color = kAccent.withValues(alpha: (1 - t) * 0.3)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_PulseRingPainter old) => old.t != t;
-}
-
-// ---------------------------------------------------------------------------
-// Shared tag chip
-// ---------------------------------------------------------------------------
-class _TagChip extends StatelessWidget {
-  final _Slide slide;
-  final bool centered;
-  const _TagChip({required this.slide, this.centered = false});
-
-  @override
-  Widget build(BuildContext context) {
-    final chip = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        border: Border.all(color: slide.tagColor.withValues(alpha: 0.5)),
-        borderRadius: BorderRadius.circular(6),
-        color: slide.tagColor.withValues(alpha: 0.12),
-      ),
-      child: Text(slide.tag, style: monoStyle(size: 9, color: slide.tagColor)),
-    );
-    return centered ? Center(child: chip) : chip;
   }
 }
