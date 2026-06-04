@@ -67,6 +67,12 @@ dependencies:
   # One-time showcase state
   shared_preferences: ^2.3.2
 
+  # Cryptographic hashing for deterministic slate generation
+  crypto: ^3.0.3
+
+  # Date formatting for slate derivation (YYYY-MM-DD)
+  intl: ^0.19.0
+
   # Lottie vector animations (showcase slides)
   lottie: ^3.1.0
 

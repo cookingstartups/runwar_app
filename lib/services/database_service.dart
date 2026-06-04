@@ -37,7 +37,7 @@ class DatabaseService {
     final dbPath = p.join(await getDatabasesPath(), 'runwar.db');
     _db = await openDatabase(
       dbPath,
-      version: 8,
+      version: 9,
       onCreate: (db, version) async {
         await _createSchema(db);
       },
@@ -62,6 +62,9 @@ class DatabaseService {
         }
         if (oldVersion < 8) {
           await _migrateToV8(db);
+        }
+        if (oldVersion < 9) {
+          await _migrateToV9(db);
         }
       },
       onOpen: (db) async {
@@ -171,6 +174,23 @@ class DatabaseService {
         PRIMARY KEY (user_id, city_slug)
       )
     ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS daily_mission_progress (
+        id           TEXT PRIMARY KEY,
+        user_id      TEXT NOT NULL,
+        date         TEXT NOT NULL,
+        slug         TEXT NOT NULL,
+        progress     INTEGER NOT NULL DEFAULT 0,
+        target       INTEGER NOT NULL DEFAULT 1,
+        completed_at TEXT,
+        synced_at    TEXT,
+        UNIQUE(user_id, date, slug)
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_dmp_local_date
+        ON daily_mission_progress(user_id, date)
+    ''');
   }
 
   Future<void> _migrateToV6(Database db) async {
@@ -246,6 +266,30 @@ class DatabaseService {
         "UPDATE profiles SET is_bot = 1 WHERE EXISTS "
         "(SELECT 1 FROM users WHERE users.id = profiles.id AND users.email LIKE '%@runwar.demo')",
       );
+    } catch (_) {}
+  }
+
+  Future<void> _migrateToV9(Database db) async {
+    try {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS daily_mission_progress (
+          id           TEXT PRIMARY KEY,
+          user_id      TEXT NOT NULL,
+          date         TEXT NOT NULL,
+          slug         TEXT NOT NULL,
+          progress     INTEGER NOT NULL DEFAULT 0,
+          target       INTEGER NOT NULL DEFAULT 1,
+          completed_at TEXT,
+          synced_at    TEXT,
+          UNIQUE(user_id, date, slug)
+        )
+      ''');
+    } catch (_) {}
+    try {
+      await db.execute('''
+        CREATE INDEX IF NOT EXISTS idx_dmp_local_date
+          ON daily_mission_progress(user_id, date)
+      ''');
     } catch (_) {}
   }
 
