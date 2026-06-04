@@ -32,4 +32,5 @@ class SupabaseConfig {
   static const String fnAnticheatScore = 'anticheat_score';
   static const String fnCtfJoin = 'ctf_join';
   static const String fnCtfClaimWin = 'ctf_claim_win';
+  static const String fnSavePhone = 'save_phone';
 }

@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
+import '../../config/supabase_config.dart';
 import '../../theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/profile_provider.dart';
 import '../../services/database_service.dart';
+import '../../services/supabase_service.dart';
 import '../../widgets/grain_overlay.dart';
 import '../../widgets/milestone_progress_bar.dart';
 import '../../widgets/valencia_button.dart';
@@ -46,12 +48,20 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
     try {
       final userId = ref.read(authProvider).user?['id'] as String?;
       if (userId == null) return;
+      // Save locally first — always succeeds.
       await DatabaseService.instance.db.update(
         'profiles',
         {'phone': _e164},
         where: 'id = ?',
         whereArgs: [userId],
       );
+      // Persist to remote — best-effort, non-fatal.
+      if (SupabaseService.instance.isConnected) {
+        await SupabaseService.instance.supabase.functions.invoke(
+          SupabaseConfig.fnSavePhone,
+          body: {'phone': _e164},
+        );
+      }
       ref.invalidate(hasPhoneProvider(userId));
     } catch (e) {
       if (mounted) {
