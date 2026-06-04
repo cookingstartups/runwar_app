@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'database_service.dart';
 import 'telemetry_service.dart';
 import 'daily_missions_service.dart';
 
@@ -46,6 +48,15 @@ class RunRecorderService {
     _startedAt = DateTime.now().toUtc();
     _closedAt = null;
     trackVersion.value++;
+    // Clear any leftover scratch points from a previous run.
+    final uid = _activeUserId;
+    if (uid != null) {
+      try {
+        await DatabaseService.instance.db
+            .delete('run_scratch', where: 'user_id = ?', whereArgs: [uid]);
+      } catch (_) {}
+    }
+    await _startForegroundTask();
     _posSub = Geolocator.getPositionStream(
       locationSettings:
           const LocationSettings(accuracy: LocationAccuracy.high),
@@ -61,6 +72,43 @@ class RunRecorderService {
     if (pos.latitude.isInfinite || pos.longitude.isInfinite) return;
     _track.add(LatLng(pos.latitude, pos.longitude));
     trackVersion.value++;
+    // Persist point to scratch table for crash/process-kill recovery.
+    final uid = _activeUserId;
+    if (uid != null) {
+      unawaited(DatabaseService.instance.db.insert('run_scratch', {
+        'user_id': uid,
+        'lat': pos.latitude,
+        'lng': pos.longitude,
+        'accuracy': pos.accuracy,
+        'ts': pos.timestamp.toIso8601String(),
+      }).catchError((_) => 0));
+    }
+  }
+
+  Future<void> _startForegroundTask() async {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'runwar_run_tracking',
+        channelName: 'Run Tracking',
+        channelDescription: 'RunWar is recording your route.',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: true,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.nothing(),
+        autoRunOnBoot: false,
+        allowWakeLock: true,
+      ),
+    );
+    await FlutterForegroundTask.startService(
+      serviceId: 100,
+      notificationTitle: 'Run in progress',
+      notificationText: 'Tracking your route — keep moving.',
+    );
   }
 
   Future<LoopResult> stopRun() async {
@@ -70,6 +118,7 @@ class RunRecorderService {
     }
     await _posSub?.cancel();
     _posSub = null;
+    unawaited(FlutterForegroundTask.stopService());
     _closedAt = DateTime.now().toUtc();
 
     final perimeter = _trackPerimeter();
@@ -92,7 +141,15 @@ class RunRecorderService {
         DailyMissionsService.instance.reportProgress(uid, 'walk_2km', perimeter.round()).catchError((_) {});
         DailyMissionsService.instance.reportProgress(uid, 'back_to_back', 1).catchError((_) {});
       }
+      // Scratch cleared only after successful claim (in confirmClaim via discardRun).
       return LoopResult.valid;
+    }
+    // Invalid loop — clear scratch immediately.
+    final uid = _activeUserId;
+    if (uid != null) {
+      unawaited(DatabaseService.instance.db
+          .delete('run_scratch', where: 'user_id = ?', whereArgs: [uid])
+          .catchError((_) => 0));
     }
     _clearTrackInternal();
     stateNotifier.value = RecorderState.idle;
@@ -112,6 +169,13 @@ class RunRecorderService {
   void discardRun() {
     _posSub?.cancel();
     _posSub = null;
+    unawaited(FlutterForegroundTask.stopService());
+    final uid = _activeUserId;
+    if (uid != null) {
+      unawaited(DatabaseService.instance.db
+          .delete('run_scratch', where: 'user_id = ?', whereArgs: [uid])
+          .catchError((_) => 0));
+    }
     _clearTrackInternal();
     stateNotifier.value = RecorderState.idle;
   }

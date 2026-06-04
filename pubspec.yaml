@@ -76,6 +76,9 @@ dependencies:
   # Date formatting for slate derivation (YYYY-MM-DD)
   intl: ^0.19.0
 
+  # Foreground service — keeps GPS alive when screen locks (MIUI/Android)
+  flutter_foreground_task: ^8.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

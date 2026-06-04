@@ -13,6 +13,7 @@ import '../providers/zones_provider.dart';
 import '../providers/run_recorder_provider.dart';
 import '../providers/app_config_provider.dart';
 import '../services/run_recorder_service.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
 import '../services/superpower_service.dart';
@@ -320,6 +321,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       final fabUserId = ref.read(authProvider).user?['id'] as String?;
       if (fabUserId != null) {
         await TrialService.instance.initTrial(fabUserId);
+      }
+      // Request battery optimization exemption so the foreground service
+      // survives screen lock on MIUI and aggressive Android OEMs.
+      if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
       }
       await notifier.start();
     } else if (s == RecorderState.recording) {
@@ -677,7 +683,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 child: GestureDetector(
                   onTap: () => _showCtfSheet(first),
                   child: Material(
-                    color: const Color(0xFFCC2200).withOpacity(0.92),
+                    color: const Color(0xFFCC2200).withValues(alpha: 0.92),
                     borderRadius: BorderRadius.circular(8),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1313,7 +1319,7 @@ class _CtfFlagMarkerState extends State<_CtfFlagMarker>
                   shape: BoxShape.circle,
                   border: Border.all(
                     color: const Color(0xFFFF3B3B)
-                        .withOpacity(0.7 - 0.5 * _pulse.value),
+                        .withValues(alpha: 0.7 - 0.5 * _pulse.value),
                     width: 1.5,
                   ),
                 ),
@@ -1372,7 +1378,7 @@ class _BeamsPainter extends CustomPainter {
       // Alternate beams slightly different length for visual interest
       final end = outerR - (i.isOdd ? 6.0 : 0.0);
       paint.color = const Color(0xFFFF3B3B)
-          .withOpacity((0.3 + 0.5 * intensity) * (i.isEven ? 1.0 : 0.6));
+          .withValues(alpha: (0.3 + 0.5 * intensity) * (i.isEven ? 1.0 : 0.6));
       canvas.drawLine(
         Offset(center.dx + math.cos(angle) * innerR,
             center.dy + math.sin(angle) * innerR),

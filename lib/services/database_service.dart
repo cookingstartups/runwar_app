@@ -37,7 +37,7 @@ class DatabaseService {
     final dbPath = p.join(await getDatabasesPath(), 'runwar.db');
     _db = await openDatabase(
       dbPath,
-      version: 10,
+      version: 11,
       onCreate: (db, version) async {
         await _createSchema(db);
       },
@@ -68,6 +68,9 @@ class DatabaseService {
         }
         if (oldVersion < 10) {
           await _migrateToV10(db);
+        }
+        if (oldVersion < 11) {
+          await _migrateToV11(db);
         }
       },
       onOpen: (db) async {
@@ -199,6 +202,16 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_dmp_local_date
         ON daily_mission_progress(user_id, date)
     ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS run_scratch (
+        id       INTEGER PRIMARY KEY,
+        user_id  TEXT NOT NULL,
+        lat      REAL NOT NULL,
+        lng      REAL NOT NULL,
+        accuracy REAL,
+        ts       TEXT NOT NULL
+      )
+    ''');
   }
 
   Future<void> _migrateToV6(Database db) async {
@@ -313,6 +326,21 @@ class DatabaseService {
         await db.execute(col);
       } catch (_) {}
     }
+  }
+
+  Future<void> _migrateToV11(Database db) async {
+    try {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS run_scratch (
+          id       INTEGER PRIMARY KEY,
+          user_id  TEXT NOT NULL,
+          lat      REAL NOT NULL,
+          lng      REAL NOT NULL,
+          accuracy REAL,
+          ts       TEXT NOT NULL
+        )
+      ''');
+    } catch (_) {}
   }
 
   Future<void> _migrateToV2(Database db) async {
