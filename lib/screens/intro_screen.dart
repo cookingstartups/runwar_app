@@ -21,9 +21,9 @@ Future<bool> isShowcaseSeen() async {
 // Layout modes
 // ---------------------------------------------------------------------------
 enum _Layout {
-  fullBleed,          // Lottie fills screen, text overlays with scrim — slide 1
+  fullBleed,           // Lottie fills screen, text overlays with scrim — slide 1
   textTopVisualBottom, // Text flex 4 / Lottie panel flex 5 — slides 2-4
-  centeredClose,      // Pure dark, centered typography, no Lottie — slide 5
+  centeredClose,       // Pure dark, centered typography, no Lottie — slide 5
 }
 
 // ---------------------------------------------------------------------------
@@ -106,8 +106,11 @@ class IntroScreen extends StatefulWidget {
 }
 
 class _IntroScreenState extends State<IntroScreen> {
-  final _controller = PageController();
   int _page = 0;
+
+  // Track last navigation axis + direction so AnimatedSwitcher picks the right offset.
+  Axis _axis = Axis.vertical;
+  int _dir = 1; // +1 = forward, -1 = backward
 
   Future<void> _done() async {
     await markShowcaseSeen();
@@ -115,133 +118,182 @@ class _IntroScreenState extends State<IntroScreen> {
     Navigator.pushReplacementNamed(context, '/login');
   }
 
-  void _next() {
+  void _next({Axis axis = Axis.vertical}) {
     if (_page < _slides.length - 1) {
-      _controller.nextPage(
-        duration: const Duration(milliseconds: 450),
-        curve: Curves.easeInOutCubic,
-      );
+      setState(() {
+        _axis = axis;
+        _dir = 1;
+        _page++;
+      });
     } else {
       _done();
     }
   }
 
-  void _prev() {
+  void _prev({Axis axis = Axis.vertical}) {
     if (_page > 0) {
-      _controller.previousPage(
-        duration: const Duration(milliseconds: 450),
-        curve: Curves.easeInOutCubic,
-      );
+      setState(() {
+        _axis = axis;
+        _dir = -1;
+        _page--;
+      });
     }
   }
 
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
+  Widget _buildSlide(int i) => KeyedSubtree(
+        key: ValueKey(i),
+        child: _SlidePage(slide: _slides[i]),
+      );
 
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).padding.bottom;
     final top = MediaQuery.of(context).padding.top;
     final isClose = _slides[_page].layout == _Layout.centeredClose;
+    final screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
       backgroundColor: kBg,
-      body: Stack(
-        children: [
-          // PageView fills screen — vertical swipe: up = next, down = back.
-          // GestureDetector adds horizontal swipe as alias (left = next, right = back).
-          GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragEnd: (details) {
-              final v = details.primaryVelocity ?? 0;
-              if (v < -200) {
-                _next();
-              } else if (v > 200) {
-                _prev();
-              }
-            },
-            child: PageView.builder(
-              controller: _controller,
-              scrollDirection: Axis.vertical,
-              onPageChanged: (i) => setState(() => _page = i),
-              itemCount: _slides.length,
-              itemBuilder: (_, i) => _SlidePage(slide: _slides[i]),
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragEnd: (details) {
+          final v = details.primaryVelocity ?? 0;
+          if (v < -200) {
+            _next(axis: Axis.horizontal);
+          } else if (v > 200) {
+            _prev(axis: Axis.horizontal);
+          }
+        },
+        onVerticalDragEnd: (details) {
+          final v = details.primaryVelocity ?? 0;
+          if (v < -200) {
+            _next(axis: Axis.vertical);
+          } else if (v > 200) {
+            _prev(axis: Axis.vertical);
+          }
+        },
+        child: Stack(
+          children: [
+            // Directional animated carousel — transition axis matches swipe axis.
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 450),
+              switchInCurve: Curves.easeInOutCubic,
+              switchOutCurve: Curves.easeInOutCubic,
+              transitionBuilder: (child, anim) {
+                final isIncoming = child.key == ValueKey(_page);
+                // unit vector: positive = right (horizontal) or down (vertical)
+                final unit = _axis == Axis.vertical
+                    ? Offset(0, _dir.toDouble())
+                    : Offset(_dir.toDouble(), 0);
+                final begin = isIncoming ? unit : Offset.zero;
+                final end = isIncoming ? Offset.zero : -unit;
+                return SlideTransition(
+                  position: Tween<Offset>(begin: begin, end: end).animate(anim),
+                  child: child,
+                );
+              },
+              child: _buildSlide(_page),
             ),
-          ),
 
-          // Skip row — floats above PageView
-          Positioned(
-            top: top + 8,
-            right: 20,
-            child: SizedBox(
-              height: 36,
-              child: AnimatedOpacity(
-                opacity: _page < _slides.length - 1 ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 200),
-                child: TextButton(
-                  onPressed: _page < _slides.length - 1 ? _done : null,
-                  child: Text('SKIP', style: monoStyle(size: 10, color: kFgFaint)),
+            // Tap-border navigation — left edge → prev, right edge → next.
+            // Excludes top 60px (SKIP button zone) and bottom 180px (CTA zone).
+            Positioned(
+              top: top + 60,
+              bottom: 180,
+              left: 0,
+              width: screenWidth * 0.15,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () => _prev(axis: Axis.horizontal),
+              ),
+            ),
+            Positioned(
+              top: top + 60,
+              bottom: 180,
+              right: 0,
+              width: screenWidth * 0.15,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () => _next(axis: Axis.horizontal),
+              ),
+            ),
+
+            // Skip row — floats above content
+            Positioned(
+              top: top + 8,
+              right: 20,
+              child: SizedBox(
+                height: 36,
+                child: AnimatedOpacity(
+                  opacity: _page < _slides.length - 1 ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: TextButton(
+                    // Long-press resets showcase_seen without wiping SQLite data.
+                    onLongPress: () async {
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.remove(_kShowcaseKey);
+                    },
+                    onPressed: _page < _slides.length - 1 ? _done : null,
+                    child: Text('SKIP', style: monoStyle(size: 10, color: kFgFaint)),
+                  ),
                 ),
               ),
             ),
-          ),
 
-          // Dots + CTA — floats at bottom
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(24, 16, 24, bottom + 32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(
-                      _slides.length,
-                      (i) => AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        margin: const EdgeInsets.symmetric(horizontal: 3),
-                        width: i == _page ? 20 : 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(3),
-                          color: i == _page ? kAccent : kFgFaint,
+            // Dots + CTA — floats at bottom
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(24, 16, 24, bottom + 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(
+                        _slides.length,
+                        (i) => AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          margin: const EdgeInsets.symmetric(horizontal: 3),
+                          width: i == _page ? 20 : 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(3),
+                            color: i == _page ? kAccent : kFgFaint,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _next,
-                      style: isClose
-                          ? ElevatedButton.styleFrom(
-                              backgroundColor: kAccent,
-                              foregroundColor: kBg,
-                            )
-                          : null,
-                      child: Text(
-                        _page < _slides.length - 1 ? 'NEXT →' : 'JOIN THE WAR →',
-                        style: GoogleFonts.spaceGrotesk(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 2.5,
-                          color: kBg,
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _next,
+                        style: isClose
+                            ? ElevatedButton.styleFrom(
+                                backgroundColor: kAccent,
+                                foregroundColor: kBg,
+                              )
+                            : null,
+                        child: Text(
+                          _page < _slides.length - 1 ? 'NEXT →' : 'JOIN THE WAR →',
+                          style: GoogleFonts.spaceGrotesk(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 2.5,
+                            color: kBg,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
