@@ -115,7 +115,17 @@ const _slides = [
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
   ),
-  // 7 — Invite only
+  // 7 — Competitive elimination (spec: earn your seat)
+  _Slide(
+    tag: 'THE BOTTOM DROPS',
+    tagColor: kAccent2,
+    headline: 'RUN OR LOSE\nYOUR SEAT.',
+    body: 'Every week, the bottom runners get cut. Their zones gone. Their rank gone. The city has no room for passengers. Earn your place or someone else will.',
+    anim: _Anim.none,
+    layout: _Layout.textTopVisualBottom,
+    bodyMaxLines: 4,
+  ),
+  // 8 — Invite only
   _Slide(
     tag: 'INVITE ONLY',
     tagColor: kAccent,
