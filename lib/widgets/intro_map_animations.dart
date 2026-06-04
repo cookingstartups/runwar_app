@@ -344,7 +344,7 @@ class _IntroPulseMapState extends State<IntroPulseMap>
           _buildIntroMap(
             context: context,
             mapController: _mapCtrl,
-            center: const LatLng(39.4500, -0.3760),
+            center: const LatLng(39.4615, -0.3768),
             zoom: 16.0,
             onReady: _updatePoints,
           ),
