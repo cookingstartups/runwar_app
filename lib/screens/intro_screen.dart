@@ -86,7 +86,16 @@ const _slides = [
     anim: _Anim.pulse,
     layout: _Layout.visualTopTextBottom,
   ),
-  // 4 — Loot drops
+  // 4 — Superpowers
+  _Slide(
+    tag: 'EARN YOUR EDGE',
+    tagColor: kSea,
+    headline: 'EARNED IN STREETS.\nDEPLOYED FROM HOME.',
+    body: 'Superpowers can\'t be bought. You earn them by running — then unleash them anywhere in the city without leaving your couch. Pay with kilometres, not cash.',
+    anim: _Anim.pulse,
+    layout: _Layout.textTopVisualBottom,
+  ),
+  // 5 — Loot drops
   _Slide(
     tag: 'LOOT DROPS',
     tagColor: kAccent2,
@@ -95,15 +104,6 @@ const _slides = [
     anim: _Anim.ctfDrop,
     layout: _Layout.textTopVisualBottom,
     bodyMaxLines: 4,
-  ),
-  // 5 — Superpowers
-  _Slide(
-    tag: 'EARN YOUR EDGE',
-    tagColor: kSea,
-    headline: 'EARNED IN STREETS.\nDEPLOYED FROM HOME.',
-    body: 'Superpowers can\'t be bought. You earn them by running — then unleash them anywhere in the city without leaving your couch. Pay with kilometres, not cash.',
-    anim: _Anim.pulse,
-    layout: _Layout.textTopVisualBottom,
   ),
   // 6 — Special events / CTF
   _Slide(
