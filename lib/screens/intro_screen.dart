@@ -691,20 +691,38 @@ class _PulseRingState extends State<_PulseRing>
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-        animation: _c,
-        builder: (_, __) => Container(
-          width: 60 + _c.value * 24,
-          height: 60 + _c.value * 24,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: kAccent.withValues(alpha: (1 - _c.value) * 0.25),
-              width: 1.5,
-            ),
+  Widget build(BuildContext context) => SizedBox(
+        width: 84,
+        height: 84,
+        child: AnimatedBuilder(
+          animation: _c,
+          builder: (_, __) => CustomPaint(
+            painter: _PulseRingPainter(_c.value),
           ),
         ),
       );
+}
+
+class _PulseRingPainter extends CustomPainter {
+  final double t;
+  const _PulseRingPainter(this.t);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = 30 + t * 12;
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = kAccent.withValues(alpha: (1 - t) * 0.3)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_PulseRingPainter old) => old.t != t;
 }
 
 // ---------------------------------------------------------------------------

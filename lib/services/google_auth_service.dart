@@ -30,12 +30,22 @@ class GoogleAuthService {
       );
     }
 
+    // Try silent re-login first (no UI if already authenticated).
     GoogleSignInAccount? account;
     try {
-      account = await _googleSignIn.signIn();
-    } catch (e) {
-      debugPrint('[GoogleAuthService] signIn error: $e');
-      throw GoogleAuthException('Google Sign-In failed: $e');
+      account = await _googleSignIn.signInSilently();
+    } catch (_) {
+      account = null;
+    }
+
+    // Fall back to interactive picker.
+    if (account == null) {
+      try {
+        account = await _googleSignIn.signIn();
+      } catch (e) {
+        debugPrint('[GoogleAuthService] signIn error: $e');
+        throw GoogleAuthException('Google Sign-In failed: $e');
+      }
     }
 
     // User cancelled the picker.

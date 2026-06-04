@@ -294,31 +294,6 @@ class JoinWarConfirmationScreen extends ConsumerWidget {
                       MaterialPageRoute(builder: (_) => const InvitationCodeScreen()),
                     ),
                   ),
-                  const SizedBox(height: 20),
-                  ValenciaButton(
-                    label: 'ADD ANOTHER CITY',
-                    variant: ValenciaButtonVariant.ghost,
-                    onPressed: () {
-                      // Pop back to CitiesSelectionScreen if on the stack,
-                      // or sign out as QA escape hatch
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  Center(
-                    child: TextButton(
-                      onPressed: () =>
-                          ref.read(authProvider.notifier).signOut(),
-                      child: Text(
-                        'EXIT TO LOBBY',
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 10,
-                          letterSpacing: 2,
-                          color: kFgMuted,
-                        ),
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),

@@ -5,11 +5,13 @@ class MilestoneProgressBar extends StatefulWidget {
   const MilestoneProgressBar({
     super.key,
     required this.currentStep,
-    required this.labels,
+    this.steps = 3,
+    // labels ignored — text display removed; kept for call-site compatibility
+    List<String> labels = const [],
   });
 
-  final int currentStep; // 0-indexed; dots 0..labels.length-1
-  final List<String> labels;
+  final int currentStep; // 0-indexed
+  final int steps;
 
   @override
   State<MilestoneProgressBar> createState() => _MilestoneProgressBarState();
@@ -39,9 +41,9 @@ class _MilestoneProgressBarState extends State<MilestoneProgressBar>
   }
 
   void _updateFill({required bool animate}) {
-    final target = widget.labels.isEmpty
+    final target = widget.steps <= 1
         ? 0.0
-        : widget.currentStep / (widget.labels.length - 1);
+        : widget.currentStep / (widget.steps - 1);
     _fill = Tween<double>(begin: _fill.value, end: target.clamp(0.0, 1.0))
         .animate(CurvedAnimation(
       parent: _ctrl,
@@ -62,48 +64,23 @@ class _MilestoneProgressBarState extends State<MilestoneProgressBar>
 
   @override
   Widget build(BuildContext context) {
-    final n = widget.labels.length;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            height: 28,
-            child: AnimatedBuilder(
-              animation: _ctrl,
-              builder: (context, _) {
-                return CustomPaint(
-                  painter: _BarPainter(
-                    fill: _fill.value,
-                    currentStep: widget.currentStep,
-                    steps: n,
-                  ),
-                  child: const SizedBox.expand(),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: List.generate(n, (i) {
-              final done = i <= widget.currentStep;
-              return Expanded(
-                child: Text(
-                  widget.labels[i],
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 9,
-                    letterSpacing: 1.5,
-                    color: done ? kFg : kFgMuted,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              );
-            }),
-          ),
-        ],
+      child: SizedBox(
+        height: 28,
+        child: AnimatedBuilder(
+          animation: _ctrl,
+          builder: (context, _) {
+            return CustomPaint(
+              painter: _BarPainter(
+                fill: _fill.value,
+                currentStep: widget.currentStep,
+                steps: widget.steps,
+              ),
+              child: const SizedBox.expand(),
+            );
+          },
+        ),
       ),
     );
   }
