@@ -21,12 +21,17 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   List<Offset> _pts = [];
   bool _mapReady = false;
 
+  // Real Ruzafa street intersections (OSM-verified, zoom-15 visible):
+  // Carrer de Cadis ∩ Puerto Rico → Cadis ∩ Doctor Serrano → Cadis ∩ Dénia
+  // → Dénia ∩ Sueca → Sueca ∩ Buenos Aires → Sueca ∩ Puerto Rico → close
   static const _kRouteCoords = [
-    LatLng(39.4648, -0.3755),
-    LatLng(39.4648, -0.3728),
-    LatLng(39.4626, -0.3728),
-    LatLng(39.4626, -0.3755),
-    LatLng(39.4648, -0.3755),
+    LatLng(39.46213, -0.37381), // Carrer de Cadis & Carrer de Puerto Rico
+    LatLng(39.46268, -0.37419), // Carrer de Cadis & Carrer del Doctor Serrano
+    LatLng(39.46324, -0.37459), // Carrer de Cadis & Carrer de Dénia
+    LatLng(39.46267, -0.37594), // Carrer de Dénia & Carrer de Sueca
+    LatLng(39.46208, -0.37552), // Carrer de Buenos Aires & Carrer de Sueca
+    LatLng(39.46157, -0.37517), // Carrer de Puerto Rico & Carrer de Sueca
+    LatLng(39.46213, -0.37381), // close loop
   ];
 
   @override
