@@ -1,9 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lottie/lottie.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme.dart';
+import '../widgets/intro_painters.dart';
 
 const _kShowcaseKey = 'showcase_seen';
 
@@ -18,12 +20,17 @@ Future<bool> isShowcaseSeen() async {
 }
 
 // ---------------------------------------------------------------------------
+// Visual type per slide
+// ---------------------------------------------------------------------------
+enum _Visual { pulse, hexLasso, rivals, ctfDrop, none }
+
+// ---------------------------------------------------------------------------
 // Layout modes
 // ---------------------------------------------------------------------------
 enum _Layout {
-  fullBleed,           // Lottie fills screen, text overlays with scrim — slide 1
-  textTopVisualBottom, // Text flex 4 / Lottie panel flex 5 — slides 2-4
-  centeredClose,       // Pure dark, centered typography, no Lottie — slide 5
+  fullBleed, // Painter fills screen, text overlays with scrim — slide 1
+  textTopVisualBottom, // Text flex 4 / Painter panel flex 5 — slides 2-4
+  centeredClose, // Pure dark, centered typography, no painter — slide 5
 }
 
 // ---------------------------------------------------------------------------
@@ -34,7 +41,7 @@ class _Slide {
   final String headline;
   final String body;
   final Color tagColor;
-  final String? lottie;
+  final _Visual visual;
   final _Layout layout;
 
   const _Slide({
@@ -43,7 +50,7 @@ class _Slide {
     required this.body,
     required this.layout,
     this.tagColor = kAccent,
-    this.lottie,
+    this.visual = _Visual.none,
   });
 }
 
@@ -54,7 +61,7 @@ const _slides = [
     tagColor: kAccent,
     headline: 'YOUR CITY.\nYOUR RULES.',
     body: 'Run it. Own it. Every block you stop on belongs to someone else.',
-    lottie: 'assets/lottie/pulse.json',
+    visual: _Visual.pulse,
     layout: _Layout.fullBleed,
   ),
   // 2 — How it works
@@ -62,8 +69,9 @@ const _slides = [
     tag: 'HOW IT WORKS',
     tagColor: kSea,
     headline: 'LASSO A ZONE.\nIT\'S YOURS.',
-    body: 'Draw a loop around any city block while running. If nobody defends it — it\'s yours.',
-    lottie: 'assets/lottie/hex_capture.json',
+    body:
+        'Draw a loop around any city block while running. If nobody defends it — it\'s yours.',
+    visual: _Visual.hexLasso,
     layout: _Layout.textTopVisualBottom,
   ),
   // 3 — Live map
@@ -71,8 +79,9 @@ const _slides = [
     tag: 'LIVE MAP',
     tagColor: kAccent,
     headline: 'RIVALS ARE\nRUNNING NOW.',
-    body: 'The map updates live. See who\'s running, what they own, and what you can take.',
-    lottie: 'assets/lottie/rivals.json',
+    body:
+        'The map updates live. See who\'s running, what they own, and what you can take.',
+    visual: _Visual.rivals,
     layout: _Layout.textTopVisualBottom,
   ),
   // 4 — Daily drops
@@ -80,8 +89,9 @@ const _slides = [
     tag: 'DAILY DROPS',
     tagColor: kAccent2,
     headline: 'FIRST HERE\nWINS.',
-    body: 'GPS-pinned loot drops appear across your city. First runner to the spot claims it.',
-    lottie: 'assets/lottie/ctf_drop.json',
+    body:
+        'GPS-pinned loot drops appear across your city. First runner to the spot claims it.',
+    visual: _Visual.ctfDrop,
     layout: _Layout.textTopVisualBottom,
   ),
   // 5 — Invite close
@@ -90,7 +100,7 @@ const _slides = [
     tagColor: kAccent,
     headline: 'YOUR CITY\nIS WAITING.',
     body: 'Only runners who feel it get in. Are you one of them?',
-    lottie: null,
+    visual: _Visual.none,
     layout: _Layout.centeredClose,
   ),
 ];
@@ -108,6 +118,8 @@ class IntroScreen extends StatefulWidget {
 class _IntroScreenState extends State<IntroScreen>
     with TickerProviderStateMixin {
   late AnimationController _ctrl;
+  late AnimationController _loop;
+  late AnimationController _rotation;
   int _page = 0;
   int _prevPage = 0;
   Axis _axis = Axis.vertical;
@@ -125,11 +137,21 @@ class _IntroScreenState extends State<IntroScreen>
         setState(() => _prevPage = _page);
       }
     });
+    _loop = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 3000),
+    )..repeat();
+    _rotation = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 5),
+    )..repeat();
   }
 
   @override
   void dispose() {
     _ctrl.dispose();
+    _loop.dispose();
+    _rotation.dispose();
     super.dispose();
   }
 
@@ -203,6 +225,8 @@ class _IntroScreenState extends State<IntroScreen>
                     )),
                     child: _SlidePage(
                       slide: _slides[_prevPage],
+                      loop: _loop,
+                      rotation: _rotation,
                       key: ValueKey(_prevPage),
                     ),
                   ),
@@ -219,6 +243,8 @@ class _IntroScreenState extends State<IntroScreen>
                     )),
                     child: _SlidePage(
                       slide: _slides[_page],
+                      loop: _loop,
+                      rotation: _rotation,
                       key: ValueKey(_page),
                     ),
                   ),
@@ -337,15 +363,22 @@ class _IntroScreenState extends State<IntroScreen>
 // ---------------------------------------------------------------------------
 class _SlidePage extends StatelessWidget {
   final _Slide slide;
-  const _SlidePage({required this.slide, super.key});
+  final Animation<double> loop;
+  final Animation<double> rotation;
+  const _SlidePage({
+    required this.slide,
+    required this.loop,
+    required this.rotation,
+    super.key,
+  });
 
   @override
   Widget build(BuildContext context) {
     switch (slide.layout) {
       case _Layout.fullBleed:
-        return _FullBleedSlide(slide: slide);
+        return _FullBleedSlide(slide: slide, loop: loop);
       case _Layout.textTopVisualBottom:
-        return _TextTopSlide(slide: slide);
+        return _TextTopSlide(slide: slide, loop: loop, rotation: rotation);
       case _Layout.centeredClose:
         return _CenteredCloseSlide(slide: slide);
     }
@@ -354,11 +387,12 @@ class _SlidePage extends StatelessWidget {
 
 // ---------------------------------------------------------------------------
 // Layout A — Full bleed (slide 1: identity)
-// Lottie fills screen, scrim darkens bottom, text overlays center-left
+// Painter fills screen, scrim darkens bottom, text overlays center-left.
 // ---------------------------------------------------------------------------
 class _FullBleedSlide extends StatelessWidget {
   final _Slide slide;
-  const _FullBleedSlide({required this.slide});
+  final Animation<double> loop;
+  const _FullBleedSlide({required this.slide, required this.loop});
 
   @override
   Widget build(BuildContext context) {
@@ -366,28 +400,21 @@ class _FullBleedSlide extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Lottie full-bleed background
-        if (slide.lottie != null)
-          Positioned.fill(
-            child: Opacity(
-              opacity: 0.35,
-              child: Lottie.asset(
-                slide.lottie!,
-                repeat: true,
-                fit: BoxFit.cover,
-                frameRate: FrameRate.max,
-                errorBuilder: (_, __, ___) => Container(color: kSurface),
-                delegates: LottieDelegates(
-                  values: [
-                    ValueDelegate.colorFilter(
-                      const ['**'],
-                      value: ColorFilter.mode(slide.tagColor, BlendMode.srcIn),
-                    ),
-                  ],
+        // Pulse rings — full-bleed background
+        Positioned.fill(
+          child: Opacity(
+            opacity: 0.45,
+            child: AnimatedBuilder(
+              animation: loop,
+              builder: (_, __) => CustomPaint(
+                painter: PulseRingsPainter(
+                  t: loop.value,
+                  color: slide.tagColor,
                 ),
               ),
             ),
           ),
+        ),
 
         // Bottom scrim — keeps CTA area readable
         Positioned.fill(
@@ -447,11 +474,51 @@ class _FullBleedSlide extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout B — Text top / Lottie panel bottom (slides 2-4)
+// Layout B — Text top / Painter panel bottom (slides 2-4)
 // ---------------------------------------------------------------------------
 class _TextTopSlide extends StatelessWidget {
   final _Slide slide;
-  const _TextTopSlide({required this.slide});
+  final Animation<double> loop;
+  final Animation<double> rotation;
+  const _TextTopSlide({
+    required this.slide,
+    required this.loop,
+    required this.rotation,
+  });
+
+  Widget _buildPainter() {
+    switch (slide.visual) {
+      case _Visual.hexLasso:
+        return AnimatedBuilder(
+          animation: loop,
+          builder: (_, __) => CustomPaint(
+            painter: HexLassoPainter(
+              t: loop.value,
+              accentColor: slide.tagColor,
+            ),
+          ),
+        );
+      case _Visual.rivals:
+        return AnimatedBuilder(
+          animation: loop,
+          builder: (_, __) => CustomPaint(
+            painter: RivalsPainter(t: loop.value),
+          ),
+        );
+      case _Visual.ctfDrop:
+        return AnimatedBuilder(
+          animation: Listenable.merge([loop, rotation]),
+          builder: (_, __) => Transform.rotate(
+            angle: rotation.value * 2 * math.pi,
+            child: CustomPaint(
+              painter: DropBeamsPainter(intensity: loop.value),
+            ),
+          ),
+        );
+      default:
+        return const SizedBox.shrink();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -498,7 +565,7 @@ class _TextTopSlide extends StatelessWidget {
           ),
         ),
 
-        // Lottie panel
+        // Painter panel with Valencia map background
         Expanded(
           flex: 5,
           child: Padding(
@@ -509,7 +576,6 @@ class _TextTopSlide extends StatelessWidget {
                 decoration: BoxDecoration(
                   border: Border.all(color: kBorder.withValues(alpha: 0.4)),
                   borderRadius: BorderRadius.circular(16),
-                  color: kSurface,
                   boxShadow: [
                     BoxShadow(
                       color: kBg.withValues(alpha: 0.4),
@@ -518,24 +584,22 @@ class _TextTopSlide extends StatelessWidget {
                     ),
                   ],
                 ),
-                child: slide.lottie != null
-                    ? Lottie.asset(
-                        slide.lottie!,
-                        repeat: true,
-                        fit: BoxFit.contain,
-                        frameRate: FrameRate.max,
-                        errorBuilder: (_, __, ___) => Container(color: kSurface),
-                        delegates: LottieDelegates(
-                          values: [
-                            ValueDelegate.colorFilter(
-                              const ['**'],
-                              value: ColorFilter.mode(
-                                  slide.tagColor, BlendMode.srcIn),
-                            ),
-                          ],
-                        ),
-                      )
-                    : const SizedBox.shrink(),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Valencia map base
+                    Image.asset(
+                      'assets/maps/valencia_map.jpg',
+                      fit: BoxFit.cover,
+                    ),
+                    // Dark scrim over map
+                    Container(
+                      color: kBg.withValues(alpha: 0.55),
+                    ),
+                    // Painter layer
+                    _buildPainter(),
+                  ],
+                ),
               ),
             ),
           ),
