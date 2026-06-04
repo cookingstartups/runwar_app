@@ -4,135 +4,49 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import '../theme.dart';
 
-class IntroPulseMap extends StatefulWidget {
-  final Color accent;
-  const IntroPulseMap({required this.accent, super.key});
-  @override
-  State<IntroPulseMap> createState() => _IntroPulseMapState();
-}
+TileLayer _cartoDbDarkNoLabels(BuildContext context) => TileLayer(
+      urlTemplate:
+          'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
+      subdomains: const ['a', 'b', 'c', 'd'],
+      retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
+      userAgentPackageName: 'app.runwar.runwar_app',
+    );
 
-class _IntroPulseMapState extends State<IntroPulseMap>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  final _mapCtrl = MapController();
+Widget _buildIntroMap({
+  required BuildContext context,
+  required MapController mapController,
+  required LatLng center,
+  required double zoom,
+  required VoidCallback onReady,
+  double? maxZoom,
+}) =>
+    FlutterMap(
+      mapController: mapController,
+      options: MapOptions(
+        initialCenter: center,
+        initialZoom: zoom,
+        interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
+        onMapReady: onReady,
+      ),
+      children: [
+        if (maxZoom != null)
+          TileLayer(
+            urlTemplate:
+                'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
+            subdomains: const ['a', 'b', 'c', 'd'],
+            maxZoom: maxZoom,
+            retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
+            userAgentPackageName: 'app.runwar.runwar_app',
+          )
+        else
+          _cartoDbDarkNoLabels(context),
+      ],
+    );
 
-  // Closed lasso around the C/Cuba – C/Sueca – C/Dénia block in Ruzafa,
-  // just south of Plaza de Toros de Valencia.
-  // Streets used:
-  //   Segment 1→3 : Carrer de Cuba (residential) — NW→SE
-  //   Segment 3→5 : Carrer de Sueca (residential) — SW→NE (reversed approach)
-  //   Segment 5→7 : Carrer de Sueca (residential) — NE end → C/Dénia junction
-  //   Segment 7→8 : Carrer de Dénia (residential) — S→N back to Cuba
-  static const _kRoute = [
-    LatLng(39.462155, -0.377171), // 1. C/Cuba × C/Dénia junction (NW)
-    LatLng(39.461576, -0.376751), // 2. C/Cuba SE (mid-stretch)
-    LatLng(39.461123, -0.376444), // 3. C/Cuba SE (lower)
-    LatLng(39.461568, -0.375167), // 4. C/Sueca western start
-    LatLng(39.462077, -0.375522), // 5. C/Sueca east
-    LatLng(39.462671, -0.375937), // 6. C/Sueca × C/Dénia junction (SE)
-    LatLng(39.462155, -0.377171), // 7. C/Dénia N → close at start
-  ];
+mixin _IntroPainterHelpers {
+  Color get accent;
 
-  static const _kBlock1 = [
-    LatLng(39.462155, -0.377171), // C/Cuba × C/Dénia NW corner
-    LatLng(39.461576, -0.376751), // C/Cuba mid
-    LatLng(39.461123, -0.376444), // C/Cuba SE corner
-    LatLng(39.462671, -0.375937), // C/Sueca × C/Dénia SE corner
-  ];
-
-  List<Offset> _route = [];
-  List<Offset> _block1 = [];
-  bool _mapReady = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 10))
-      ..repeat();
-  }
-
-  void _updatePoints() {
-    final cam = _mapCtrl.camera;
-    Offset toScreen(LatLng ll) {
-      final p = cam.latLngToScreenPoint(ll);
-      return Offset(p.x.toDouble(), p.y.toDouble());
-    }
-    setState(() {
-      _route  = _kRoute.map(toScreen).toList();
-      _block1 = _kBlock1.map(toScreen).toList();
-      _mapReady = true;
-    });
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    _mapCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => Stack(
-        children: [
-          FlutterMap(
-            mapController: _mapCtrl,
-            options: MapOptions(
-              initialCenter: const LatLng(39.4655, -0.3771),
-              initialZoom: 16.0,
-              onMapReady: _updatePoints,
-              interactionOptions:
-                  const InteractionOptions(flags: InteractiveFlag.none),
-            ),
-            children: [
-              TileLayer(
-                urlTemplate:
-                    'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
-                subdomains: const ['a', 'b', 'c', 'd'],
-                retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
-                userAgentPackageName: 'app.runwar.runwar_app',
-              ),
-            ],
-          ),
-          if (_mapReady)
-            AnimatedBuilder(
-              animation: _ctrl,
-              builder: (_, __) => CustomPaint(
-                painter: _IntroPulseMapPainter(
-                  t: _ctrl.value,
-                  accent: widget.accent,
-                  route: _route,
-                  block1: _block1,
-                ),
-                child: const SizedBox.expand(),
-              ),
-            ),
-        ],
-      );
-}
-
-class _IntroPulseMapPainter extends CustomPainter {
-  final double t;
-  final Color accent;
-  final List<Offset> route;
-  final List<Offset> block1;
-
-  _IntroPulseMapPainter({
-    required this.t,
-    required this.accent,
-    required this.route,
-    required this.block1,
-  });
-
-  static const double _fillPhase1 = 0.82;
-
-  double _blockOpacity(double t, double fillPhase) {
-    if (t < fillPhase) return 0;
-    if (t < fillPhase + 0.04) return ((t - fillPhase) / 0.04) * 0.22;
-    if (t < 0.95) return 0.22;
-    return (1.0 - (t - 0.95) / 0.05).clamp(0, 1) * 0.22;
-  }
-
-  void _drawFill(Canvas canvas, List<Offset> pts, double opacity) {
+  void drawFill(Canvas canvas, List<Offset> pts, double opacity) {
     if (opacity <= 0 || pts.isEmpty) return;
     final fp = Path()..moveTo(pts[0].dx, pts[0].dy);
     for (int i = 1; i < pts.length; i++) {
@@ -147,7 +61,7 @@ class _IntroPulseMapPainter extends CustomPainter {
     );
   }
 
-  void _drawTrace(Canvas canvas, List<Offset> pts, double routeT) {
+  void drawTrace(Canvas canvas, List<Offset> pts, double routeT) {
     if (pts.isEmpty) return;
     final segs = pts.length - 1;
     final totalLen = routeT.clamp(0.0, 1.0) * segs;
@@ -170,13 +84,14 @@ class _IntroPulseMapPainter extends CustomPainter {
     canvas.drawPath(rp, routeP);
   }
 
-  void _drawRunner(Canvas canvas, List<Offset> pts, double routeT) {
+  void drawRunner(Canvas canvas, List<Offset> pts, double routeT) {
     if (pts.isEmpty) return;
     final segs = pts.length - 1;
     final totalLen = routeT.clamp(0.0, 1.0) * segs;
     final segIdx = totalLen.floor().clamp(0, segs - 1);
     final segFrac = (totalLen - segIdx).clamp(0.0, 1.0);
-    final pos = Offset.lerp(pts[segIdx], pts[(segIdx + 1).clamp(0, segs)], segFrac)!;
+    final pos =
+        Offset.lerp(pts[segIdx], pts[(segIdx + 1).clamp(0, segs)], segFrac)!;
     canvas.drawCircle(
         pos,
         12,
@@ -184,10 +99,11 @@ class _IntroPulseMapPainter extends CustomPainter {
           ..color = accent.withValues(alpha: 0.25)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
     canvas.drawCircle(pos, 4.5, Paint()..color = accent);
-    canvas.drawCircle(pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.8));
+    canvas.drawCircle(
+        pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.8));
   }
 
-  void _drawPings(Canvas canvas, List<Offset> pts, double pingT) {
+  void drawPings(Canvas canvas, List<Offset> pts, double pingT) {
     if (pts.length < 3) return;
     final corners = [pts[0], pts[pts.length ~/ 2], pts[pts.length - 2]];
     for (final corner in corners) {
@@ -201,27 +117,152 @@ class _IntroPulseMapPainter extends CustomPainter {
     }
   }
 
+  void drawRunnerAt(Canvas canvas, Offset pos, Color color) {
+    canvas.drawCircle(
+        pos,
+        10,
+        Paint()
+          ..color = color.withValues(alpha: 0.2)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
+    canvas.drawCircle(pos, 4, Paint()..color = color);
+    canvas.drawCircle(
+        pos, 1.5, Paint()..color = Colors.white.withValues(alpha: 0.85));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 1. IntroPulseMap — lasso trace + block capture (slide 1)
+// ---------------------------------------------------------------------------
+class IntroPulseMap extends StatefulWidget {
+  final Color accent;
+  const IntroPulseMap({required this.accent, super.key});
+  @override
+  State<IntroPulseMap> createState() => _IntroPulseMapState();
+}
+
+class _IntroPulseMapState extends State<IntroPulseMap>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  final _mapCtrl = MapController();
+
+  static const _kRoute = [
+    LatLng(39.462155, -0.377171),
+    LatLng(39.461576, -0.376751),
+    LatLng(39.461123, -0.376444),
+    LatLng(39.461568, -0.375167),
+    LatLng(39.462077, -0.375522),
+    LatLng(39.462671, -0.375937),
+    LatLng(39.462155, -0.377171),
+  ];
+
+  static const _kBlock1 = [
+    LatLng(39.462155, -0.377171),
+    LatLng(39.461576, -0.376751),
+    LatLng(39.461123, -0.376444),
+    LatLng(39.462671, -0.375937),
+  ];
+
+  List<Offset> _route = [];
+  List<Offset> _block1 = [];
+  bool _mapReady = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl =
+        AnimationController(vsync: this, duration: const Duration(seconds: 10))
+          ..repeat();
+  }
+
+  void _updatePoints() {
+    final cam = _mapCtrl.camera;
+    Offset toScreen(LatLng ll) {
+      final p = cam.latLngToScreenPoint(ll);
+      return Offset(p.x.toDouble(), p.y.toDouble());
+    }
+    setState(() {
+      _route = _kRoute.map(toScreen).toList();
+      _block1 = _kBlock1.map(toScreen).toList();
+      _mapReady = true;
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _mapCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Stack(
+        children: [
+          _buildIntroMap(
+            context: context,
+            mapController: _mapCtrl,
+            center: const LatLng(39.4655, -0.3771),
+            zoom: 16.0,
+            onReady: _updatePoints,
+          ),
+          if (_mapReady)
+            AnimatedBuilder(
+              animation: _ctrl,
+              builder: (_, __) => CustomPaint(
+                painter: _IntroPulseMapPainter(
+                  t: _ctrl.value,
+                  accent: widget.accent,
+                  route: _route,
+                  block1: _block1,
+                ),
+                child: const SizedBox.expand(),
+              ),
+            ),
+        ],
+      );
+}
+
+class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
+  final double t;
+  @override
+  final Color accent;
+  final List<Offset> route;
+  final List<Offset> block1;
+
+  _IntroPulseMapPainter({
+    required this.t,
+    required this.accent,
+    required this.route,
+    required this.block1,
+  });
+
+  static const double _fillPhase1 = 0.82;
+
+  double _blockOpacity(double t, double fillPhase) {
+    if (t < fillPhase) return 0;
+    if (t < fillPhase + 0.04) return ((t - fillPhase) / 0.04) * 0.22;
+    if (t < 0.95) return 0.22;
+    return (1.0 - (t - 0.95) / 0.05).clamp(0, 1) * 0.22;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     if (route.isEmpty) return;
 
-    _drawFill(canvas, block1, _blockOpacity(t, _fillPhase1));
-    _drawTrace(canvas, route, t);
+    drawFill(canvas, block1, _blockOpacity(t, _fillPhase1));
+    drawTrace(canvas, route, t);
 
     if (t < 0.95) {
-      _drawRunner(canvas, route, t);
+      drawRunner(canvas, route, t);
     }
 
     if (t > _fillPhase1 && t < _fillPhase1 + 0.12) {
-      _drawPings(canvas, block1, ((t - _fillPhase1) / 0.12).clamp(0.0, 1.0));
+      drawPings(canvas, block1, ((t - _fillPhase1) / 0.12).clamp(0.0, 1.0));
     }
   }
 
   @override
   bool shouldRepaint(_IntroPulseMapPainter old) =>
-      old.t != t ||
-      old.route != route ||
-      old.block1 != block1;
+      old.t != t || old.route != route || old.block1 != block1;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,8 +293,9 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 4))
-      ..repeat();
+    _ctrl =
+        AnimationController(vsync: this, duration: const Duration(seconds: 4))
+          ..repeat();
   }
 
   @override
@@ -278,24 +320,12 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        FlutterMap(
+        _buildIntroMap(
+          context: context,
           mapController: _mapCtrl,
-          options: MapOptions(
-            initialCenter: const LatLng(39.4787, -0.3758),
-            initialZoom: 17,
-            interactionOptions:
-                const InteractionOptions(flags: InteractiveFlag.none),
-            onMapReady: _updatePoints,
-          ),
-          children: [
-            TileLayer(
-              urlTemplate:
-                  'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
-              subdomains: const ['a', 'b', 'c', 'd'],
-              retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
-              userAgentPackageName: 'app.runwar.runwar_app',
-            ),
-          ],
+          center: const LatLng(39.4787, -0.3758),
+          zoom: 17,
+          onReady: _updatePoints,
         ),
         if (_mapReady)
           AnimatedBuilder(
@@ -346,7 +376,9 @@ class _IntroCaptureMapPainter extends CustomPainter {
         ..color = accent.withValues(alpha: fillOpacity)
         ..style = PaintingStyle.fill;
       final fp = Path()..moveTo(route[0].dx, route[0].dy);
-      for (int i = 1; i < route.length; i++) { fp.lineTo(route[i].dx, route[i].dy); }
+      for (int i = 1; i < route.length; i++) {
+        fp.lineTo(route[i].dx, route[i].dy);
+      }
       fp.close();
       canvas.drawPath(fp, fillP);
     }
@@ -475,8 +507,9 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 6))
-      ..repeat();
+    _ctrl =
+        AnimationController(vsync: this, duration: const Duration(seconds: 6))
+          ..repeat();
   }
 
   @override
@@ -490,24 +523,12 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        FlutterMap(
+        _buildIntroMap(
+          context: context,
           mapController: _mapCtrl,
-          options: MapOptions(
-            initialCenter: const LatLng(39.4768, -0.3762),
-            initialZoom: 14,
-            interactionOptions:
-                const InteractionOptions(flags: InteractiveFlag.none),
-            onMapReady: _onMapReady,
-          ),
-          children: [
-            TileLayer(
-              urlTemplate:
-                  'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
-              subdomains: const ['a', 'b', 'c', 'd'],
-              retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
-              userAgentPackageName: 'app.runwar.runwar_app',
-            ),
-          ],
+          center: const LatLng(39.4768, -0.3762),
+          zoom: 14,
+          onReady: _onMapReady,
         ),
         if (_mapReady)
           AnimatedBuilder(
@@ -528,8 +549,9 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
   }
 }
 
-class _IntroRivalsMapPainter extends CustomPainter {
+class _IntroRivalsMapPainter extends CustomPainter with _IntroPainterHelpers {
   final double t;
+  @override
   final Color accent;
   final List<Offset> pts1, pts2, pts3;
 
@@ -554,21 +576,9 @@ class _IntroRivalsMapPainter extends CustomPainter {
     final r2 = _smoothPath(pts2, (t + 0.33) % 1.0);
     final r3 = _smoothPath(pts3, (t + 0.66) % 1.0);
 
-    void drawRunner(Offset pos, Color color) {
-      canvas.drawCircle(
-          pos,
-          10,
-          Paint()
-            ..color = color.withValues(alpha: 0.2)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
-      canvas.drawCircle(pos, 4, Paint()..color = color);
-      canvas.drawCircle(
-          pos, 1.5, Paint()..color = Colors.white.withValues(alpha: 0.85));
-    }
-
-    drawRunner(r1, runner1Color);
-    drawRunner(r2, runner2Color);
-    drawRunner(r3, runner3Color);
+    drawRunnerAt(canvas, r1, runner1Color);
+    drawRunnerAt(canvas, r2, runner2Color);
+    drawRunnerAt(canvas, r3, runner3Color);
 
     final livePulse = (math.sin(t * math.pi * 8)).abs();
     final liveTp = TextPainter(
@@ -638,25 +648,13 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        FlutterMap(
+        _buildIntroMap(
+          context: context,
           mapController: _mapCtrl,
-          options: MapOptions(
-            initialCenter: _kDropCoord,
-            initialZoom: 16,
-            interactionOptions:
-                const InteractionOptions(flags: InteractiveFlag.none),
-            onMapReady: _updatePoint,
-          ),
-          children: [
-            TileLayer(
-              urlTemplate:
-                  'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
-              subdomains: const ['a', 'b', 'c', 'd'],
-              maxZoom: 19,
-              retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
-              userAgentPackageName: 'app.runwar.runwar_app',
-            ),
-          ],
+          center: _kDropCoord,
+          zoom: 16,
+          onReady: _updatePoint,
+          maxZoom: 19,
         ),
         if (_mapReady)
           Positioned.fill(
