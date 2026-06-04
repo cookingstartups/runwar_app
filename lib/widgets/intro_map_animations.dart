@@ -145,6 +145,8 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
 
+  // Block 1 route: Cuba–Sueca–Dénia triangle near Ruzafa, Valencia.
+  // Loop closes at LatLng(39.462671, -0.375937) — Sueca/Dénia SE junction.
   static const _kRoute = [
     LatLng(39.462155, -0.377171),
     LatLng(39.461576, -0.376751),
@@ -162,8 +164,30 @@ class _IntroPulseMapState extends State<IntroPulseMap>
     LatLng(39.462671, -0.375937),
   ];
 
+  // Block 2 route: adjacent block to the east, sharing the Sueca/Dénia SE
+  // corner with block 1. Bounded by Carrer de Sueca (SW edge), Gran Via de
+  // les Germanies (north edge), and Carrer de Dénia (SE diagonal back).
+  // Starts and ends at LatLng(39.462671, -0.375937) for seamless runner flow.
+  static const _kRoute2 = [
+    LatLng(39.462671, -0.375937), // SW — shared junction with block 1
+    LatLng(39.463469, -0.376515), // NW mid — Carrer de Sueca heading NE
+    LatLng(39.463595, -0.376553), // NW corner — Sueca meets Gran Via
+    LatLng(39.464001, -0.376109), // NE corner — Gran Via primary junction
+    LatLng(39.463243, -0.374594), // SE corner — Carrer de Dénia / Cadis node
+    LatLng(39.462671, -0.375937), // back to start (closed)
+  ];
+
+  static const _kBlock2 = [
+    LatLng(39.462671, -0.375937), // SW
+    LatLng(39.463595, -0.376553), // NW
+    LatLng(39.464001, -0.376109), // NE
+    LatLng(39.463243, -0.374594), // SE
+  ];
+
   List<Offset> _route = [];
   List<Offset> _block1 = [];
+  List<Offset> _route2 = [];
+  List<Offset> _block2 = [];
   bool _mapReady = false;
 
   @override
@@ -183,6 +207,8 @@ class _IntroPulseMapState extends State<IntroPulseMap>
     setState(() {
       _route = _kRoute.map(toScreen).toList();
       _block1 = _kBlock1.map(toScreen).toList();
+      _route2 = _kRoute2.map(toScreen).toList();
+      _block2 = _kBlock2.map(toScreen).toList();
       _mapReady = true;
     });
   }
@@ -213,6 +239,8 @@ class _IntroPulseMapState extends State<IntroPulseMap>
                   accent: widget.accent,
                   route: _route,
                   block1: _block1,
+                  route2: _route2,
+                  block2: _block2,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -227,42 +255,99 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
   final Color accent;
   final List<Offset> route;
   final List<Offset> block1;
+  final List<Offset> route2;
+  final List<Offset> block2;
 
   _IntroPulseMapPainter({
     required this.t,
     required this.accent,
     required this.route,
     required this.block1,
+    required this.route2,
+    required this.block2,
   });
 
-  static const double _fillPhase1 = 0.82;
+  // Phase 1: runner completes loop 1 at t=0.55 — fill snaps on immediately.
+  static const double _fillPhase1 = 0.55;
+  // Phase 2: runner completes loop 2 at t=0.88 — fill 2 snaps on immediately.
+  static const double _fillPhase2 = 0.88;
 
-  double _blockOpacity(double t, double fillPhase) {
-    if (t < fillPhase) return 0;
-    if (t < fillPhase + 0.04) return ((t - fillPhase) / 0.04) * 0.22;
-    if (t < 0.95) return 0.22;
-    return (1.0 - (t - 0.95) / 0.05).clamp(0, 1) * 0.22;
+  // Block 1 fill opacity:
+  //   t < 0.55              → 0
+  //   0.55–0.58             → snap 0→0.28 (quick flash, ≤0.03t ramp)
+  //   0.58–0.94             → hold 0.28
+  //   0.94–1.00             → fade to 0
+  double _block1Opacity(double t) {
+    if (t < _fillPhase1) return 0.0;
+    if (t < _fillPhase1 + 0.03) return ((t - _fillPhase1) / 0.03) * 0.28;
+    if (t < 0.94) return 0.28;
+    return ((1.0 - (t - 0.94) / 0.06) * 0.28).clamp(0.0, 0.28);
+  }
+
+  // Block 2 fill opacity:
+  //   t < 0.88              → 0
+  //   0.88–0.91             → snap 0→0.28 (quick flash, ≤0.03t ramp)
+  //   0.91–0.94             → hold 0.28
+  //   0.94–1.00             → fade to 0
+  double _block2Opacity(double t) {
+    if (t < _fillPhase2) return 0.0;
+    if (t < _fillPhase2 + 0.03) return ((t - _fillPhase2) / 0.03) * 0.28;
+    if (t < 0.94) return 0.28;
+    return ((1.0 - (t - 0.94) / 0.06) * 0.28).clamp(0.0, 0.28);
   }
 
   @override
   void paint(Canvas canvas, Size size) {
     if (route.isEmpty) return;
 
-    drawFill(canvas, block1, _blockOpacity(t, _fillPhase1));
-    drawTrace(canvas, route, t);
+    // --- Phase 1: runner traces loop 1 (t = 0.00 → 0.55) ---
+    // Scale route progress so the runner completes the full loop by t=0.55.
+    final routeProgress = (t / 0.55).clamp(0.0, 1.0);
 
-    if (t < 0.95) {
-      drawRunner(canvas, route, t);
+    drawFill(canvas, block1, _block1Opacity(t));
+    drawTrace(canvas, route, routeProgress);
+
+    // Phase 1 runner: visible only while loop 1 is in progress.
+    if (t < _fillPhase1) {
+      drawRunner(canvas, route, routeProgress);
     }
 
-    if (t > _fillPhase1 && t < _fillPhase1 + 0.12) {
-      drawPings(canvas, block1, ((t - _fillPhase1) / 0.12).clamp(0.0, 1.0));
+    // Ping burst when block 1 captures.
+    if (t > _fillPhase1 && t < _fillPhase1 + 0.10) {
+      drawPings(canvas, block1, ((t - _fillPhase1) / 0.10).clamp(0.0, 1.0));
+    }
+
+    // --- Phase 2: runner traces loop 2 (t = 0.55 → 0.88) ---
+    // Seamless continuation — route2 starts at the same coord loop1 ends.
+    if (route2.isNotEmpty) {
+      final route2Progress =
+          t >= _fillPhase1 ? ((t - _fillPhase1) / 0.33).clamp(0.0, 1.0) : 0.0;
+
+      if (t >= _fillPhase1) {
+        drawTrace(canvas, route2, route2Progress);
+      }
+
+      // Phase 2 runner: visible from loop 1 close until loop 2 close.
+      if (t >= _fillPhase1 && t < _fillPhase2) {
+        drawRunner(canvas, route2, route2Progress);
+      }
+
+      drawFill(canvas, block2, _block2Opacity(t));
+
+      // Ping burst when block 2 captures.
+      if (t > _fillPhase2 && t < _fillPhase2 + 0.08) {
+        drawPings(canvas, block2, ((t - _fillPhase2) / 0.08).clamp(0.0, 1.0));
+      }
     }
   }
 
   @override
   bool shouldRepaint(_IntroPulseMapPainter old) =>
-      old.t != t || old.route != route || old.block1 != block1;
+      old.t != t ||
+      old.route != route ||
+      old.block1 != block1 ||
+      old.route2 != route2 ||
+      old.block2 != block2;
 }
 
 // ---------------------------------------------------------------------------
