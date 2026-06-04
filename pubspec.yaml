@@ -73,9 +73,6 @@ dependencies:
   # Date formatting for slate derivation (YYYY-MM-DD)
   intl: ^0.19.0
 
-  # Lottie vector animations (showcase slides)
-  lottie: ^3.1.0
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -100,4 +97,3 @@ flutter:
     - assets/icons/
     - assets/maps/
     - assets/screenshots/
-    - assets/lottie/
