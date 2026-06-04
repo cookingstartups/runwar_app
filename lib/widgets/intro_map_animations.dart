@@ -512,7 +512,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   void initState() {
     super.initState();
     _ctrl =
-        AnimationController(vsync: this, duration: const Duration(seconds: 5))
+        AnimationController(vsync: this, duration: const Duration(seconds: 8))
           ..repeat();
   }
 
@@ -598,24 +598,65 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
     required this.disputedArea,
   });
 
-  // t=0.00–0.70: attacker runs; lasso closes at t=0.70
-  // t=0.70: disputed area snaps on
-  // t=0.72–0.85: "DISPUTED" label visible
-  // t=0.90–1.00: all fades
-  static const double _lassoCloseT = 0.70;
+  // t=0.00–0.60: attacker runs; lasso closes at t=0.60
+  // t=0.60: disputed area snaps on (amber fill + dashed border)
+  // t=0.62–0.75: "DISPUTED" label visible
+  // t=0.75–0.85: ownership changes → disputed area lerps orange→blue
+  // t=0.85–0.92: "CLAIMED" label flashes in kSea
+  // t=0.88–1.00: global fade + orange territory fades in disputed area
+  static const double _lassoCloseT = 0.60;
 
   double _disputedOpacity(double t) {
     if (t < _lassoCloseT) return 0.0;
     if (t < _lassoCloseT + 0.03) {
       return ((t - _lassoCloseT) / 0.03) * 0.35;
     }
-    if (t < 0.90) return 0.35;
-    return ((1.0 - (t - 0.90) / 0.10) * 0.35).clamp(0.0, 0.35);
+    if (t < 0.88) return 0.35;
+    return ((1.0 - (t - 0.88) / 0.12) * 0.35).clamp(0.0, 0.35);
   }
 
   double _globalFade(double t) {
-    if (t < 0.90) return 1.0;
-    return (1.0 - (t - 0.90) / 0.10).clamp(0.0, 1.0);
+    if (t < 0.88) return 1.0;
+    return (1.0 - (t - 0.88) / 0.12).clamp(0.0, 1.0);
+  }
+
+  Color _disputedFillColor(double t) {
+    if (t < 0.75) return kAccent2;
+    if (t > 0.85) return kSea;
+    final lerpT = (t - 0.75) / 0.10;
+    return Color.lerp(kAccent2, kSea, lerpT)!;
+  }
+
+  void _drawDashedPolygon(
+      Canvas canvas, List<Offset> pts, Color color, double opacity) {
+    if (pts.isEmpty || opacity <= 0) return;
+    final paint = Paint()
+      ..color = color.withValues(alpha: opacity)
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke;
+    const dashLen = 8.0;
+    const gapLen = 5.0;
+    for (int i = 0; i < pts.length; i++) {
+      final a = pts[i];
+      final b = pts[(i + 1) % pts.length];
+      final d = (b - a);
+      final total = d.distance;
+      double drawn = 0.0;
+      bool drawing = true;
+      while (drawn < total) {
+        final segEnd =
+            (drawn + (drawing ? dashLen : gapLen)).clamp(0.0, total);
+        if (drawing) {
+          canvas.drawLine(
+            a + d * (drawn / total),
+            a + d * (segEnd / total),
+            paint,
+          );
+        }
+        drawn = segEnd;
+        drawing = !drawing;
+      }
+    }
   }
 
   @override
@@ -661,21 +702,35 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
       drawTraceColor(canvas, attackerRoute, 1.0, kSea.withValues(alpha: fade));
     }
 
-    // 3. Disputed area fill — snaps on at t=0.70 in amber/yellow.
-    drawFillColor(canvas, disputedArea, kAccent2, _disputedOpacity(t));
+    // 3. Disputed area fill — snaps on at t=0.60, lerps amber→blue at t=0.75–0.85.
+    final dispOp = _disputedOpacity(t);
+    final dispColor = _disputedFillColor(t);
+    drawFillColor(canvas, disputedArea, dispColor, dispOp);
 
-    // 4. "DISPUTED" label at centroid of disputed area.
-    if (t > 0.72 && t < 0.85 && disputedArea.isNotEmpty) {
+    // 3b. Dashed border on disputed area — amber border until ownership changes,
+    //     then turns blue after t=0.75.
+    if (t >= _lassoCloseT && disputedArea.isNotEmpty) {
+      final borderColor = t < 0.75 ? kAccent2 : kSea;
+      _drawDashedPolygon(canvas, disputedArea, borderColor, dispOp.clamp(0.0, 1.0));
+    }
+
+    // 4. Compute centroid of disputed area (used for labels).
+    Offset disputedCentroid = Offset.zero;
+    if (disputedArea.isNotEmpty) {
       double sumX = 0, sumY = 0;
       for (final pt in disputedArea) {
         sumX += pt.dx;
         sumY += pt.dy;
       }
-      final centroid = Offset(sumX / disputedArea.length, sumY / disputedArea.length);
+      disputedCentroid =
+          Offset(sumX / disputedArea.length, sumY / disputedArea.length);
+    }
 
-      final labelOpacity = t < 0.785
-          ? ((t - 0.72) / 0.065).clamp(0.0, 1.0)
-          : ((1.0 - (t - 0.785) / 0.065)).clamp(0.0, 1.0);
+    // 5. "DISPUTED" label — t=0.62–0.75.
+    if (t > 0.62 && t < 0.75 && disputedArea.isNotEmpty) {
+      final labelOpacity = t < 0.685
+          ? ((t - 0.62) / 0.065).clamp(0.0, 1.0)
+          : ((1.0 - (t - 0.685) / 0.065)).clamp(0.0, 1.0);
 
       if (labelOpacity > 0) {
         final tp = TextPainter(
@@ -693,7 +748,35 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
         )..layout();
         tp.paint(
             canvas,
-            Offset(centroid.dx - tp.width / 2, centroid.dy - tp.height / 2));
+            Offset(disputedCentroid.dx - tp.width / 2,
+                disputedCentroid.dy - tp.height / 2));
+      }
+    }
+
+    // 6. "CLAIMED" label — t=0.85–0.92 in kSea.
+    if (t > 0.85 && t < 0.92 && disputedArea.isNotEmpty) {
+      final claimedOpacity = t < 0.885
+          ? ((t - 0.85) / 0.035).clamp(0.0, 1.0)
+          : ((1.0 - (t - 0.885) / 0.035)).clamp(0.0, 1.0);
+
+      if (claimedOpacity > 0) {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: 'CLAIMED',
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11,
+              letterSpacing: 2,
+              color: kSea.withValues(alpha: claimedOpacity),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(
+            canvas,
+            Offset(disputedCentroid.dx - tp.width / 2,
+                disputedCentroid.dy - tp.height / 2));
       }
     }
   }
