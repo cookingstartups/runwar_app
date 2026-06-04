@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 import 'database_service.dart';
 import 'zones_service.dart';
 import 'supabase_service.dart';
+import 'telemetry_service.dart';
 import '../config/supabase_config.dart';
 
 enum TerritoryResult { claimed, conquered, disputed, failed }
@@ -279,11 +280,16 @@ class TerritoryService {
       if (defendedIds.isNotEmpty) {
         return ClaimOutcome(TerritoryResult.claimed, defendedIds.first);
       }
-      return ClaimOutcome(TerritoryResult.disputed, null);
+      return const ClaimOutcome(TerritoryResult.disputed, null);
     });
 
     if (outcome.result != TerritoryResult.failed) {
       await _mergeAdjacentZones(userId, city);
+      if (outcome.result == TerritoryResult.claimed) {
+        TelemetryService.instance.logEvent('claim_made', props: {'zone_id': outcome.affectedZoneId ?? ''}).catchError((_) {});
+      } else if (outcome.result == TerritoryResult.conquered) {
+        TelemetryService.instance.logEvent('conquest_made', props: {'zone_id': outcome.affectedZoneId ?? ''}).catchError((_) {});
+      }
     }
     return outcome;
   }

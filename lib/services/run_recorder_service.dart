@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'telemetry_service.dart';
+import 'daily_missions_service.dart';
 
 enum RecorderState { idle, recording, awaitingClaim }
 
@@ -24,6 +26,9 @@ class RunRecorderService {
   DateTime? _startedAt;
   DateTime? _closedAt;
   StreamSubscription<Position>? _posSub;
+  String? _activeUserId;
+
+  void setActiveUser(String? userId) => _activeUserId = userId;
 
   List<LatLng> get track => List.unmodifiable(_track);
   List<LatLng> get trackSnapshot => List.unmodifiable(_track);
@@ -46,6 +51,7 @@ class RunRecorderService {
           const LocationSettings(accuracy: LocationAccuracy.high),
     ).listen(_onPosition, onError: (_) {});
     stateNotifier.value = RecorderState.recording;
+    TelemetryService.instance.logEvent('start_run').catchError((_) {});
   }
 
   void _onPosition(Position pos) {
@@ -80,6 +86,12 @@ class RunRecorderService {
 
     if (valid) {
       stateNotifier.value = RecorderState.awaitingClaim;
+      TelemetryService.instance.logEvent('valid_loop', props: {'perimeter_m': perimeter.round()}).catchError((_) {});
+      final uid = _activeUserId;
+      if (uid != null) {
+        DailyMissionsService.instance.reportProgress(uid, 'walk_2km', perimeter.round()).catchError((_) {});
+        DailyMissionsService.instance.reportProgress(uid, 'back_to_back', 1).catchError((_) {});
+      }
       return LoopResult.valid;
     }
     _clearTrackInternal();
