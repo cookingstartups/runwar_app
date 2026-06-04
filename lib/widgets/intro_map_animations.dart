@@ -172,7 +172,7 @@ mixin _IntroPainterHelpers {
   /// competing with the current slide's active animation.
   void drawInheritedBlocks(Canvas canvas, List<List<Offset>> blocks) {
     for (final block in blocks) {
-      drawFillColor(canvas, block, kAccent, 0.55);
+      drawFillColor(canvas, block, kAccent, 0.28);
     }
   }
 }
@@ -406,9 +406,47 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
     // Single trace covering all 3 blocks.
     drawTrace(canvas, route, routeProgress);
 
-    // Runner dot — visible while tracing (before fade-out window).
+    // Runner dot — traces route, then micro-drifts and fades (GPS lost in building).
     if (t < 0.94) {
       drawRunner(canvas, route, routeProgress);
+    } else if (route.isNotEmpty) {
+      // drift 0..1 over t=0.94..1.0
+      final drift = ((t - 0.94) / 0.06).clamp(0.0, 1.0);
+      final exitFade = 1.0 - drift;
+      // tiny sinusoidal wobble + slight northward creep simulating last steps into building
+      final microOffset = Offset(
+        math.sin(drift * math.pi * 2.5) * 3.5,
+        -drift * 5.0,
+      );
+      final driftPos = route.last + microOffset;
+      // halo
+      canvas.drawCircle(
+          driftPos,
+          12,
+          Paint()
+            ..color = accent.withValues(alpha: 0.25 * exitFade)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+      // main dot
+      canvas.drawCircle(driftPos, 4.5,
+          Paint()..color = accent.withValues(alpha: exitFade));
+      // inner white
+      canvas.drawCircle(
+          driftPos,
+          1.8,
+          Paint()
+            ..color = Colors.white.withValues(alpha: 0.8 * exitFade));
+      // expanding GPS-lost ring (appears at drift=0.3, expands+fades to drift=1.0)
+      if (drift > 0.3) {
+        final lostT = ((drift - 0.3) / 0.7).clamp(0.0, 1.0);
+        canvas.drawCircle(
+            driftPos,
+            lostT * 22,
+            Paint()
+              ..color =
+                  accent.withValues(alpha: (1.0 - lostT) * 0.35 * exitFade)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1.5);
+      }
     }
 
     // Ping burst when block 1 closes — wider window (1.5 segs) for slower pulse.
