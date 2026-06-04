@@ -25,6 +25,7 @@ import '../widgets/attack_sheet.dart';
 import '../widgets/dispute_countdown_label.dart';
 import '../widgets/drop_marker.dart';
 import '../widgets/credits_chip.dart';
+import '../widgets/streak_chip.dart';
 import '../widgets/superpower_inventory_strip.dart';
 import '../widgets/mission_mode_overlay.dart';
 import '../widgets/first_zone_celebration_overlay.dart';
@@ -40,6 +41,7 @@ import '../providers/mission_provider.dart';
 import '../theme.dart';
 import 'first_attack_briefing_screen.dart';
 import 'main_shell.dart';
+import '../main.dart' show trialStatusProvider;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 // City center and bounds are now loaded from cityConfigProvider (design.md §5).
@@ -696,11 +698,24 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               );
             },
           ),
-        // Phase 2 — credit balance chip (top-right).
+        // Daily streak chip + credit balance chip (top-right).
         Positioned(
           top: 48,
           right: 16,
-          child: CreditsChip(playerId: userId),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              StreakChip(
+                streak: ref
+                    .watch(trialStatusProvider(userId))
+                    .valueOrNull
+                    ?.streak ?? 0,
+                userId: userId,
+              ),
+              const SizedBox(width: 8),
+              CreditsChip(playerId: userId),
+            ],
+          ),
         ),
         // Phase 2 — superpower inventory strip.
         Positioned(

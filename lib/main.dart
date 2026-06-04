@@ -28,6 +28,7 @@ import 'screens/first_mission_briefing_screen.dart';
 import 'screens/first_attack_briefing_screen.dart';
 import 'providers/cities_provider.dart';
 import 'providers/mission_provider.dart';
+import 'providers/daily_missions_provider.dart';
 import 'services/trial_service.dart';
 
 final showcaseSeenProvider = FutureProvider<bool>((ref) => isShowcaseSeen());
@@ -137,6 +138,8 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
       if (userId != null) {
         ref.invalidate(trialStatusProvider(userId));
         ref.invalidate(missionStatusProvider(userId));
+        ref.invalidate(todaysMissionsProvider(userId));
+        ref.invalidate(dailyStreakProvider(userId));
       }
     }
   }
