@@ -1,11 +1,9 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme.dart';
-import '../widgets/intro_painters.dart';
+import '../widgets/intro_map_animations.dart';
 
 const _kShowcaseKey = 'showcase_seen';
 
@@ -20,9 +18,9 @@ Future<bool> isShowcaseSeen() async {
 }
 
 // ---------------------------------------------------------------------------
-// Visual type per slide
+// Animation type per slide
 // ---------------------------------------------------------------------------
-enum _Visual { pulse, hexLasso, rivals, ctfDrop, none }
+enum _Anim { pulse, hexCapture, rivals, ctfDrop, none }
 
 // ---------------------------------------------------------------------------
 // Layout modes
@@ -41,7 +39,7 @@ class _Slide {
   final String headline;
   final String body;
   final Color tagColor;
-  final _Visual visual;
+  final _Anim anim;
   final _Layout layout;
 
   const _Slide({
@@ -50,7 +48,7 @@ class _Slide {
     required this.body,
     required this.layout,
     this.tagColor = kAccent,
-    this.visual = _Visual.none,
+    this.anim = _Anim.none,
   });
 }
 
@@ -61,7 +59,7 @@ const _slides = [
     tagColor: kAccent,
     headline: 'YOUR CITY.\nYOUR RULES.',
     body: 'Run it. Own it. Every block you stop on belongs to someone else.',
-    visual: _Visual.pulse,
+    anim: _Anim.pulse,
     layout: _Layout.fullBleed,
   ),
   // 2 — How it works
@@ -71,7 +69,7 @@ const _slides = [
     headline: 'LASSO A ZONE.\nIT\'S YOURS.',
     body:
         'Draw a loop around any city block while running. If nobody defends it — it\'s yours.',
-    visual: _Visual.hexLasso,
+    anim: _Anim.hexCapture,
     layout: _Layout.textTopVisualBottom,
   ),
   // 3 — Live map
@@ -81,7 +79,7 @@ const _slides = [
     headline: 'RIVALS ARE\nRUNNING NOW.',
     body:
         'The map updates live. See who\'s running, what they own, and what you can take.',
-    visual: _Visual.rivals,
+    anim: _Anim.rivals,
     layout: _Layout.textTopVisualBottom,
   ),
   // 4 — Daily drops
@@ -91,7 +89,7 @@ const _slides = [
     headline: 'FIRST HERE\nWINS.',
     body:
         'GPS-pinned loot drops appear across your city. First runner to the spot claims it.',
-    visual: _Visual.ctfDrop,
+    anim: _Anim.ctfDrop,
     layout: _Layout.textTopVisualBottom,
   ),
   // 5 — Invite close
@@ -100,7 +98,7 @@ const _slides = [
     tagColor: kAccent,
     headline: 'YOUR CITY\nIS WAITING.',
     body: 'Only runners who feel it get in. Are you one of them?',
-    visual: _Visual.none,
+    anim: _Anim.none,
     layout: _Layout.centeredClose,
   ),
 ];
@@ -387,7 +385,7 @@ class _SlidePage extends StatelessWidget {
 
 // ---------------------------------------------------------------------------
 // Layout A — Full bleed (slide 1: identity)
-// Painter fills screen, scrim darkens bottom, text overlays center-left.
+// Real Valencia FlutterMap fills screen, scrim darkens bottom, text overlays.
 // ---------------------------------------------------------------------------
 class _FullBleedSlide extends StatelessWidget {
   final _Slide slide;
@@ -400,20 +398,9 @@ class _FullBleedSlide extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Pulse rings — full-bleed background
+        // Live Valencia map — full-bleed background (no scrim on slide 1)
         Positioned.fill(
-          child: Opacity(
-            opacity: 0.45,
-            child: AnimatedBuilder(
-              animation: loop,
-              builder: (_, __) => CustomPaint(
-                painter: PulseRingsPainter(
-                  t: loop.value,
-                  color: slide.tagColor,
-                ),
-              ),
-            ),
-          ),
+          child: IntroPulseMap(accent: slide.tagColor),
         ),
 
         // Bottom scrim — keeps CTA area readable
@@ -474,7 +461,7 @@ class _FullBleedSlide extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout B — Text top / Painter panel bottom (slides 2-4)
+// Layout B — Text top / Map animation panel bottom (slides 2-4)
 // ---------------------------------------------------------------------------
 class _TextTopSlide extends StatelessWidget {
   final _Slide slide;
@@ -486,39 +473,13 @@ class _TextTopSlide extends StatelessWidget {
     required this.rotation,
   });
 
-  Widget _buildPainter() {
-    switch (slide.visual) {
-      case _Visual.hexLasso:
-        return AnimatedBuilder(
-          animation: loop,
-          builder: (_, __) => CustomPaint(
-            painter: HexLassoPainter(
-              t: loop.value,
-              accentColor: slide.tagColor,
-            ),
-          ),
-        );
-      case _Visual.rivals:
-        return AnimatedBuilder(
-          animation: loop,
-          builder: (_, __) => CustomPaint(
-            painter: RivalsPainter(t: loop.value),
-          ),
-        );
-      case _Visual.ctfDrop:
-        return AnimatedBuilder(
-          animation: Listenable.merge([loop, rotation]),
-          builder: (_, __) => Transform.rotate(
-            angle: rotation.value * 2 * math.pi,
-            child: CustomPaint(
-              painter: DropBeamsPainter(intensity: loop.value),
-            ),
-          ),
-        );
-      default:
-        return const SizedBox.shrink();
-    }
-  }
+  Widget _animWidget(_Anim anim, Color accent) => switch (anim) {
+        _Anim.pulse => IntroPulseMap(accent: accent),
+        _Anim.hexCapture => IntroCaptureMap(accent: accent),
+        _Anim.rivals => IntroRivalsMap(accent: accent),
+        _Anim.ctfDrop => IntroFlagDropMap(accent: accent),
+        _Anim.none => const SizedBox.shrink(),
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -565,7 +526,7 @@ class _TextTopSlide extends StatelessWidget {
           ),
         ),
 
-        // Painter panel with Valencia map background
+        // Live FlutterMap animation panel
         Expanded(
           flex: 5,
           child: Padding(
@@ -587,17 +548,12 @@ class _TextTopSlide extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    // Valencia map base
-                    Image.asset(
-                      'assets/maps/valencia_map.jpg',
-                      fit: BoxFit.cover,
-                    ),
-                    // Dark scrim over map
+                    // Live Valencia FlutterMap + GPS-anchored painter
+                    _animWidget(slide.anim, slide.tagColor),
+                    // Scrim so headline text stays readable above the map
                     Container(
-                      color: kBg.withValues(alpha: 0.55),
+                      color: kBg.withValues(alpha: 0.45),
                     ),
-                    // Painter layer
-                    _buildPainter(),
                   ],
                 ),
               ),
