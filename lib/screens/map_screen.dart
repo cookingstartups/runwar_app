@@ -13,7 +13,8 @@ import '../providers/zones_provider.dart';
 import '../providers/run_recorder_provider.dart';
 import '../providers/app_config_provider.dart';
 import '../services/run_recorder_service.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import '../services/battery_optimization_service.dart';
+import '../widgets/battery_warning_banner.dart';
 import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
 import '../services/superpower_service.dart';
@@ -322,11 +323,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       if (fabUserId != null) {
         await TrialService.instance.initTrial(fabUserId);
       }
-      // Request battery optimization exemption so the foreground service
-      // survives screen lock on MIUI and aggressive Android OEMs.
-      if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
-        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
-      }
+      // Request battery optimization exemption exactly once (AC-15).
+      await BatteryOptimizationService.requestOnce();
       await notifier.start();
     } else if (s == RecorderState.recording) {
       final result = await notifier.stop();
@@ -708,6 +706,21 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     ),
                   ),
                 ),
+              );
+            },
+          ),
+        // Battery warning banner (AC-16) — visible during active run when
+        // battery optimization exemption is not granted.
+        if (isRecording)
+          FutureBuilder<bool>(
+            future: BatteryOptimizationService.isOptimizationActive(),
+            builder: (_, snap) {
+              if (snap.data != true) return const SizedBox.shrink();
+              return Positioned(
+                top: 100,
+                left: 16,
+                right: 16,
+                child: const BatteryWarningBanner(),
               );
             },
           ),

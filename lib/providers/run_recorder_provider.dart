@@ -50,6 +50,11 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
 
   void forceClose() => RunRecorderService.instance.forceClose();
 
+  /// Resumes a run from orphaned run_scratch rows (AC-13).
+  /// Delegates to [RunRecorderService.resumeFromScratch].
+  Future<void> resume(String userId) =>
+      RunRecorderService.instance.resumeFromScratch(userId);
+
   /// Evaluates a territory claim, persists the run, and resets state.
   ///
   /// Returns the [ClaimOutcome] so the caller (MapScreen) can read both

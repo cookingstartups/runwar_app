@@ -29,6 +29,7 @@ class RunRecorderService {
   DateTime? _closedAt;
   StreamSubscription<Position>? _posSub;
   String? _activeUserId;
+  Timer? _notifTimer;
 
   void setActiveUser(String? userId) => _activeUserId = userId;
 
@@ -57,10 +58,7 @@ class RunRecorderService {
       } catch (_) {}
     }
     await _startForegroundTask();
-    _posSub = Geolocator.getPositionStream(
-      locationSettings:
-          const LocationSettings(accuracy: LocationAccuracy.high),
-    ).listen(_onPosition, onError: (_) {});
+    _openGpsStream();
     stateNotifier.value = RecorderState.recording;
     TelemetryService.instance.logEvent('start_run').catchError((_) {});
   }
@@ -107,8 +105,24 @@ class RunRecorderService {
     await FlutterForegroundTask.startService(
       serviceId: 100,
       notificationTitle: 'Run in progress',
-      notificationText: 'Tracking your route — keep moving.',
+      notificationText: '00:00',
     );
+    // Update the notification body with elapsed time every 30 s (AC-4).
+    // The timer runs on the main isolate so it can read _startedAt directly.
+    _notifTimer?.cancel();
+    _notifTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      final started = _startedAt;
+      if (started == null || stateNotifier.value != RecorderState.recording) {
+        return;
+      }
+      final elapsed = DateTime.now().toUtc().difference(started);
+      final mm = elapsed.inMinutes.toString().padLeft(2, '0');
+      final ss = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
+      unawaited(FlutterForegroundTask.updateService(
+        notificationTitle: 'Run in progress',
+        notificationText: '$mm:$ss',
+      ));
+    });
   }
 
   Future<LoopResult> stopRun() async {
@@ -116,6 +130,8 @@ class RunRecorderService {
     if (s == RecorderState.idle || s == RecorderState.awaitingClaim) {
       return LoopResult.notRecording;
     }
+    _notifTimer?.cancel();
+    _notifTimer = null;
     await _posSub?.cancel();
     _posSub = null;
     unawaited(FlutterForegroundTask.stopService());
@@ -167,6 +183,8 @@ class RunRecorderService {
 
   /// Discard current run and reset to idle.
   void discardRun() {
+    _notifTimer?.cancel();
+    _notifTimer = null;
     _posSub?.cancel();
     _posSub = null;
     unawaited(FlutterForegroundTask.stopService());
@@ -178,6 +196,61 @@ class RunRecorderService {
     }
     _clearTrackInternal();
     stateNotifier.value = RecorderState.idle;
+  }
+
+  /// Opens the GPS position stream and stores the subscription in [_posSub].
+  /// Extracted so both [startRun] and [resumeFromScratch] share the same
+  /// subscription setup without duplicating code.
+  void _openGpsStream() {
+    _posSub = Geolocator.getPositionStream(
+      locationSettings:
+          const LocationSettings(accuracy: LocationAccuracy.high),
+    ).listen(_onPosition, onError: (_) {});
+  }
+
+  /// Rehydrates [_track] from run_scratch rows for [userId], then restarts
+  /// the foreground service and GPS subscription (AC-13).
+  ///
+  /// Pre: state == idle; [_activeUserId] is set; run_scratch has rows for [userId].
+  /// Post: _track.length == row count; foreground service is running.
+  Future<void> resumeFromScratch(String userId) async {
+    if (stateNotifier.value == RecorderState.recording) return;
+    try {
+      final rows = await DatabaseService.instance.db.query(
+        'run_scratch',
+        where: 'user_id = ?',
+        whereArgs: [userId],
+        orderBy: 'ts ASC',
+      );
+      if (rows.isEmpty) return;
+      _track.clear();
+      DateTime? earliest;
+      for (final row in rows) {
+        final lat = row['lat'] as double;
+        final lng = row['lng'] as double;
+        _track.add(LatLng(lat, lng));
+        final tsStr = row['ts'] as String?;
+        if (tsStr != null && earliest == null) {
+          earliest = DateTime.tryParse(tsStr)?.toUtc();
+        }
+      }
+      // Use the earliest scratch timestamp so elapsed time carries over.
+      _startedAt = earliest ?? DateTime.now().toUtc();
+      _closedAt = null;
+      trackVersion.value++;
+      await _startForegroundTask();
+      _openGpsStream();
+      stateNotifier.value = RecorderState.recording;
+    } catch (_) {}
+  }
+
+  /// Deletes all run_scratch rows for [userId] without affecting [_track],
+  /// the foreground service, or state (AC-14, and used internally by discardRun).
+  Future<void> clearScratch(String userId) async {
+    try {
+      await DatabaseService.instance.db
+          .delete('run_scratch', where: 'user_id = ?', whereArgs: [userId]);
+    } catch (_) {}
   }
 
   void _clearTrackInternal() {

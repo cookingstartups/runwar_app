@@ -31,6 +31,8 @@ import 'providers/mission_provider.dart';
 import 'providers/daily_missions_provider.dart';
 import 'services/streak_reminder_scheduler.dart';
 import 'services/trial_service.dart';
+import 'services/run_recovery_service.dart';
+import 'screens/recovery_gate.dart';
 
 final showcaseSeenProvider = FutureProvider<bool>((ref) => isShowcaseSeen());
 
@@ -50,6 +52,8 @@ Future<void> main() async {
   try {
     await initLocalNotifications();
     await DatabaseService.instance.init();
+    // Sweep stale run_scratch rows (>12h old) before auth resolves (AC-11).
+    await RunRecoveryService.instance.sweepStale();
     await AuthService.instance.seedDemoDataIfNeeded();
     // Supabase init must run before runApp so isConnected is ready for providers.
     await SupabaseService.instance.init();
@@ -219,7 +223,7 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
       return PaywallScreen(streak: trial.streak);
     }
 
-    return const MainShell();
+    return RecoveryGate(userId: userId, child: const MainShell());
   }
 }
 

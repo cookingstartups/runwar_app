@@ -212,6 +212,10 @@ class DatabaseService {
         ts       TEXT NOT NULL
       )
     ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_run_scratch_user_ts
+        ON run_scratch(user_id, ts)
+    ''');
   }
 
   Future<void> _migrateToV6(Database db) async {
