@@ -23,9 +23,22 @@ import 'screens/auth/join_war_confirmation_screen.dart';
 // import 'screens/waitlist_gate_screen.dart'; // kept for named route fallback
 import 'screens/onboarding/onboarding_flow.dart';
 import 'screens/main_shell.dart';
+import 'screens/paywall_screen.dart';
+import 'screens/first_mission_briefing_screen.dart';
+import 'screens/first_attack_briefing_screen.dart';
 import 'providers/cities_provider.dart';
+import 'providers/mission_provider.dart';
+import 'services/trial_service.dart';
 
 final showcaseSeenProvider = FutureProvider<bool>((ref) => isShowcaseSeen());
+
+/// Runs the daily trial tick then returns current trial status.
+/// Re-evaluated on app foreground via _RouteGuard's WidgetsBindingObserver.
+final trialStatusProvider =
+    FutureProvider.family<TrialStatus, String>((ref, userId) async {
+  await TrialService.instance.processDailyTick(userId);
+  return TrialService.instance.getStatus(userId);
+});
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -86,26 +99,53 @@ class RunWarApp extends StatelessWidget {
   }
 }
 
-/// Route guard — watches [authProvider], [hasPhoneProvider], [joinedCitySlugsProvider],
-/// and [profileGateProvider] reactively.
-/// Re-evaluates on every auth/profile state change without requiring an app restart.
+/// Route guard — watches auth + profile state reactively.
 /// Gate order:
-///   user == null          → LoginScreen
+///   user == null          → LoginScreen / IntroScreen
 ///   no phone linked       → PhoneLinkScreen
 ///   no cities joined      → CitiesSelectionScreen
 ///   invited_at == null    → JoinWarConfirmationScreen (waitlisted)
 ///   username == ''        → OnboardingFlow
+///   trial expired         → PaywallScreen
 ///   otherwise             → MainShell
-class _RouteGuard extends ConsumerWidget {
+class _RouteGuard extends ConsumerStatefulWidget {
   const _RouteGuard();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_RouteGuard> createState() => _RouteGuardState();
+}
+
+class _RouteGuardState extends ConsumerState<_RouteGuard>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final userId =
+          ref.read(authProvider).user?['id'] as String?;
+      if (userId != null) {
+        ref.invalidate(trialStatusProvider(userId));
+        ref.invalidate(missionStatusProvider(userId));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
 
-    if (authState.isLoading) {
-      return const _GateLoading();
-    }
+    if (authState.isLoading) return const _GateLoading();
 
     if (authState.user == null) {
       final showcaseSeen = ref.watch(showcaseSeenProvider);
@@ -120,37 +160,52 @@ class _RouteGuard extends ConsumerWidget {
 
     // Gate 1: phone linked?
     final hasPhoneAsync = ref.watch(hasPhoneProvider(userId));
-    if (hasPhoneAsync.isLoading) {
-      return const _GateLoading();
-    }
-    final hasPhone = hasPhoneAsync.value ?? true;
-    if (!hasPhone) return const PhoneLinkScreen();
+    if (hasPhoneAsync.isLoading) return const _GateLoading();
+    if (!(hasPhoneAsync.value ?? true)) return const PhoneLinkScreen();
 
     // Gate 2: any cities joined?
     final joinedAsync = ref.watch(joinedCitySlugsProvider(userId));
-    if (joinedAsync.isLoading) {
-      return const _GateLoading();
-    }
-    final joined = joinedAsync.value ?? [];
-    if (joined.isEmpty) return const CitiesSelectionScreen();
+    if (joinedAsync.isLoading) return const _GateLoading();
+    if ((joinedAsync.value ?? []).isEmpty) return const CitiesSelectionScreen();
 
-    // Gate 3: profile + invited_at
+    // Gate 3: profile + invited_at + username
     final profileAsync = ref.watch(profileGateProvider(userId));
-    return profileAsync.when(
-      loading: () =>
-          const SplashScreen(showStatus: true, statusLabel: 'SYNCING TERRITORY'),
-      error: (e, _) =>
-          Scaffold(body: Center(child: Text('Error loading profile: $e'))),
-      data: (profile) {
-        if (profile == null || profile['invited_at'] == null) {
-          // Has joined cities but no access yet → referral waitlist
-          return const JoinWarConfirmationScreen();
-        }
-        final username = (profile['username'] as String?) ?? '';
-        if (username.isEmpty) return const OnboardingFlow();
-        return const MainShell();
-      },
-    );
+    if (profileAsync.isLoading) {
+      return const SplashScreen(
+          showStatus: true, statusLabel: 'SYNCING TERRITORY');
+    }
+    if (profileAsync.hasError) {
+      return Scaffold(
+          body: Center(
+              child: Text('Error loading profile: ${profileAsync.error}')));
+    }
+    final profile = profileAsync.value;
+    if (profile == null || profile['invited_at'] == null) {
+      return const JoinWarConfirmationScreen();
+    }
+    final username = (profile['username'] as String?) ?? '';
+    if (username.isEmpty) return const OnboardingFlow();
+
+    // Gate 5a: first-mission onboarding
+    final missionAsync = ref.watch(missionStatusProvider(userId));
+    if (missionAsync.isLoading) return const _GateLoading();
+    final mission = missionAsync.value;
+    if (mission != null && mission.needsMission1) {
+      return const FirstMissionBriefingScreen();
+    }
+    if (mission != null && mission.needsMission2) {
+      return const FirstAttackBriefingScreen(botZoneId: '');
+    }
+
+    // Gate 4: trial expired?
+    final trialAsync = ref.watch(trialStatusProvider(userId));
+    if (trialAsync.isLoading) return const _GateLoading();
+    final trial = trialAsync.value;
+    if (trial != null && trial.isExpired) {
+      return PaywallScreen(streak: trial.streak);
+    }
+
+    return const MainShell();
   }
 }
 

@@ -5,6 +5,7 @@ import '../../providers/onboarding_provider.dart';
 import '../../providers/profile_provider.dart';
 import '../../services/auth_service.dart';
 import '../../theme.dart';
+import '../../utils/username_validator.dart';
 
 // 12 predefined vivid palette colors for the BlockPicker (step 3).
 // Order matches the brief: orange, pink, teal, yellow, red, purple,
@@ -118,17 +119,14 @@ class _Step1UsernameState extends ConsumerState<_Step1Username> {
   }
 
   void _onContinue() {
-    final value = _ctrl.text.trim();
-    if (value.isEmpty) {
-      setState(() => _localError = 'Username cannot be empty');
-      return;
-    }
-    if (value.contains(' ')) {
-      setState(() => _localError = 'Username cannot contain spaces');
+    final value = _ctrl.text;
+    final error = validateUsername(value);
+    if (error != null) {
+      setState(() => _localError = error);
       return;
     }
     setState(() => _localError = null);
-    ref.read(onboardingProvider.notifier).setUsername(value);
+    ref.read(onboardingProvider.notifier).setUsername(value.trim());
   }
 
   @override

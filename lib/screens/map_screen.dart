@@ -18,6 +18,7 @@ import '../services/realtime_presence_service.dart';
 import '../services/superpower_service.dart';
 import '../services/supabase_service.dart';
 import '../services/territory_service.dart';
+import '../services/trial_service.dart';
 import '../services/database/models/zone.dart';
 import '../services/database/models/city_config.dart';
 import '../widgets/attack_sheet.dart';
@@ -25,12 +26,20 @@ import '../widgets/dispute_countdown_label.dart';
 import '../widgets/drop_marker.dart';
 import '../widgets/credits_chip.dart';
 import '../widgets/superpower_inventory_strip.dart';
+import '../widgets/mission_mode_overlay.dart';
+import '../widgets/first_zone_celebration_overlay.dart';
 // Phase 2 providers — written by @Backend-Developer (design.md §5.1).
 import '../providers/drops/active_drops_provider.dart';
 // Phase 2 repositories — written by @Backend-Developer.
 import '../providers/repositories.dart';
 import '../services/database/drops_repository.dart';
+import '../services/database_service.dart';
+import '../services/bot_spawner_service.dart';
+import '../models/mission_step.dart';
+import '../providers/mission_provider.dart';
 import '../theme.dart';
+import 'first_attack_briefing_screen.dart';
+import 'main_shell.dart';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 // City center and bounds are now loaded from cityConfigProvider (design.md §5).
@@ -52,7 +61,15 @@ const Color _kDisputedColor = Color(0xFFC8973A); // amber for disputed zones
 // ── MapScreen widget ─────────────────────────────────────────────────────────
 
 class MapScreen extends ConsumerStatefulWidget {
-  const MapScreen({super.key});
+  const MapScreen({super.key, this.missionStep, this.botZoneId});
+
+  /// When non-null, the map is in guided mission mode and composites
+  /// a [MissionModeOverlay] over the map body.
+  final MissionStep? missionStep;
+
+  /// Passed only for [MissionStep.mission2Attack] so the overlay can point
+  /// at the rival zone. Null for mission1Claim.
+  final String? botZoneId;
 
   @override
   ConsumerState<MapScreen> createState() => _MapScreenState();
@@ -211,9 +228,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           showError: false, city: city, userId: userId, fogCenters: fogCenters),
     );
 
+    // When in mission mode, composite MissionModeOverlay on top of the map.
+    final body = widget.missionStep != null
+        ? Stack(
+            children: [
+              mapBody,
+              MissionModeOverlay(missionStep: widget.missionStep!),
+            ],
+          )
+        : mapBody;
+
     return Scaffold(
       backgroundColor: kBg,
-      body: mapBody,
+      body: body,
       floatingActionButton: _buildFab(context, city),
     );
   }
@@ -281,6 +308,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         );
         return;
       }
+      // Start trial clock on first FAB tap (no-op if already started).
+      final fabUserId = ref.read(authProvider).user?['id'] as String?;
+      if (fabUserId != null) {
+        await TrialService.instance.initTrial(fabUserId);
+      }
       await notifier.start();
     } else if (s == RecorderState.recording) {
       final result = await notifier.stop();
@@ -313,7 +345,130 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         .confirmClaim(userId, city);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    // Mission 1: successful claim triggers celebration overlay + edge fn.
+    if (widget.missionStep == MissionStep.mission1Claim &&
+        (outcome.result == TerritoryResult.claimed ||
+            outcome.result == TerritoryResult.conquered)) {
+      await _completeMission1(context, userId, city);
+      return;
+    }
+
+    // Mission 2: conquest or dispute on a rival zone completes the attack.
+    if (widget.missionStep == MissionStep.mission2Attack &&
+        (outcome.result == TerritoryResult.conquered ||
+            outcome.result == TerritoryResult.disputed) &&
+        outcome.affectedZoneId != null) {
+      await _completeMission2(context, userId, outcome.affectedZoneId!);
+      return;
+    }
+
     _showResultSnack(context, outcome);
+  }
+
+  /// Calls `complete_first_mission`, updates local SQLite, shows the
+  /// celebration overlay, then navigates to FirstAttackBriefingScreen.
+  Future<void> _completeMission1(
+      BuildContext context, String userId, String city) async {
+    // 1. Server stamp + credits (fire-and-forget on network error — still shows overlay).
+    try {
+      final resp = await SupabaseService.instance.supabase.functions
+          .invoke('complete_first_mission', body: {});
+      final data = resp.data as Map<String, dynamic>?;
+      if (data != null) {
+        // Write stamp + streak to local SQLite so the gate skips on resume.
+        final missionAt = data['first_mission_completed_at'] as String?;
+        final streakAt = data['streak_started_at'] as String?;
+        try {
+          final db = DatabaseService.instance.db;
+          await db.update(
+            'profiles',
+            {
+              if (missionAt != null) 'first_mission_completed_at': missionAt,
+              if (streakAt != null) 'streak_started_at': streakAt,
+            },
+            where: 'id = ?',
+            whereArgs: [userId],
+          );
+        } catch (_) {}
+      }
+    } catch (e) {
+      debugPrint('[MapScreen] complete_first_mission failed: $e');
+    }
+
+    // 2. Invalidate providers so _RouteGuard reflects new state.
+    ref.invalidate(missionStatusProvider(userId));
+    ref.invalidate(profileGateProvider(userId));
+
+    if (!context.mounted) return;
+
+    // 3. Show celebration overlay. On dismiss, spawn bot + navigate to briefing.
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.transparent,
+      builder: (_) => FirstZoneCelebrationOverlay(
+        onContinue: () => Navigator.of(context).pop(),
+      ),
+    );
+
+    if (!context.mounted) return;
+
+    // 4. Spawn bot zone (server-idempotent; falls back to any existing rival).
+    String botZoneId = '';
+    try {
+      final pos = _currentPosition;
+      botZoneId = await BotSpawnerService.instance.checkOrSpawn(
+        userId: userId,
+        lat: pos?.latitude ?? 39.4699,
+        lng: pos?.longitude ?? -0.3763,
+        city: city.isEmpty ? 'Valencia' : city,
+      );
+    } catch (e) {
+      debugPrint('[MapScreen] BotSpawnerService failed: $e');
+    }
+
+    if (!context.mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => FirstAttackBriefingScreen(botZoneId: botZoneId),
+      ),
+    );
+  }
+
+  /// Calls `complete_first_attack`, updates local SQLite, then clears the
+  /// backstack and navigates to MainShell.
+  Future<void> _completeMission2(
+      BuildContext context, String userId, String zoneId) async {
+    try {
+      final resp = await SupabaseService.instance.supabase.functions
+          .invoke('complete_first_attack', body: {'zone_id': zoneId});
+      final data = resp.data as Map<String, dynamic>?;
+      if (data != null) {
+        final attackAt = data['first_attack_completed_at'] as String?;
+        if (attackAt != null) {
+          try {
+            final db = DatabaseService.instance.db;
+            await db.update(
+              'profiles',
+              {'first_attack_completed_at': attackAt},
+              where: 'id = ?',
+              whereArgs: [userId],
+            );
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      debugPrint('[MapScreen] complete_first_attack failed: $e');
+    }
+
+    ref.invalidate(missionStatusProvider(userId));
+
+    if (!context.mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const MainShell()),
+      (_) => false,
+    );
   }
 
   void _showResultSnack(BuildContext context, ClaimOutcome outcome) {
