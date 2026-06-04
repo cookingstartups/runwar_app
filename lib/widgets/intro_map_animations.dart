@@ -145,32 +145,38 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
 
-  // Single continuous route through two adjacent Ruzafa blocks (OSM-verified).
+  // Three adjacent Ruzafa blocks captured in order (OSM-verified, no backtrack).
   //
-  // Block 1 — Carrer de Buenos Aires / Carrer de Dénia / Carrer de Sueca:
-  //   [0] A  Sueca/Buenos Aires junction
-  //   [1] B  Buenos Aires NW end (Cuba approach)
-  //   [2] C  Dénia/Cuba junction
-  //   [3] D  Sueca/Dénia SE junction  ← shared corner
-  //   [4] A  loop closes → block 1 fill snaps on  (_kBlock1CloseIdx = 4)
+  // Block 1 — Buenos Aires / Cuba diagonal / Dénia / Sueca (NW block):
+  //   [0] A  Sueca×Buenos Aires NE corner
+  //   [1] B  Buenos Aires SW end
+  //   [2] C  Cuba/Dénia W junction
+  //   [3] D  Sueca×Dénia junction
+  //   [4] A  CLOSE 1  (_kBlock1CloseIdx = 4)
   //
-  // Block 2 — Carrer de Sueca / Gran Via de les Germanies / Carrer de Dénia:
-  //   [5] D  retrace to shared corner
-  //   [6] E  end of Carrer de Sueca (Sueca/Gran Via NW corner)
-  //   [7] F  Gran Via/Castelló NE junction
-  //   [8] G  Cadis/Dénia SE junction
-  //   [9] D  loop closes → block 2 fill snaps on  (_kBlock2CloseIdx = 9)
+  // Block 2 — Sueca E / Cuba SE / Puerto Rico / Buenos Aires N (SE block):
+  //   [5] E  Sueca E new segment (SE of A, new territory)
+  //   [6] F  Cuba SE diagonal end
+  //   [7] G  Puerto Rico SW end
+  //   [8] B  CLOSE 2 — northward on Buenos Aires  (_kBlock2CloseIdx = 8)
+  //
+  // Block 3 — Buenos Aires S / Puerto Rico E / back to G (S block):
+  //   [9]  H  Buenos Aires SW far end (south of B)
+  //   [10] I  Puerto Rico W approach
+  //   [11] G  CLOSE 3  (_kBlock3CloseIdx = 11)
   static const _kRoute = [
-    LatLng(39.462077, -0.375522), // 0: A — Sueca/Buenos Aires
-    LatLng(39.461576, -0.376751), // 1: B — Buenos Aires NW
-    LatLng(39.462155, -0.377171), // 2: C — Dénia/Cuba junction
-    LatLng(39.462671, -0.375937), // 3: D — Sueca/Dénia (shared)
-    LatLng(39.462077, -0.375522), // 4: A — BLOCK 1 CLOSES
-    LatLng(39.462671, -0.375937), // 5: D — retrace to shared corner
-    LatLng(39.463595, -0.376553), // 6: E — Sueca/Gran Via NW corner
-    LatLng(39.464001, -0.376109), // 7: F — Gran Via NE junction
-    LatLng(39.463243, -0.374594), // 8: G — Cadis/Dénia SE
-    LatLng(39.462671, -0.375937), // 9: D — BLOCK 2 CLOSES
+    LatLng(39.462077, -0.375522), //  [0] A  — Sueca×Buenos Aires
+    LatLng(39.461576, -0.376751), //  [1] B  — Buenos Aires SW
+    LatLng(39.462155, -0.377171), //  [2] C  — Cuba/Dénia W junction
+    LatLng(39.462671, -0.375937), //  [3] D  — Sueca×Dénia
+    LatLng(39.462077, -0.375522), //  [4] A  — BLOCK 1 CLOSES
+    LatLng(39.461568, -0.375167), //  [5] E  — Sueca E (new)
+    LatLng(39.460440, -0.375966), //  [6] F  — Cuba SE diagonal
+    LatLng(39.461050, -0.376394), //  [7] G  — Puerto Rico SW
+    LatLng(39.461576, -0.376751), //  [8] B  — BLOCK 2 CLOSES
+    LatLng(39.460846, -0.378471), //  [9] H  — Buenos Aires SW far end
+    LatLng(39.460335, -0.378112), // [10] I  — Puerto Rico W approach
+    LatLng(39.461050, -0.376394), // [11] G  — BLOCK 3 CLOSES
   ];
 
   // Corner polygons for fill rendering.
@@ -182,22 +188,30 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   ];
 
   static const _kBlock2 = [
-    LatLng(39.462671, -0.375937), // D — SW
-    LatLng(39.463595, -0.376553), // E — NW
-    LatLng(39.464001, -0.376109), // F — NE
-    LatLng(39.463243, -0.374594), // G — SE
+    LatLng(39.461568, -0.375167), // E
+    LatLng(39.460440, -0.375966), // F
+    LatLng(39.461050, -0.376394), // G
+    LatLng(39.461576, -0.376751), // B
+  ];
+
+  static const _kBlock3 = [
+    LatLng(39.461576, -0.376751), // B
+    LatLng(39.460846, -0.378471), // H
+    LatLng(39.460335, -0.378112), // I
+    LatLng(39.461050, -0.376394), // G
   ];
 
   List<Offset> _route = [];
   List<Offset> _block1 = [];
   List<Offset> _block2 = [];
+  List<Offset> _block3 = [];
   bool _mapReady = false;
 
   @override
   void initState() {
     super.initState();
     _ctrl =
-        AnimationController(vsync: this, duration: const Duration(seconds: 10))
+        AnimationController(vsync: this, duration: const Duration(seconds: 12))
           ..repeat();
   }
 
@@ -211,6 +225,7 @@ class _IntroPulseMapState extends State<IntroPulseMap>
       _route = _kRoute.map(toScreen).toList();
       _block1 = _kBlock1.map(toScreen).toList();
       _block2 = _kBlock2.map(toScreen).toList();
+      _block3 = _kBlock3.map(toScreen).toList();
       _mapReady = true;
     });
   }
@@ -228,7 +243,7 @@ class _IntroPulseMapState extends State<IntroPulseMap>
           _buildIntroMap(
             context: context,
             mapController: _mapCtrl,
-            center: const LatLng(39.4625, -0.3765),
+            center: const LatLng(39.4615, -0.3768),
             zoom: 16.0,
             onReady: _updatePoints,
           ),
@@ -242,6 +257,7 @@ class _IntroPulseMapState extends State<IntroPulseMap>
                   route: _route,
                   block1: _block1,
                   block2: _block2,
+                  block3: _block3,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -257,6 +273,7 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
   final List<Offset> route;
   final List<Offset> block1;
   final List<Offset> block2;
+  final List<Offset> block3;
 
   _IntroPulseMapPainter({
     required this.t,
@@ -264,47 +281,46 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
     required this.route,
     required this.block1,
     required this.block2,
+    required this.block3,
   });
 
-  // Segment indices where each block loop closes (matches _kBlock1CloseIdx /
-  // _kBlock2CloseIdx in the state class — kept as local constants here so the
-  // painter has no dependency on the state).
+  // Segment indices where each block loop closes.
   static const int _block1CloseIdx = 4;
-  static const int _block2CloseIdx = 9; // also == route.length - 1
+  static const int _block2CloseIdx = 8;
+  static const int _block3CloseIdx = 11; // also == route.length - 1
 
-  // Fill opacity helpers driven by `traveled` (segments traversed, 0–9).
-  // Ramp window of 0.15 segments gives a snappy-but-not-jarring flash.
-  double _fill1Opacity(double traveled) {
-    final frac = ((traveled - _block1CloseIdx) / 0.15).clamp(0.0, 1.0);
-    // Fade out over last 7 % of animation (t = 0.93 → 1.0).
-    final hold = (t < 0.93 ? 1.0 : (1.0 - (t - 0.93) / 0.07)).clamp(0.0, 1.0);
-    return frac * hold * 0.28;
-  }
-
-  double _fill2Opacity(double traveled) {
-    final frac = ((traveled - _block2CloseIdx) / 0.15).clamp(0.0, 1.0);
-    final hold = (t < 0.93 ? 1.0 : (1.0 - (t - 0.93) / 0.07)).clamp(0.0, 1.0);
-    return frac * hold * 0.28;
+  // Fill opacity driven by how far past each close index the runner has traveled.
+  // Ramp window of 0.5 segments; fades out over t=0.93–1.0.
+  double _fillOpacity(double traveled, double closeIdx, double t) {
+    final frac = ((traveled - closeIdx) / 0.5).clamp(0.0, 1.0);
+    final fade =
+        t > 0.93 ? (1.0 - (t - 0.93) / 0.07).clamp(0.0, 1.0) : 1.0;
+    return frac * fade * 0.28;
   }
 
   @override
   void paint(Canvas canvas, Size size) {
     if (route.isEmpty) return;
 
-    // Single continuous progress — runner traces the full route over t=0–0.92.
-    final segs = route.length - 1; // 9 segments
-    final traveled = (t / 0.92).clamp(0.0, 1.0) * segs;
+    // Runner completes all 3 blocks by t=0.90, fills hold to t=0.93, then fade.
+    final segs = route.length - 1; // 11 segments
+    final routeProgress = (t / 0.90).clamp(0.0, 1.0);
+    final traveled = routeProgress * segs;
 
     // Block fills — appear as the runner closes each loop.
-    drawFill(canvas, block1, _fill1Opacity(traveled));
-    drawFill(canvas, block2, _fill2Opacity(traveled));
+    final fill1Opacity = _fillOpacity(traveled, _block1CloseIdx.toDouble(), t);
+    final fill2Opacity = _fillOpacity(traveled, _block2CloseIdx.toDouble(), t);
+    final fill3Opacity = _fillOpacity(traveled, _block3CloseIdx.toDouble(), t);
+    drawFill(canvas, block1, fill1Opacity);
+    drawFill(canvas, block2, fill2Opacity);
+    drawFill(canvas, block3, fill3Opacity);
 
-    // Single trace covering both blocks.
-    drawTrace(canvas, route, traveled / segs);
+    // Single trace covering all 3 blocks.
+    drawTrace(canvas, route, routeProgress);
 
     // Runner dot — visible while tracing (before fade-out window).
     if (t < 0.93) {
-      drawRunner(canvas, route, traveled / segs);
+      drawRunner(canvas, route, routeProgress);
     }
 
     // Ping burst when block 1 closes.
@@ -318,6 +334,12 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
     if (ping2T > 0 && ping2T < 0.8) {
       drawPings(canvas, block2, (ping2T / 0.8).clamp(0.0, 1.0));
     }
+
+    // Ping burst when block 3 closes.
+    final ping3T = traveled - _block3CloseIdx;
+    if (ping3T > 0 && ping3T < 0.8) {
+      drawPings(canvas, block3, (ping3T / 0.8).clamp(0.0, 1.0));
+    }
   }
 
   @override
@@ -325,7 +347,8 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
       old.t != t ||
       old.route != route ||
       old.block1 != block1 ||
-      old.block2 != block2;
+      old.block2 != block2 ||
+      old.block3 != block3;
 }
 
 // ---------------------------------------------------------------------------
