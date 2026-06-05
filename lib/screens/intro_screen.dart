@@ -66,7 +66,7 @@ const _slides = [
     headline: 'SOMEONE OWNS\nYOUR STREET.',
     body: 'Every block you sweat on belongs to the last runner who looped it. Their name. Your pavement. Take it back — or keep paying rent in shoe rubber.',
     anim: _Anim.pulse,
-    layout: _Layout.textTopVisualBottom,
+    layout: _Layout.visualTopTextBottom,
   ),
   // 2 — Comeback
   _Slide(
