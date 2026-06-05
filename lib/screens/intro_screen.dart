@@ -22,7 +22,7 @@ Future<bool> isShowcaseSeen() async {
 // ---------------------------------------------------------------------------
 // Animation type per slide
 // ---------------------------------------------------------------------------
-enum _Anim { pulse, hexCapture, rivals, ctfDrop, none }
+enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, physicalEvents, none }
 
 // ---------------------------------------------------------------------------
 // Layout modes
@@ -83,7 +83,7 @@ const _slides = [
     tagColor: kAccent,
     headline: 'RUN IT. OWN IT.\nFORTIFY IT.',
     body: 'Lap your zone again and it levels up — all the way to level 15. The higher the level, the more it costs to take it back. The streets remember who trained hardest.',
-    anim: _Anim.pulse,
+    anim: _Anim.fortify,
     layout: _Layout.visualTopTextBottom,
   ),
   // 4 — Superpowers
@@ -92,7 +92,7 @@ const _slides = [
     tagColor: kSea,
     headline: 'EARNED IN STREETS.\nDEPLOYED FROM HOME.',
     body: 'Superpowers can\'t be bought. You earn them by running — then unleash them anywhere in the city without leaving your couch. Pay with kilometres, not cash.',
-    anim: _Anim.pulse,
+    anim: _Anim.defense,
     layout: _Layout.textTopVisualBottom,
   ),
   // 5 — Loot drops
@@ -102,15 +102,15 @@ const _slides = [
     headline: 'FIRST FEET\nTAKE IT ALL.',
     body: 'GPS drops hit the map without warning. Cash, crates, killer gear — pinned to a spot somewhere in your city. One winner: whoever\'s lungs get there first.',
     anim: _Anim.ctfDrop,
-    layout: _Layout.textTopVisualBottom,
+    layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
   ),
   // 6 — Special events / CTF
   _Slide(
-    tag: 'CAPTURE THE FLAG',
+    tag: 'SPECIAL EVENT',
     tagColor: kAccent,
     headline: 'A FLAG DROPS.\nONE RUNNER WINS.',
-    body: 'Anywhere. Anytime. A flag lights up the map — first runner to capture it takes the prize. Hesitate and someone else is already sprinting. Win it. Wear it.',
+    body: 'A daily flag drops somewhere in the city. First feet claim the territory — and the glory.',
     anim: _Anim.rivals,
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
@@ -135,7 +135,16 @@ const _slides = [
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
   ),
-  // 9 — Invite only
+  // 9 — Real-world events
+  _Slide(
+    tag: 'REAL EVENTS',
+    tagColor: kAccent2,
+    headline: 'THE GAME\nGETS REAL.',
+    body: 'Real-world races coming to your city — limited seats, livestreamed, glory on the line.',
+    anim: _Anim.physicalEvents,
+    layout: _Layout.visualTopTextBottom,
+  ),
+  // 10 — Invite only
   _Slide(
     tag: 'INVITE ONLY',
     tagColor: kAccent,
@@ -150,11 +159,14 @@ const _slides = [
 // Shared top-level helper — resolves _Anim enum to its widget
 // ---------------------------------------------------------------------------
 Widget _buildAnimWidget(_Anim anim, Color accent) => switch (anim) {
-      _Anim.pulse      => IntroPulseMap(accent: accent),
-      _Anim.hexCapture => IntroCaptureMap(accent: accent),
-      _Anim.rivals     => IntroRivalsMap(accent: accent),
-      _Anim.ctfDrop    => IntroFlagDropMap(accent: accent),
-      _Anim.none       => const SizedBox.shrink(),
+      _Anim.pulse          => IntroPulseMap(accent: accent),
+      _Anim.hexCapture     => IntroCaptureMap(accent: accent),
+      _Anim.rivals         => IntroRivalsMap(accent: accent),
+      _Anim.ctfDrop        => IntroFlagDropMap(accent: accent),
+      _Anim.fortify        => IntroFortifyMap(accent: accent),
+      _Anim.defense        => IntroDefenseMap(accent: accent),
+      _Anim.physicalEvents => IntroPhysicalEventsMap(accent: accent),
+      _Anim.none           => const SizedBox.shrink(),
     };
 
 // ---------------------------------------------------------------------------
