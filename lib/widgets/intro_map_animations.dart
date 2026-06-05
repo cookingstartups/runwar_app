@@ -1,8 +1,12 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import '../theme.dart';
+
+String _formatSqm(int sqm) =>
+    sqm >= 1000 ? '${(sqm / 1000).toStringAsFixed(1)}k' : sqm.toString();
 
 TileLayer _cartoDbDarkNoLabels(BuildContext context) => TileLayer(
       urlTemplate:
@@ -294,22 +298,16 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   List<Offset> _block3 = [];
   bool _mapReady = false;
 
+  static const _kPanStartLat = 39.4599;
+  static const _kPanEndLat = 39.4584; // 150 m south (content drifts up)
   static const _kPanStartLng = -0.3756;
-  static const _kPanEndLng = -0.37734; // 150 m west over full animation
+  static const _kPanEndLng = -0.37734; // 150 m west (content drifts right)
 
   @override
   void initState() {
     super.initState();
     _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 12));
-    _ctrl.addListener(_panMap);
     _startLoop();
-  }
-
-  void _panMap() {
-    if (!_mapReady) return;
-    final lng = _kPanStartLng + (_kPanEndLng - _kPanStartLng) * _ctrl.value;
-    _mapCtrl.move(LatLng(39.4599, lng), 16.0);
-    _updatePoints();
   }
 
   void _startLoop() {
@@ -358,18 +356,85 @@ class _IntroPulseMapState extends State<IntroPulseMap>
           if (_mapReady)
             AnimatedBuilder(
               animation: _ctrl,
-              builder: (_, __) => CustomPaint(
-                painter: _IntroPulseMapPainter(
-                  t: _ctrl.value,
-                  accent: widget.accent,
-                  route: _route,
-                  block1: _block1,
-                  block2: _block2,
-                  block3: _block3,
-                ),
-                child: const SizedBox.expand(),
-              ),
+              builder: (_, __) {
+                final v = _ctrl.value;
+                final lat = _kPanStartLat + (_kPanEndLat - _kPanStartLat) * v;
+                final lng = _kPanStartLng + (_kPanEndLng - _kPanStartLng) * v;
+                _mapCtrl.move(LatLng(lat, lng), 16.0);
+                final cam = _mapCtrl.camera;
+                Offset s(LatLng ll) {
+                  final p = cam.latLngToScreenPoint(ll);
+                  return Offset(p.x.toDouble(), p.y.toDouble());
+                }
+                _route = _kRoute.map(s).toList();
+                _block1 = IntroZones.kS1Block1.map(s).toList();
+                _block2 = IntroZones.kS1Block2.map(s).toList();
+                _block3 = IntroZones.kS1Block3.map(s).toList();
+                return CustomPaint(
+                  painter: _IntroPulseMapPainter(
+                    t: _ctrl.value,
+                    accent: widget.accent,
+                    route: _route,
+                    block1: _block1,
+                    block2: _block2,
+                    block3: _block3,
+                  ),
+                  child: const SizedBox.expand(),
+                );
+              },
             ),
+          Positioned(
+            top: 64,
+            left: 16,
+            child: AnimatedBuilder(
+              animation: _ctrl,
+              builder: (_, __) {
+                const windows = [
+                  (t0: 0.2982, area: 8951),
+                  (t0: 0.5964, area: 12453),
+                  (t0: 0.820, area: 10997),
+                ];
+                const windowSize = 0.12;
+                final t = _ctrl.value;
+                double opacity = 0.0;
+                int area = 0;
+                for (final w in windows) {
+                  final dt = t - w.t0;
+                  if (dt >= 0 && dt < windowSize) {
+                    final frac = dt / windowSize;
+                    opacity = frac < 0.15
+                        ? frac / 0.15
+                        : frac > 0.85
+                            ? (1.0 - frac) / 0.15
+                            : 1.0;
+                    area = w.area;
+                    break;
+                  }
+                }
+                if (opacity <= 0) return const SizedBox.shrink();
+                return Opacity(
+                  opacity: opacity.clamp(0.0, 1.0),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      'WARLORD  +${_formatSqm(area)} sqm',
+                      style: GoogleFonts.robotoMono(
+                        fontSize: 11,
+                        color: kAccent,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
         ],
       );
 }
