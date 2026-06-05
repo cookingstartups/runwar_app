@@ -63,7 +63,7 @@ const _slides = [
   _Slide(
     tag: 'YOUR TURF',
     tagColor: kAccent,
-    headline: 'SOMEONE OWNS\nYOUR STREET.',
+    headline: 'SOMEONE CAPTURED\nYOUR STREET.',
     body: 'Every block you sweat on belongs to the last runner who looped it. Their name. Your pavement. Take it back — or keep paying rent in shoe rubber.',
     anim: _Anim.pulse,
     layout: _Layout.visualTopTextBottom,
