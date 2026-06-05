@@ -294,11 +294,22 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   List<Offset> _block3 = [];
   bool _mapReady = false;
 
+  static const _kPanStartLng = -0.3756;
+  static const _kPanEndLng = -0.37734; // 150 m west over full animation
+
   @override
   void initState() {
     super.initState();
     _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 12));
+    _ctrl.addListener(_panMap);
     _startLoop();
+  }
+
+  void _panMap() {
+    if (!_mapReady) return;
+    final lng = _kPanStartLng + (_kPanEndLng - _kPanStartLng) * _ctrl.value;
+    _mapCtrl.move(LatLng(39.4599, lng), 16.0);
+    _updatePoints();
   }
 
   void _startLoop() {
@@ -417,13 +428,40 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
     final routeProgress = (t / 0.82).clamp(0.0, 1.0);
     final traveled = routeProgress * segs;
 
-    // Block fills — appear as the runner closes each loop.
+    // Block fills — appear as the runner closes each loop, merging into one
+    // unified polygon so captured territory reads as a single contiguous shape.
     final fill1Opacity = _fillOpacity(traveled, _block1CloseIdx, t);
     final fill2Opacity = _fillOpacity(traveled, _block2CloseIdx, t);
     final fill3Opacity = _block3FillOpacity(t);
-    drawFill(canvas, block1, fill1Opacity);
-    drawFill(canvas, block2, fill2Opacity);
-    drawFill(canvas, block3, fill3Opacity);
+
+    Path makePoly(List<Offset> pts) {
+      if (pts.isEmpty) return Path();
+      final p = Path()..moveTo(pts[0].dx, pts[0].dy);
+      for (int i = 1; i < pts.length; i++) {
+        p.lineTo(pts[i].dx, pts[i].dy);
+      }
+      return p..close();
+    }
+
+    var unified = fill1Opacity > 0 ? makePoly(block1) : Path();
+    if (fill2Opacity > 0) {
+      unified = Path.combine(PathOperation.union, unified, makePoly(block2));
+    }
+    if (fill3Opacity > 0) {
+      unified = Path.combine(PathOperation.union, unified, makePoly(block3));
+    }
+
+    final activeOpacity = [fill1Opacity, fill2Opacity, fill3Opacity]
+        .where((o) => o > 0)
+        .fold(0.0, math.max);
+    if (activeOpacity > 0) {
+      canvas.drawPath(
+        unified,
+        Paint()
+          ..color = accent.withValues(alpha: activeOpacity)
+          ..style = PaintingStyle.fill,
+      );
+    }
 
     // Single trace covering all 3 blocks.
     drawTrace(canvas, route, routeProgress);
@@ -512,42 +550,52 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
 
   // Attacker route — blue rival (kSea) follows real Ruzafa streets.
   //
-  //   pt0–pt4 — straight approach up Carrer de Cuba heading NW (unchanged)
-  //   pt4     — CORNER: TURN RIGHT onto cross-street heading NE
-  //   pt5–pt6 — 2 city blocks NE along Carrer de Sueca / cross-street
-  //   pt6     — TURN RIGHT heading SE (south-east, 1 block)
-  //   pt7     — TURN RIGHT heading SW back toward Cuba diagonal
-  //   pt8     — LASSO CLOSES: crosses own Cuba approach path
-  //   pt9     — continues a few metres past close → fades out
+  // Approach along Carrer de Buenos Aires heading north (lng ≈ −0.377x):
+  //   pt0    — off-screen south
+  //   pt1–pt2 — Buenos Aires northbound
+  //   pt3    — TURN RIGHT (east) at cross-street junction adjacent to kS1Block2
+  //
+  // East traverse through kS1Block2 interior (2 blocks):
+  //   pt4    — inside kS1Block2 heading east (between G and A/E corridor)
+  //   pt5    — TURN RIGHT (south) at NE corner just east of E vertex
+  //
+  // South then west return to close:
+  //   pt6    — TURN RIGHT (west) at SE corner
+  //   pt7    — heading west; seg[6→7] crosses seg[1→2] → LASSO CLOSES
+  //   pt8    — a few metres past close → FADE
+  //
+  // Geometric close: seg[6] (pt6→pt7) intersects seg[1] (pt1→pt2) at (39.4602,−0.3771).
   static const _kAttackerRoute = [
-    LatLng(39.4556, -0.3732), //  0: off-screen south approach
-    LatLng(39.4577, -0.3740), //  1: Carrer de Cuba south
-    LatLng(39.4586, -0.3747), //  2: Cuba mid
-    LatLng(39.4598, -0.3755), //  3: Cuba NW
-    LatLng(39.4604, -0.3760), //  4: Cuba — CORNER: turn right (NE)
-    LatLng(39.4611, -0.3754), //  5: 1 block NE (Sueca cross-street)
-    LatLng(39.4618, -0.3748), //  6: 2 blocks NE — overlapping kS1Block2 east edge
-    LatLng(39.4612, -0.3741), //  7: TURN RIGHT: 1 block SE
-    LatLng(39.4605, -0.3748), //  8: TURN RIGHT: heading SW back toward Cuba
-    LatLng(39.4602, -0.3757), //  9: LASSO CLOSES (crosses own Cuba approach path)
-    LatLng(39.4601, -0.3764), // 10: continues past close → FADE
+    LatLng(39.4588, -0.3774), // 0: off-screen south
+    LatLng(39.4596, -0.3772), // 1: Buenos Aires south
+    LatLng(39.4603, -0.3771), // 2: Buenos Aires north
+    LatLng(39.4613, -0.3770), // 3: TURN RIGHT east — NW corner of lasso
+    LatLng(39.4613, -0.3761), // 4: inside kS1Block2, heading east
+    LatLng(39.4615, -0.3749), // 5: TURN RIGHT south — NE corner
+    LatLng(39.4604, -0.3749), // 6: TURN RIGHT west — SE corner
+    LatLng(39.4602, -0.3773), // 7: heading west → LASSO CLOSES (crosses seg[1])
+    LatLng(39.4601, -0.3776), // 8: past close → FADE
   ];
 
-  // The polygon enclosed by the lasso (pts 4–9).
+  // Lasso polygon — corners of the enclosed loop (includes pt4 so the north edge
+  // follows the real cross-street through kS1Block2, not a straight NW→NE cut).
   static const _kAttackerLasso = [
-    LatLng(39.4604, -0.3760), // 4: SW corner (Cuba turn)
-    LatLng(39.4618, -0.3748), // 6: NE corner
-    LatLng(39.4612, -0.3741), // 7: SE corner
-    LatLng(39.4605, -0.3748), // 8: S
+    LatLng(39.4613, -0.3770), // pt3: NW corner
+    LatLng(39.4613, -0.3761), // pt4: north edge (inside kS1Block2)
+    LatLng(39.4615, -0.3749), // pt5: NE corner
+    LatLng(39.4604, -0.3749), // pt6: SE corner
+    LatLng(39.4602, -0.3771), // close point where seg[6] crosses seg[1]
   ];
 
-  // Disputed area — overlap of attacker lasso with kS1Block2 (A/E vertices).
+  // Disputed area — Sutherland-Hodgman intersection of _kAttackerLasso ∩ kS1Block2.
+  // kS1Block2 vertices F and G fall inside the lasso; the boundary crossings are:
+  //   E→F ∩ lasso-top-edge  at (39.461468, −0.375238)
+  //   G→B ∩ lasso-top-edge  at (39.461366, −0.376609)
   static const _kDisputedArea = [
-    LatLng(39.4618, -0.3752), // near E vertex of kS1Block2
-    LatLng(39.4621, -0.3755), // near A vertex
-    LatLng(39.4615, -0.3758), // SE edge
-    LatLng(39.4612, -0.3756), // S
-    LatLng(39.4611, -0.3752), // SE of E
+    LatLng(39.461468, -0.375238), // E→F ∩ lasso top
+    LatLng(39.460440, -0.375966), // F vertex
+    LatLng(39.461050, -0.376394), // G vertex
+    LatLng(39.461366, -0.376609), // G→B ∩ lasso top
   ];
 
   List<List<Offset>> _inheritedPts = [];
@@ -648,21 +696,24 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
     required this.disputedArea,
   });
 
-  // t=0.00–0.60: attacker runs; lasso closes at t=0.60
-  // t=0.60: disputed area snaps on (amber fill + dashed border)
-  // t=0.62–0.75: "DISPUTED" label visible
-  // t=0.75–0.85: ownership changes → disputed area lerps orange→blue
-  // t=0.85–0.92: "CLAIMED" label flashes in kSea
-  // t=0.88–1.00: global fade + orange territory fades in disputed area
-  static const double _lassoCloseT = 0.60;
+  // Timeline (route has 8 segments; close is at traveled == _kLassoCloseSegIdx == 6):
+  //   traveled 0→6   : attacker runs; lasso closes when traveled reaches 6
+  //   traveled 6+    : disputed fill snaps on (amber + dashed border)
+  //   t 0.00–0.75    : route plays; close happens at t ≈ 0.525 (6/8 of 0.70)
+  //   t 0.75–0.85    : ownership changes → amber lerps to blue
+  //   t 0.85–0.92    : "CLAIMED" label in kSea
+  //   t 0.88–1.00    : global fade
 
-  double _disputedOpacity(double t) {
-    if (t < _lassoCloseT) return 0.0;
-    if (t < _lassoCloseT + 0.03) {
-      return ((t - _lassoCloseT) / 0.03) * 0.35;
-    }
-    if (t < 0.88) return 0.35;
-    return ((1.0 - (t - 0.88) / 0.12) * 0.35).clamp(0.0, 0.35);
+  // Route finishes drawing by t=0.70; remaining t budget used for post-close effects.
+  static const double _kRouteCompleteT = 0.70;
+
+  // Segment index in _kAttackerRoute where the path geometrically crosses itself.
+  static const int _kLassoCloseSegIdx = 6;
+
+  double _disputedOpacity(double traveled) {
+    if (traveled < _kLassoCloseSegIdx) return 0.0;
+    final ramp = ((traveled - _kLassoCloseSegIdx) / 0.3).clamp(0.0, 1.0);
+    return ramp * 0.35;
   }
 
   double _globalFade(double t) {
@@ -713,6 +764,10 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
   void paint(Canvas canvas, Size size) {
     if (attackerRoute.isEmpty) return;
 
+    final segs = attackerRoute.length - 1; // 8 segments for 9-point route
+    final routeProgress = (t / _kRouteCompleteT).clamp(0.0, 1.0);
+    final traveled = routeProgress * segs;
+    final lassoIsClosed = traveled >= _kLassoCloseSegIdx;
     final fade = _globalFade(t);
 
     // 0. Inherited blocks from slide 1 — pre-filled, no animation.
@@ -722,39 +777,33 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
     drawFillColor(canvas, ownedBlock1, kAccent, 0.22 * fade);
     drawFillColor(canvas, ownedBlock2, kAccent, 0.22 * fade);
 
-    // 2. Attacker (blue) trail: runner traces route, then continues past close.
-    //   t < _lassoCloseT        : runner moving along route
-    //   t [close, close+0.08]   : runner continues past close, turns, fades
-    //   t > close+0.08          : lasso outline only
-    final routeProgress = (t / _lassoCloseT).clamp(0.0, 1.0);
-    if (t < _lassoCloseT) {
+    // 2. Attacker trail: runner traces route until close; afterwards full trace stays.
+    if (!lassoIsClosed) {
       drawTraceColor(canvas, attackerRoute, routeProgress, kSea);
-      if (attackerRoute.length >= 2) {
-        final segs = attackerRoute.length - 1;
-        final totalLen = routeProgress * segs;
-        final segIdx = totalLen.floor().clamp(0, segs - 1);
-        final segFrac = (totalLen - segIdx).clamp(0.0, 1.0);
-        final pos = Offset.lerp(
-          attackerRoute[segIdx],
-          attackerRoute[(segIdx + 1).clamp(0, segs)],
-          segFrac,
-        )!;
-        canvas.drawCircle(
-            pos,
-            12,
-            Paint()
-              ..color = kSea.withValues(alpha: 0.25)
-              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
-        canvas.drawCircle(pos, 4.5, Paint()..color = kSea);
-        canvas.drawCircle(
-            pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.8));
-      }
+      // Runner dot moving along the route.
+      final segIdx = traveled.floor().clamp(0, segs - 1);
+      final segFrac = (traveled - segIdx).clamp(0.0, 1.0);
+      final pos = Offset.lerp(
+        attackerRoute[segIdx],
+        attackerRoute[(segIdx + 1).clamp(0, segs)],
+        segFrac,
+      )!;
+      canvas.drawCircle(
+          pos,
+          12,
+          Paint()
+            ..color = kSea.withValues(alpha: 0.25)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+      canvas.drawCircle(pos, 4.5, Paint()..color = kSea);
+      canvas.drawCircle(
+          pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.8));
     } else {
       // Lasso outline stays visible.
       drawTraceColor(canvas, attackerRoute, 1.0, kSea.withValues(alpha: fade));
-      // Runner continues past close, fades over 0.08 of t.
-      if (t < _lassoCloseT + 0.08 && attackerRoute.length >= 2) {
-        final contT = ((t - _lassoCloseT) / 0.08).clamp(0.0, 1.0);
+      // Runner continues past the close point, fades over 0.08 of t.
+      final closeT = (_kLassoCloseSegIdx / segs) * _kRouteCompleteT;
+      if (t < closeT + 0.08 && attackerRoute.length >= 2) {
+        final contT = ((t - closeT) / 0.08).clamp(0.0, 1.0);
         final dir = attackerRoute.last - attackerRoute[attackerRoute.length - 2];
         final dirLen = dir.distance;
         if (dirLen > 0.01) {
@@ -774,25 +823,30 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
               pos,
               1.8,
               Paint()
-                ..color =
-                    Colors.white.withValues(alpha: 0.8 * runnerFade));
+                ..color = Colors.white.withValues(alpha: 0.8 * runnerFade));
         }
       }
     }
 
-    // 3. Disputed area fill — snaps on at t=0.60, lerps amber→blue at t=0.75–0.85.
-    final dispOp = _disputedOpacity(t);
+    // 3. Disputed fill — ramps on as soon as traveled passes close index;
+    //    lerps amber→blue at t=0.75–0.85; fades with global fade.
+    final dispOp = _disputedOpacity(traveled) * fade;
     final dispColor = _disputedFillColor(t);
     drawFillColor(canvas, disputedArea, dispColor, dispOp);
 
-    // 3b. Dashed border on disputed area — amber border until ownership changes,
-    //     then turns blue after t=0.75.
-    if (t >= _lassoCloseT && disputedArea.isNotEmpty) {
+    // 3b. Dashed border on disputed area — amber until ownership changes, then blue.
+    if (lassoIsClosed && disputedArea.isNotEmpty) {
       final borderColor = t < 0.75 ? kAccent2 : kSea;
       _drawDashedPolygon(canvas, disputedArea, borderColor, dispOp.clamp(0.0, 1.0));
     }
 
-    // 4. Compute centroid of disputed area (used for labels).
+    // Ping burst when lasso closes — same traveled-based pattern as slide 1.
+    final pingT = traveled - _kLassoCloseSegIdx;
+    if (pingT > 0 && pingT < 1.5 && disputedArea.isNotEmpty) {
+      drawPings(canvas, disputedArea, (pingT / 1.5).clamp(0.0, 1.0));
+    }
+
+    // 4. Centroid of disputed area — used for labels.
     Offset disputedCentroid = Offset.zero;
     if (disputedArea.isNotEmpty) {
       double sumX = 0, sumY = 0;
