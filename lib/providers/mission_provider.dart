@@ -25,28 +25,21 @@ class MissionStatus {
       (firstMissionCompletedAt == null && zoneCount > 0);
 }
 
-/// Reads mission completion state from local SQLite only — no remote round-trip.
+/// Reads mission completion state from Supabase — no local round-trip.
 /// Fast enough to be used as a synchronous gate in _RouteGuard.
 final missionStatusProvider =
     FutureProvider.family<MissionStatus, String>((ref, userId) async {
   try {
-    final db = DatabaseService.instance.db;
+    final ds = DatabaseService.instance;
 
-    final profileRows = await db.query(
-      'profiles',
-      columns: ['first_mission_completed_at', 'first_attack_completed_at'],
-      where: 'id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
+    final profile = await ds.getProfile(userId);
 
     DateTime? firstMission;
     DateTime? firstAttack;
 
-    if (profileRows.isNotEmpty) {
-      final row = profileRows.first;
-      final missionAt = row['first_mission_completed_at'] as String?;
-      final attackAt = row['first_attack_completed_at'] as String?;
+    if (profile != null) {
+      final missionAt = profile['first_mission_completed_at'] as String?;
+      final attackAt = profile['first_attack_completed_at'] as String?;
       if (missionAt != null) {
         try {
           firstMission = DateTime.parse(missionAt);
@@ -59,12 +52,8 @@ final missionStatusProvider =
       }
     }
 
-    final countRows = await db.rawQuery(
-      'SELECT COUNT(*) AS cnt FROM zones WHERE owner_id = ?',
-      [userId],
-    );
-    final zoneCount =
-        (countRows.isNotEmpty ? countRows.first['cnt'] as int? : null) ?? 0;
+    final zones = await ds.getZonesByOwner(userId);
+    final zoneCount = zones.length;
 
     return MissionStatus(
       firstMissionCompletedAt: firstMission,
@@ -72,7 +61,7 @@ final missionStatusProvider =
       zoneCount: zoneCount,
     );
   } catch (_) {
-    // On DB error, default to bypass so the gate never hard-blocks.
+    // On error, default to bypass so the gate never hard-blocks.
     return const MissionStatus(
       firstMissionCompletedAt: null,
       firstAttackCompletedAt: null,

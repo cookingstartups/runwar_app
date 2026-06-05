@@ -410,16 +410,12 @@ class _MapScreenState extends ConsumerState<MapScreen>
         final missionAt = data['first_mission_completed_at'] as String?;
         final streakAt = data['streak_started_at'] as String?;
         try {
-          final db = DatabaseService.instance.db;
-          await db.update(
-            'profiles',
-            {
-              if (missionAt != null) 'first_mission_completed_at': missionAt,
-              if (streakAt != null) 'streak_started_at': streakAt,
-            },
-            where: 'id = ?',
-            whereArgs: [userId],
-          );
+          final patch = <String, dynamic>{};
+          if (missionAt != null) patch['first_mission_completed_at'] = missionAt;
+          if (streakAt != null) patch['streak_started_at'] = streakAt;
+          if (patch.isNotEmpty) {
+            await DatabaseService.instance.updateProfile(userId, patch);
+          }
         } catch (_) {}
       }
     } catch (e) {
@@ -478,12 +474,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
         final attackAt = data['first_attack_completed_at'] as String?;
         if (attackAt != null) {
           try {
-            final db = DatabaseService.instance.db;
-            await db.update(
-              'profiles',
+            await DatabaseService.instance.updateProfile(
+              userId,
               {'first_attack_completed_at': attackAt},
-              where: 'id = ?',
-              whereArgs: [userId],
             );
           } catch (_) {}
         }

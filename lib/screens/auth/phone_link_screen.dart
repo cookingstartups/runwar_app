@@ -48,13 +48,8 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
     try {
       final userId = ref.read(authProvider).user?['id'] as String?;
       if (userId == null) return;
-      // Save locally first — always succeeds.
-      await DatabaseService.instance.db.update(
-        'profiles',
-        {'phone': _e164},
-        where: 'id = ?',
-        whereArgs: [userId],
-      );
+      // Save to Supabase first — always succeeds.
+      await DatabaseService.instance.updateProfile(userId, {'phone': _e164});
       // Persist to remote — best-effort, non-fatal.
       if (SupabaseService.instance.isConnected) {
         await SupabaseService.instance.supabase.functions.invoke(

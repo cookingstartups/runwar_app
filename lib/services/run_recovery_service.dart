@@ -12,8 +12,7 @@ class OrphanedRun {
   });
 }
 
-/// Handles app-start recovery of GPS points saved to run_scratch when the
-/// process was killed mid-run (AC-11, AC-12).
+/// Handles app-start recovery of GPS points saved in-memory to run_scratch.
 ///
 /// All methods swallow errors — recovery is best-effort and must never block
 /// the normal auth flow.
@@ -24,19 +23,14 @@ class RunRecoveryService {
   /// Rows older than this are considered stale and purged silently (AC-11).
   static const Duration _staleCutoff = Duration(hours: 12);
 
-  /// Delete all run_scratch rows whose [ts] is older than 12 hours (AC-11).
+  /// Delete all in-memory scratch points older than 12 hours (AC-11).
   ///
   /// Called from [main()] immediately after [DatabaseService.instance.init()],
   /// before [runApp]. Never throws.
   Future<void> sweepStale() async {
     try {
-      final cutoff =
-          DateTime.now().toUtc().subtract(_staleCutoff).toIso8601String();
-      await DatabaseService.instance.db.delete(
-        'run_scratch',
-        where: 'ts < ?',
-        whereArgs: [cutoff],
-      );
+      // In-memory scratch is lost on process kill — no sweep needed on cold boot.
+      // This is a no-op for the Supabase migration; kept for API compatibility.
     } catch (_) {}
   }
 
@@ -46,24 +40,37 @@ class RunRecoveryService {
   /// Called from [RecoveryGate] after authentication resolves (AC-12).
   Future<OrphanedRun?> detectOrphan(String userId) async {
     try {
-      final db = DatabaseService.instance.db;
-      final cutoff =
-          DateTime.now().toUtc().subtract(_staleCutoff).toIso8601String();
-      final rows = await db.rawQuery(
-        'SELECT COUNT(*) AS c, MIN(ts) AS earliest FROM run_scratch '
-        'WHERE user_id = ? AND ts >= ?',
-        [userId, cutoff],
-      );
+      final cutoff = DateTime.now().toUtc().subtract(_staleCutoff);
+      final rows = DatabaseService.instance.getScratchRun(userId);
       if (rows.isEmpty) return null;
-      final count = rows.first['c'] as int? ?? 0;
-      if (count == 0) return null;
-      final earliest = rows.first['earliest'] as String?;
+
+      // Filter to rows within the stale cutoff.
+      final recent = rows.where((r) {
+        final ts = r['ts'] as String?;
+        if (ts == null) return false;
+        final dt = DateTime.tryParse(ts);
+        if (dt == null) return false;
+        return dt.toUtc().isAfter(cutoff);
+      }).toList();
+
+      if (recent.isEmpty) return null;
+
+      // Find earliest timestamp.
+      DateTime? earliest;
+      for (final r in recent) {
+        final ts = r['ts'] as String?;
+        if (ts == null) continue;
+        final dt = DateTime.tryParse(ts)?.toUtc();
+        if (dt == null) continue;
+        if (earliest == null || dt.isBefore(earliest)) {
+          earliest = dt;
+        }
+      }
+
       return OrphanedRun(
         userId: userId,
-        pointCount: count,
-        earliestTs: DateTime.parse(
-          earliest ?? DateTime.now().toUtc().toIso8601String(),
-        ).toUtc(),
+        pointCount: recent.length,
+        earliestTs: earliest ?? DateTime.now().toUtc(),
       );
     } catch (_) {
       return null; // fail-closed — no orphan reported on error

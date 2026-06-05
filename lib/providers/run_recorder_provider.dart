@@ -164,9 +164,8 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     required DateTime closedAt,
     required String zoneId,
   }) async {
-    final db = DatabaseService.instance.db;
     final nowIso = DateTime.now().toUtc().toIso8601String();
-    await db.insert('runs', {
+    await DatabaseService.instance.insertRun({
       'id': runId,
       'user_id': userId,
       'city': city,

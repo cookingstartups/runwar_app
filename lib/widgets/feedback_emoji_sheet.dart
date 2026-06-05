@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../services/database_service.dart';
 import '../theme.dart';
@@ -41,15 +40,15 @@ class _FeedbackSheetState extends State<_FeedbackSheet> {
 
   Future<void> _save(String rating) async {
     setState(() => _saving = true);
-    final db = DatabaseService.instance.db;
     final now = DateTime.now().toUtc().toIso8601String();
-    await db.insert('feedback', {
-      'id': '${DateTime.now().microsecondsSinceEpoch}',
-      'trigger': widget.trigger,
-      'rating': rating,
-      'note': _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
-      'created_at': now,
-    });
+    await DatabaseService.instance.insertFeedback(
+      '${DateTime.now().microsecondsSinceEpoch}',
+      null, // userId not available in widget context
+      widget.trigger,
+      rating,
+      note: _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
+      createdAt: now,
+    );
     if (mounted) Navigator.of(context).pop();
   }
 

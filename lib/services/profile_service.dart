@@ -21,20 +21,14 @@ class ProfileService {
   /// Falls back to Supabase `players` when local profile is missing and
   /// Supabase is connected (covers bot players and future server-only users).
   Future<Map<String, dynamic>?> fetchProfile(String userId) async {
-    final db = DatabaseService.instance.db;
-    final rows = await db.query(
-      'profiles',
-      where: 'id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-    if (rows.isNotEmpty) return Map<String, dynamic>.from(rows.first);
+    final profile = await DatabaseService.instance.getProfile(userId);
+    if (profile != null) return profile;
 
     if (!SupabaseService.instance.isConnected) return null;
     try {
       final result = await SupabaseService.instance.supabase
           .from('players')
-          .select('id, display_name')
+          .select('id, display_name, username')
           .eq('id', userId)
           .limit(1);
       final list = result as List<dynamic>;
@@ -42,7 +36,7 @@ class ProfileService {
       final p = list.first as Map<String, dynamic>;
       return {
         'id': p['id'],
-        'username': p['display_name'] ?? '',
+        'username': p['username'] ?? p['display_name'] ?? '',
         'color': _colorForId(userId),
         'city': '',
         'influence_level': 0,
@@ -56,7 +50,6 @@ class ProfileService {
   }
 
   /// AC-13. Updates only the supplied non-null fields. All-null is a no-op.
-  /// Non-matching userId is a no-op (sqflite UPDATE with no rows affected).
   Future<void> updateProfile(
     String userId, {
     String? username,
@@ -69,21 +62,11 @@ class ProfileService {
     if (color != null) patch['color'] = color;
     if (patch.isEmpty) return; // AC-13 unwanted behaviour: all-null no-op
 
-    final db = DatabaseService.instance.db;
-    await db.update('profiles', patch, where: 'id = ?', whereArgs: [userId]);
+    await DatabaseService.instance.updateProfile(userId, patch);
   }
 
   /// AC-14. True iff `invited_at IS NOT NULL`. Missing row → false.
   Future<bool> isInvited(String userId) async {
-    final db = DatabaseService.instance.db;
-    final rows = await db.query(
-      'profiles',
-      columns: ['invited_at'],
-      where: 'id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-    if (rows.isEmpty) return false;
-    return rows.first['invited_at'] != null;
+    return DatabaseService.instance.isProfileInvited(userId);
   }
 }

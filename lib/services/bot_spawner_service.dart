@@ -4,7 +4,7 @@ import 'supabase_service.dart';
 
 /// Finds or creates a ConquerBot zone near the player's location.
 ///
-/// Local SQLite is probed first (zero network cost). If no rival zone is
+/// Supabase is probed first (zero local cost). If no rival zone is
 /// cached, the spawn_conquer_bot Edge Function is called. The server handles
 /// the city-wide idempotency invariant (exactly one bot zone per 2 km radius).
 ///
@@ -43,19 +43,16 @@ class BotSpawnerService {
     return zoneId;
   }
 
-  /// Queries local SQLite for any zone in [city] not owned by [userId].
+  /// Queries Supabase for any zone in [city] not owned by [userId].
   Future<String?> _findNearbyRivalLocal(String userId, String city) async {
     try {
-      final db = DatabaseService.instance.db;
-      final rows = await db.query(
-        'zones',
-        columns: ['id'],
-        where: 'city = ? AND owner_id != ?',
-        whereArgs: [city, userId],
-        limit: 1,
+      final zones = await DatabaseService.instance.getZonesByCity(city);
+      final rival = zones.firstWhere(
+        (z) => z['owner_id'] != userId,
+        orElse: () => <String, dynamic>{},
       );
-      if (rows.isEmpty) return null;
-      return rows.first['id'] as String;
+      if (rival.isEmpty) return null;
+      return rival['id'] as String?;
     } catch (_) {
       return null;
     }

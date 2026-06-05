@@ -1,4 +1,3 @@
-import 'package:sqflite/sqflite.dart';
 import '../../config/supabase_config.dart';
 import '../database_service.dart';
 import '../supabase_service.dart';
@@ -12,14 +11,9 @@ class WaitlistRepository {
     List<String> slugs, {
     String? referralSourceCode,
   }) async {
-    final now = DateTime.now().toIso8601String();
-    // Always persist locally first — never throws.
+    // Always persist remotely first — never throws.
     for (final slug in slugs) {
-      await DatabaseService.instance.db.insert(
-        'city_waitlists',
-        {'user_id': userId, 'city_slug': slug, 'created_at': now},
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
+      await DatabaseService.instance.joinCityWaitlist(userId, slug);
     }
     // Best-effort remote sync via edge function.
     if (SupabaseService.instance.isConnected) {
@@ -33,22 +27,17 @@ class WaitlistRepository {
           },
         );
       } catch (_) {
-        // Sync failure is non-fatal; local record is the source of truth.
+        // Sync failure is non-fatal; Supabase record is the source of truth.
       }
     }
   }
 
   Future<List<String>> joinedCitySlugs(String userId) async {
-    // Read local SQLite first (always available).
-    final local = await DatabaseService.instance.db.query(
-      'city_waitlists',
-      columns: ['city_slug'],
-      where: 'user_id = ?',
-      whereArgs: [userId],
-    );
-    final slugs = local.map((r) => r['city_slug'] as String).toSet();
+    // Read from Supabase (always available when connected).
+    final remote = await DatabaseService.instance.getJoinedCities(userId);
+    final slugs = remote.toSet();
 
-    // Merge remote when connected.
+    // Merge remote direct query when connected.
     if (SupabaseService.instance.isConnected) {
       try {
         final rows = await SupabaseService.instance.supabase

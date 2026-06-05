@@ -1,6 +1,5 @@
 import 'dart:math';
 import 'package:flutter/foundation.dart';
-import 'package:sqflite/sqflite.dart';
 import 'database_service.dart';
 import 'google_auth_service.dart';
 import 'supabase_service.dart';
@@ -14,10 +13,9 @@ class AuthService {
 
   /// Anonymous sign-in for PoC alpha testers.
   /// Uses Supabase anonymous auth when connected; falls back to a local UUID.
-  /// Creates SQLite user+profile with invited_at set so the route guard passes.
+  /// Creates a players row with invited_at set so the route guard passes.
   /// Idempotent — safe to call on every app launch.
   Future<Map<String, dynamic>> signInAnonymously() async {
-    final db = DatabaseService.instance.db;
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
     // Get (or create) the Supabase anonymous session.
@@ -26,47 +24,34 @@ class AuthService {
     // Use Supabase UID when connected; otherwise generate a stable local UUID.
     final localId = supabaseUid ?? _uuidV4();
 
-    // Check if this device already has a local profile.
-    final existing = await db.query(
-      'users',
-      where: 'id = ?',
-      whereArgs: [localId],
-      limit: 1,
-    );
+    // Check if this device already has a remote profile.
+    final existing = await DatabaseService.instance.getProfile(localId);
 
-    if (existing.isNotEmpty) {
+    if (existing != null) {
       _currentUser = {
         'id': localId,
-        'email': existing.first['email'] as String? ?? '',
-        'created_at': existing.first['created_at'] as String? ?? nowIso,
+        'email': '${localId.substring(0, 8)}@runwar.anon',
+        'created_at': existing['created_at'] as String? ?? nowIso,
         if (supabaseUid != null) 'supabase_uid': supabaseUid,
       };
       return _currentUser!;
     }
 
-    // First launch — create user + profile.
+    // First launch — create profile.
     final shortId = localId.replaceAll('-', '').substring(0, 6).toUpperCase();
     final username = 'RUNNER-$shortId';
     final email = '${localId.substring(0, 8)}@runwar.anon';
 
-    await db.transaction((txn) async {
-      await txn.insert('users', {
-        'id': localId,
-        'email': email,
-        'password': '',
-        'created_at': nowIso,
-      });
-      await txn.insert('profiles', {
-        'id': localId,
-        'username': username,
-        'city': 'Valencia',
-        'color': '#FF7A00',
-        'influence_level': 1,
-        'invited_at': nowIso, // bypasses waitlist gate for PoC
-        'is_tester': 1,
-        'created_at': nowIso,
-      });
-    });
+    await DatabaseService.instance.insertProfile(
+      localId,
+      username,
+      'Valencia',
+      '#FF7A00',
+      influence: 1,
+      invitedAt: nowIso, // bypasses waitlist gate for PoC
+      isTester: 1,
+      createdAt: nowIso,
+    );
 
     _currentUser = {
       'id': localId,
@@ -78,11 +63,10 @@ class AuthService {
     return _currentUser!;
   }
 
-  /// Inserts one `users` row + one `profiles` row in a transaction.
-  /// Uses the Supabase-assigned UUID so `auth.uid()` matches the local user ID.
-  /// Returns the new user map (id/email/created_at) or null on duplicate email.
+  /// Creates a profile row in Supabase players table.
+  /// Uses the Supabase-assigned UUID so `auth.uid()` matches the profile ID.
+  /// Returns the new user map (id/email/created_at) or null on duplicate.
   Future<Map<String, dynamic>?> signUp(String email, String password) async {
-    final db = DatabaseService.instance.db;
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
     // Register with Supabase first to get the canonical UUID.
@@ -91,39 +75,30 @@ class AuthService {
     final id = supabaseId ?? _uuidV4();
 
     try {
-      await db.transaction((txn) async {
-        await txn.insert('users', {
-          'id': id,
-          'email': email,
-          'password': password,
-          'created_at': nowIso,
-        });
-        await txn.insert('profiles', {
-          'id': id,
-          'username': '',
-          'city': '',
-          'color': '#FF7A00',
-          'influence_level': 1,
-          'invited_at': null,
-          'is_tester': 0,
-          'created_at': nowIso,
-        });
-      });
-    } on DatabaseException catch (e) {
-      // Duplicate email — return null without throwing.
-      if (e.isUniqueConstraintError()) return null;
-      rethrow;
+      await DatabaseService.instance.insertProfile(
+        id,
+        '',
+        '',
+        '#FF7A00',
+        influence: 1,
+        invitedAt: null,
+        isTester: 0,
+        createdAt: nowIso,
+      );
+    } catch (e) {
+      // Treat any unique-constraint equivalent as duplicate.
+      debugPrint('[AuthService] signUp insert error: $e');
+      return null;
     }
 
     _currentUser = {'id': id, 'email': email, 'created_at': nowIso};
     return _currentUser;
   }
 
-  /// Signs in with Google via [GoogleAuthService], upserts the user into SQLite,
-  /// and returns the user map. Returns null if the user cancelled.
+  /// Signs in with Google via [GoogleAuthService], upserts the player into
+  /// Supabase, and returns the user map. Returns null if the user cancelled.
   /// Throws [GoogleAuthException] on Google / Supabase errors.
   Future<Map<String, dynamic>?> signInWithGoogle() async {
-    final db = DatabaseService.instance.db;
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
     // Runs the native Google picker + Supabase token exchange.
@@ -139,32 +114,15 @@ class AuthService {
     final username = displayName?.toUpperCase().replaceAll(' ', '_') ?? 'RUNNER-$shortId';
 
     // Upsert: safe on every login — INSERT OR IGNORE preserves existing rows.
-    await db.transaction((txn) async {
-      await txn.insert(
-        'users',
-        {
-          'id': id,
-          'email': email,
-          'password': '', // no password for Google accounts
-          'created_at': nowIso,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
-      await txn.insert(
-        'profiles',
-        {
-          'id': id,
-          'username': username,
-          'city': 'Valencia',
-          'color': '#FF7A00',
-          'influence_level': 1,
-          'invited_at': null, // must redeem invitation code
-          'is_tester': 0,
-          'created_at': nowIso,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
-    });
+    await DatabaseService.instance.upsertProfileIgnore(
+      id,
+      username,
+      'Valencia',
+      '#FF7A00',
+      influence: 1,
+      invitedAt: null, // must redeem invitation code
+      isTester: 0,
+    );
 
     _currentUser = {'id': id, 'email': email, 'created_at': nowIso};
     debugPrint('[AuthService] Google sign-in complete: $username ($id)');
@@ -173,79 +131,56 @@ class AuthService {
 
   /// Returns user map on credential match; null otherwise. Never throws.
   Future<Map<String, dynamic>?> signIn(String email, String password) async {
-    final db = DatabaseService.instance.db;
-    final rows = await db.query(
-      'users',
-      where: 'email = ?',
-      whereArgs: [email],
-      limit: 1,
-    );
-    if (rows.isEmpty) return null;
-    final row = rows.first;
-    if (row['password'] != password) return null;
+    // Authenticate via Supabase — this is the authoritative source.
+    final uid = await SupabaseService.instance.signInWithPassword(email, password);
+    if (uid == null) return null;
+
+    final supabaseUser = SupabaseService.instance.supabase.auth.currentUser;
+    if (supabaseUser == null) return null;
+
+    final nowIso = DateTime.now().toUtc().toIso8601String();
     _currentUser = {
-      'id': row['id'],
-      'email': row['email'],
-      'created_at': row['created_at'],
+      'id': supabaseUser.id,
+      'email': email,
+      'created_at': supabaseUser.createdAt ?? nowIso,
     };
-    // Establish Supabase Auth session using the actual form credentials.
-    await SupabaseService.instance.signInWithPassword(email, password);
     return _currentUser;
   }
 
   /// Called once from main.dart after DB init. Idempotent — safe to call
-  /// on every launch; users/profiles use INSERT OR IGNORE; zones/runs are
+  /// on every launch; players uses INSERT OR IGNORE; zones are
   /// guarded by an existence check so they are inserted at most once.
   Future<void> seedDemoDataIfNeeded() async {
-    final db = DatabaseService.instance.db;
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
-    // Remove any stale rows that share an email with a demo user but have a
-    // different id (prevents UNIQUE email constraint silently blocking insert).
-    for (final u in _allDemoUsers) {
-      await db.delete('users',
-          where: 'email = ? AND id != ?', whereArgs: [u['email'] as String, u['id'] as String]);
-    }
-    // Users + profiles: idempotent via INSERT OR IGNORE on primary key.
-    await db.transaction((txn) async {
-      for (final u in _allDemoUsers) {
-        await txn.insert('users',
-            {'id': u['id'], 'email': u['email'], 'password': '123456', 'created_at': nowIso},
-            conflictAlgorithm: ConflictAlgorithm.ignore);
-        await txn.insert('profiles',
-            {
-              'id': u['id'],
-              'username': u['username'],
-              'city': 'Valencia',
-              'color': u['color'],
-              'influence_level': u['influence'],
-              'invited_at': nowIso,
-              'is_tester': 0,
-              'is_bot': 1,
-              'created_at': nowIso,
-            },
-            conflictAlgorithm: ConflictAlgorithm.ignore);
-      }
-    });
+    // Players: idempotent via upsert ignore on primary key.
+    final playerRows = _allDemoUsers.map((u) => {
+      'id': u['id'],
+      'username': u['username'],
+      'city': 'Valencia',
+      'color': u['color'],
+      'influence_level': u['influence'],
+      'invited_at': nowIso,
+      'is_tester': 0,
+      'is_bot': 1,
+      'created_at': nowIso,
+    }).toList();
+    await DatabaseService.instance.bulkUpsertPlayers(playerRows);
 
-    // Zones use random UUIDs — guard with existence check to avoid duplicates.
-    final existingZones = await db.query('zones',
-        where: 'owner_id = ?', whereArgs: [_r1], limit: 1);
+    // Zones: guard with existence check to avoid duplicates.
+    final existingZones = await DatabaseService.instance.getZonesByOwner(_r1, limit: 1);
     if (existingZones.isEmpty) {
-      await db.transaction((txn) async {
-        for (final z in _allDemoZones) {
-          await txn.insert('zones', {
-            'id': _uuidV4(),
-            'owner_id': z['owner'],
-            'city': 'Valencia',
-            'geom_json': z['geom'],
-            'status': z['status'],
-            'influence': z['influence'],
-            'created_at': nowIso,
-            'updated_at': nowIso,
-          });
-        }
-      });
+      final zoneRows = _allDemoZones.map((z) => {
+        'id': _uuidV4(),
+        'owner_id': z['owner'],
+        'city': 'Valencia',
+        'geom_json': z['geom'],
+        'status': z['status'],
+        'influence': z['influence'],
+        'created_at': nowIso,
+        'updated_at': nowIso,
+      }).toList();
+      await DatabaseService.instance.bulkInsertZones(zoneRows);
     }
   }
 
@@ -375,7 +310,7 @@ class AuthService {
   /// Validates [code] and grants access.
   /// Alpha codes in [_kAlphaCodes] bypass Supabase and work offline.
   /// Other codes are validated against the Supabase `invitation_codes` table.
-  /// Also updates local SQLite profile so the route guard passes immediately.
+  /// Also updates the Supabase players profile so the route guard passes immediately.
   Future<bool> redeemInvitationCode(String code, String userId) async {
     final upper = code.trim().toUpperCase();
     if (upper.isEmpty) return false;
@@ -414,47 +349,30 @@ class AuthService {
       }
     }
 
-    // Write locally — triggers route guard to advance immediately.
-    final db = DatabaseService.instance.db;
-    await db.transaction((txn) async {
-      await txn.insert(
-        'redeemed_codes',
-        {'code': upper, 'redeemed_at': now, 'user_id': userId},
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
-      await txn.update(
-        'profiles',
-        {'invited_at': now, 'is_tester': 1},
-        where: 'id = ?',
-        whereArgs: [userId],
-      );
-    });
+    // Update players row — triggers route guard to advance immediately.
+    await DatabaseService.instance.updateInvitationStatus(userId, now, isTester: 1);
     return true;
   }
 
   /// Restores _currentUser from a persisted Supabase session on app restart.
-  /// Called once from main() after SupabaseService.init(). No-ops if no session
-  /// or if the user's SQLite row doesn't exist (fresh install after DB reset).
+  /// Called once from main() after SupabaseService.init(). No-ops if no session.
   Future<void> restoreSessionFromSupabase() async {
     final supabaseUid = SupabaseService.instance.currentUserId;
     if (supabaseUid == null) return;
-    final db = DatabaseService.instance.db;
-    final rows = await db.query(
-      'users',
-      where: 'id = ?',
-      whereArgs: [supabaseUid],
-      limit: 1,
-    );
-    if (rows.isEmpty) return;
+
+    final supabaseUser = SupabaseService.instance.supabase.auth.currentUser;
+    if (supabaseUser == null) return;
+
+    final nowIso = DateTime.now().toUtc().toIso8601String();
     _currentUser = {
       'id': supabaseUid,
-      'email': rows.first['email'] as String? ?? '$supabaseUid@runwar',
-      'created_at': rows.first['created_at'],
+      'email': supabaseUser.email ?? '$supabaseUid@runwar',
+      'created_at': supabaseUser.createdAt ?? nowIso,
     };
     debugPrint('[AuthService] session restored for $supabaseUid');
   }
 
-  /// Clears in-memory session and signs out of Supabase Auth. SQLite untouched.
+  /// Clears in-memory session and signs out of Supabase Auth.
   Future<void> signOut() async {
     _currentUser = null;
     await SupabaseService.instance.signOut();

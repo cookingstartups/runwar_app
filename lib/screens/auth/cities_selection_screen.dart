@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:sqflite/sqflite.dart';
 import '../../theme.dart';
 import '../../data/cities_catalog.dart';
 import '../../providers/auth_provider.dart';
@@ -125,14 +124,10 @@ class _CitiesSelectionScreenState
     if (_selected.isEmpty) return;
     setState(() => _submitting = true);
     try {
-      // Save "other city" interest to local prefs so the team can review it.
+      // Save "other city" interest to prefs so the team can review it.
       final other = _otherCity;
       if (other != null && other.isNotEmpty) {
-        await DatabaseService.instance.db.insert(
-          'prefs',
-          {'key': 'city_interest', 'value': other},
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await DatabaseService.instance.setPref(userId, 'city_interest', other);
       }
       await WaitlistRepository.instance.joinCities(userId, _selected.toList());
       ref.invalidate(joinedCitySlugsProvider(userId));

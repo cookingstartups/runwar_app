@@ -141,14 +141,8 @@ class _MainShellState extends ConsumerState<MainShell>
   Future<void> _initServices() async {
     final userId = ref.read(authProvider).user?['id'] as String?;
     if (userId == null) return;
-    final rows = await DatabaseService.instance.db.query(
-      'profiles',
-      where: 'id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-    if (rows.isEmpty) return;
-    final profile = rows.first;
+    final profile = await DatabaseService.instance.getProfile(userId);
+    if (profile == null) return;
     RealtimePresenceService.instance.init(
       playerId: userId,
       displayName: (profile['username'] as String?) ?? 'RUNNER',

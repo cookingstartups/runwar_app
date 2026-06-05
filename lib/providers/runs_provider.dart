@@ -10,13 +10,7 @@ final userRunPointsProvider =
     FutureProvider.family<List<LatLng>, ({String userId, String city})>(
         (ref, args) async {
   if (args.userId.isEmpty || args.city.isEmpty) return const [];
-  final db = DatabaseService.instance.db;
-  final rows = await db.query(
-    'runs',
-    columns: ['track_json'],
-    where: 'user_id = ? AND city = ?',
-    whereArgs: [args.userId, args.city],
-  );
+  final rows = await DatabaseService.instance.getUserRuns(args.userId, args.city);
   final out = <LatLng>[];
   for (final row in rows) {
     final json = row['track_json'] as String?;

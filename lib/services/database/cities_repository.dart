@@ -58,13 +58,12 @@ class CitiesRepository {
 
   Future<Map<String, int>> _localCounts() async {
     try {
-      final rows = await DatabaseService.instance.db.query(
-        'city_waitlists',
-        columns: ['city_slug'],
-      );
+      // Use Supabase-backed getJoinedCities for current user.
+      final userId = SupabaseService.instance.currentUserId;
+      if (userId == null) return {};
+      final slugs = await DatabaseService.instance.getJoinedCities(userId);
       final counts = <String, int>{};
-      for (final r in rows) {
-        final slug = r['city_slug'] as String;
+      for (final slug in slugs) {
         counts[slug] = (counts[slug] ?? 0) + 1;
       }
       return counts;

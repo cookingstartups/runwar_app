@@ -1,7 +1,6 @@
 // lib/services/database/zones_repository_local.dart
 //
-// SQLite-backed ZonesRepository fallback for offline mode.
-// Absorbs logic from lib/services/zones_service.dart (deprecated).
+// Supabase-backed ZonesRepository fallback (was SQLite in Phase 1).
 // Used only when SupabaseService.instance.isConnected == false.
 // Design.md §1 LocalZonesRepository spec.
 
@@ -14,7 +13,7 @@ import 'repository.dart';
 import 'zones_repository.dart';
 import 'models/zone.dart';
 
-/// SQLite-backed ZonesRepository.
+/// Supabase-backed ZonesRepository (replaces SQLite LocalZonesRepository).
 ///
 /// watchByCity uses a 5-second Timer.periodic (matches existing PoC cadence).
 /// dispose() cancels the timer and closes the StreamController.
@@ -31,14 +30,9 @@ class LocalZonesRepository implements ZonesRepository {
   Future<RepoResult<List<Zone>>> fetchByCity(String city) async {
     if (_disposed) return RepoResult.err(RepoError.unknown, detail: 'disposed');
     try {
-      final db = DatabaseService.instance.db;
-      final rows = await db.query(
-        'zones',
-        where: 'city = ?',
-        whereArgs: [city],
-      );
+      final rows = await DatabaseService.instance.getZonesByCity(city);
       final zones = rows
-          .map((r) => Zone.fromGeoJsonRow(Map<String, dynamic>.from(r)))
+          .map((r) => Zone.fromGeoJsonRow(r))
           .toList();
       return RepoResult.ok(zones);
     } catch (e) {
@@ -77,16 +71,9 @@ class LocalZonesRepository implements ZonesRepository {
   Future<RepoResult<Zone>> fetchById(String id) async {
     if (_disposed) return RepoResult.err(RepoError.unknown, detail: 'disposed');
     try {
-      final db = DatabaseService.instance.db;
-      final rows = await db.query(
-        'zones',
-        where: 'id = ?',
-        whereArgs: [id],
-        limit: 1,
-      );
-      if (rows.isEmpty) return RepoResult.err(RepoError.notFound);
-      return RepoResult.ok(
-          Zone.fromGeoJsonRow(Map<String, dynamic>.from(rows.first)));
+      final row = await DatabaseService.instance.getZone(id);
+      if (row == null) return RepoResult.err(RepoError.notFound);
+      return RepoResult.ok(Zone.fromGeoJsonRow(row));
     } catch (e) {
       debugPrint('[LocalZonesRepository] fetchById error: $e');
       return RepoResult.err(RepoError.network, detail: e.toString());

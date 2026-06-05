@@ -12,14 +12,7 @@ class ZonesService {
   /// AC-1. Returns all rows where city = [city]. Empty list on no match
   /// (including empty string). Never throws on empty / no-match.
   Future<List<Map<String, dynamic>>> fetchZonesByCity(String city) async {
-    final db = DatabaseService.instance.db;
-    final rows = await db.query(
-      'zones',
-      where: 'city = ?',
-      whereArgs: [city],
-    );
-    // Defensive copy — sqflite rows are read-only Maps on some platforms.
-    return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+    return DatabaseService.instance.getZonesByCity(city);
   }
 
   /// AC-2. Emits the current zone list immediately, then every 5 seconds.
@@ -63,12 +56,7 @@ class ZonesService {
   /// AC-3. Count of zones owned by [userId] with status='owned'.
   /// Returns 0 if none. Disputed zones not counted.
   Future<int> countOwnedByUser(String userId) async {
-    final db = DatabaseService.instance.db;
-    final rows = await db.rawQuery(
-      "SELECT COUNT(*) AS c FROM zones WHERE owner_id = ? AND status = 'owned'",
-      [userId],
-    );
-    final v = rows.first['c'];
-    return (v is int) ? v : (v as num).toInt();
+    final zones = await DatabaseService.instance.getZonesByOwner(userId);
+    return zones.where((z) => z['status'] == 'owned').length;
   }
 }

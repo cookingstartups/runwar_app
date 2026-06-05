@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:sqflite/sqflite.dart';
 import 'database_service.dart';
 import 'zones_service.dart';
 import 'supabase_service.dart';
@@ -158,130 +157,114 @@ class TerritoryService {
       }
     }
 
-    final db = DatabaseService.instance.db;
+    final ds = DatabaseService.instance;
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
-    final outcome = await db.transaction<ClaimOutcome>((txn) async {
-      // Full conquests.
-      for (final id in conqueredIds) {
-        await txn.update(
-          'zones',
-          {
-            'owner_id': userId,
-            'influence': 1.0,
-            'status': 'owned',
-            'contested_by_id': null,
-            'last_active_at': nowIso,
+    // Sequential Supabase calls — no ACID transaction (acceptable for MVP).
+
+    // Full conquests.
+    for (final id in conqueredIds) {
+      await ds.updateZone(id, {
+        'owner_id': userId,
+        'influence': 1.0,
+        'status': 'owned',
+        'contested_by_id': null,
+        'last_active_at': nowIso,
+        'updated_at': nowIso,
+      });
+    }
+
+    // Instant intersection transfers: carve intersection out of rival zone.
+    for (final (rivalRow, intersection) in intersectJobs) {
+      final rivalId = rivalRow['id'] as String;
+      final rivalOwnerId = rivalRow['owner_id'] as String;
+      final rivalGeom = rivalRow['geom_json'] as String;
+      final rivalPoints = _parseRing(rivalGeom)!;
+
+      // Remainder = rival points not inside the intersection.
+      final remainder = rivalPoints
+          .where((pt) => !_pointInRing(pt, intersection))
+          .toList();
+
+      if (remainder.length >= 3) {
+        final remainderHull = _convexHull(remainder);
+        if (remainderHull.length >= 3) {
+          await ds.updateZone(rivalId, {
+            'geom_json': _encodePolygon(remainderHull),
+            'dispute_at': nowIso,
             'updated_at': nowIso,
-          },
-          where: 'id = ?',
-          whereArgs: [id],
-        );
-      }
-
-      // Instant intersection transfers: carve intersection out of rival zone.
-      for (final (rivalRow, intersection) in intersectJobs) {
-        final rivalId = rivalRow['id'] as String;
-        final rivalOwnerId = rivalRow['owner_id'] as String;
-        final rivalGeom = rivalRow['geom_json'] as String;
-        final rivalPoints = _parseRing(rivalGeom)!;
-
-        // Remainder = rival points not inside the intersection.
-        final remainder = rivalPoints
-            .where((pt) => !_pointInRing(pt, intersection))
-            .toList();
-
-        if (remainder.length >= 3) {
-          final remainderHull = _convexHull(remainder);
-          if (remainderHull.length >= 3) {
-            await txn.update(
-              'zones',
-              {
-                'geom_json': _encodePolygon(remainderHull),
-                'dispute_at': nowIso,
-                'updated_at': nowIso,
-              },
-              where: 'id = ?',
-              whereArgs: [rivalId],
-            );
-          } else {
-            await txn.delete('zones', where: 'id = ?', whereArgs: [rivalId]);
-          }
+          });
         } else {
-          // Rival loses the whole zone.
-          await txn.delete('zones', where: 'id = ?', whereArgs: [rivalId]);
+          await ds.deleteZone(rivalId);
         }
-
-        // New zone for attacker from the intersection polygon.
-        final newId = _uuidV4();
-        await txn.insert('zones', {
-          'id': newId,
-          'owner_id': userId,
-          'city': rivalRow['city'] as String,
-          'geom_json': _encodePolygon(intersection),
-          'influence': 1.0,
-          'status': 'owned',
-          'contested_by_id': null,
-          'created_at': nowIso,
-          'updated_at': nowIso,
-          'credits_earned': 0.0,
-          'last_income_at': null,
-          'last_active_at': nowIso,
-          'dispute_at': nowIso,
-          'parent_id': rivalId,
-        });
-
-        debugPrint('[Territory] instant transfer $rivalId → $newId ($rivalOwnerId→$userId)');
-        conqueredIds.add(newId);
+      } else {
+        // Rival loses the whole zone.
+        await ds.deleteZone(rivalId);
       }
 
-      // Defended zones.
-      for (final id in defendedIds) {
-        await txn.update(
-          'zones',
-          {
-            'status': 'owned',
-            'contested_by_id': null,
-            'updated_at': nowIso,
-          },
-          where: 'id = ?',
-          whereArgs: [id],
-        );
-      }
+      // New zone for attacker from the intersection polygon.
+      final newId = _uuidV4();
+      await ds.insertZone({
+        'id': newId,
+        'owner_id': userId,
+        'city': rivalRow['city'] as String,
+        'geom_json': _encodePolygon(intersection),
+        'influence': 1.0,
+        'status': 'owned',
+        'contested_by_id': null,
+        'created_at': nowIso,
+        'updated_at': nowIso,
+        'credits_earned': 0.0,
+        'last_income_at': null,
+        'last_active_at': nowIso,
+        'dispute_at': nowIso,
+        'parent_id': rivalId,
+      });
 
-      final hasActivity = conqueredIds.isNotEmpty ||
-          intersectJobs.isNotEmpty ||
-          defendedIds.isNotEmpty;
+      debugPrint('[Territory] instant transfer $rivalId → $newId ($rivalOwnerId→$userId)');
+      conqueredIds.add(newId);
+    }
 
-      if (!hasActivity) {
-        final newId = _uuidV4();
-        await txn.insert('zones', {
-          'id': newId,
-          'owner_id': userId,
-          'city': city,
-          'geom_json': _encodePolygon(track),
-          'influence': 1.0,
-          'status': 'owned',
-          'contested_by_id': null,
-          'created_at': nowIso,
-          'updated_at': nowIso,
-          'credits_earned': 0.0,
-          'last_income_at': null,
-          'last_active_at': nowIso,
-          'dispute_at': null,
-          'parent_id': null,
-        });
-        return ClaimOutcome(TerritoryResult.claimed, newId);
-      }
+    // Defended zones.
+    for (final id in defendedIds) {
+      await ds.updateZone(id, {
+        'status': 'owned',
+        'contested_by_id': null,
+        'updated_at': nowIso,
+      });
+    }
 
-      if (conqueredIds.isNotEmpty) {
-        return ClaimOutcome(TerritoryResult.conquered, conqueredIds.first);
-      }
-      if (defendedIds.isNotEmpty) {
-        return ClaimOutcome(TerritoryResult.claimed, defendedIds.first);
-      }
-      return const ClaimOutcome(TerritoryResult.disputed, null);
-    });
+    final hasActivity = conqueredIds.isNotEmpty ||
+        intersectJobs.isNotEmpty ||
+        defendedIds.isNotEmpty;
+
+    ClaimOutcome outcome;
+    if (!hasActivity) {
+      final newId = _uuidV4();
+      await ds.insertZone({
+        'id': newId,
+        'owner_id': userId,
+        'city': city,
+        'geom_json': _encodePolygon(track),
+        'influence': 1.0,
+        'status': 'owned',
+        'contested_by_id': null,
+        'created_at': nowIso,
+        'updated_at': nowIso,
+        'credits_earned': 0.0,
+        'last_income_at': null,
+        'last_active_at': nowIso,
+        'dispute_at': null,
+        'parent_id': null,
+      });
+      outcome = ClaimOutcome(TerritoryResult.claimed, newId);
+    } else if (conqueredIds.isNotEmpty) {
+      outcome = ClaimOutcome(TerritoryResult.conquered, conqueredIds.first);
+    } else if (defendedIds.isNotEmpty) {
+      outcome = ClaimOutcome(TerritoryResult.claimed, defendedIds.first);
+    } else {
+      outcome = const ClaimOutcome(TerritoryResult.disputed, null);
+    }
 
     if (outcome.result != TerritoryResult.failed) {
       await _mergeAdjacentZones(userId, city);
@@ -297,17 +280,12 @@ class TerritoryService {
   // ── Daily decay ───────────────────────────────────────────────────────────
 
   /// Call once on app open. Reads `prefs.last_decay_at` and skips if not due.
+  /// Uses 'device' as userId for device-global prefs.
   Future<void> runDailyDecayIfDue(String city) async {
-    final db = DatabaseService.instance.db;
+    final ds = DatabaseService.instance;
+    const prefUserId = 'device';
 
-    final prefRows = await db.query(
-      'prefs',
-      where: 'key = ?',
-      whereArgs: ['last_decay_at'],
-    );
-
-    final lastDecayStr =
-        prefRows.isNotEmpty ? prefRows.first['value'] as String? : null;
+    final lastDecayStr = await ds.getPref(prefUserId, 'last_decay_at');
     final lastDecay =
         lastDecayStr != null ? DateTime.tryParse(lastDecayStr) : null;
     final now = DateTime.now().toUtc();
@@ -318,22 +296,14 @@ class TerritoryService {
 
     await _applyDecay(city, now);
 
-    await db.insert(
-      'prefs',
-      {'key': 'last_decay_at', 'value': now.toIso8601String()},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await ds.setPref(prefUserId, 'last_decay_at', now.toIso8601String());
   }
 
   Future<void> _applyDecay(String city, DateTime now) async {
-    final db = DatabaseService.instance.db;
+    final ds = DatabaseService.instance;
     final nowIso = now.toIso8601String();
 
-    final owned = await db.query(
-      'zones',
-      where: "city = ? AND status = 'owned'",
-      whereArgs: [city],
-    );
+    final owned = await ds.getZonesByCity(city, status: 'owned');
     if (owned.isEmpty) return;
 
     var decayed = 0;
@@ -350,12 +320,10 @@ class TerritoryService {
       if (currentInf <= 1.0) continue;
 
       final newInf = (currentInf - kDecayPerDay).clamp(1.0, 15.0);
-      await db.update(
-        'zones',
-        {'influence': newInf, 'updated_at': nowIso},
-        where: 'id = ?',
-        whereArgs: [z['id']],
-      );
+      await ds.updateZone(z['id'] as String, {
+        'influence': newInf,
+        'updated_at': nowIso,
+      });
       decayed++;
     }
 
@@ -369,14 +337,10 @@ class TerritoryService {
   /// Accumulate credits for owned zones. Call periodically (e.g. every 60
   /// simulation ticks, or on app open alongside decay).
   Future<void> accruePassiveIncome(String city) async {
-    final db = DatabaseService.instance.db;
+    final ds = DatabaseService.instance;
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
-    final owned = await db.query(
-      'zones',
-      where: "city = ? AND status = 'owned'",
-      whereArgs: [city],
-    );
+    final owned = await ds.getZonesByCity(city, status: 'owned');
 
     for (final z in owned) {
       final lastStr = z['last_income_at'] as String?;
@@ -393,27 +357,18 @@ class TerritoryService {
       final earned = influence * areaKm2 * elapsedHours;
       final current = (z['credits_earned'] as num?)?.toDouble() ?? 0.0;
 
-      await db.update(
-        'zones',
-        {
-          'credits_earned': current + earned,
-          'last_income_at': nowIso,
-        },
-        where: 'id = ?',
-        whereArgs: [z['id']],
-      );
+      await ds.updateZone(z['id'] as String, {
+        'credits_earned': current + earned,
+        'last_income_at': nowIso,
+      });
     }
   }
 
   // ── Zone merging ──────────────────────────────────────────────────────────
 
   Future<void> _mergeAdjacentZones(String userId, String city) async {
-    final db = DatabaseService.instance.db;
-    final ownedRows = await db.query(
-      'zones',
-      where: "owner_id = ? AND city = ? AND status = 'owned'",
-      whereArgs: [userId, city],
-    );
+    final ds = DatabaseService.instance;
+    final ownedRows = await ds.getOwnedZonesByUser(userId, city);
     if (ownedRows.length < 2) return;
 
     final zones = <({
@@ -490,18 +445,13 @@ class TerritoryService {
 
       final keepId = zones[group.first].id;
       for (final idx in group.skip(1)) {
-        await db.delete('zones', where: 'id = ?', whereArgs: [zones[idx].id]);
+        await ds.deleteZone(zones[idx].id);
       }
-      await db.update(
-        'zones',
-        {
-          'geom_json': _encodePolygon(hull),
-          'influence': avgInf,
-          'updated_at': nowIso,
-        },
-        where: 'id = ?',
-        whereArgs: [keepId],
-      );
+      await ds.updateZone(keepId, {
+        'geom_json': _encodePolygon(hull),
+        'influence': avgInf,
+        'updated_at': nowIso,
+      });
       debugPrint(
           '[Territory] merged ${group.length} zones for $userId → hull ${hull.length} pts, inf $avgInf');
     }

@@ -6,7 +6,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:crypto/crypto.dart';
 import 'package:intl/intl.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'database_service.dart';
@@ -41,17 +40,13 @@ class DailyMissionsService {
 
   // ── Public API ───────────────────────────────────────────────────────────────
 
-  /// FR-1/FR-2: derive once per day, cache in local SQLite, return slate.
+  /// FR-1/FR-2: derive once per day, cache in Supabase, return slate.
   Future<List<DailyMission>> getTodaysMissions(String userId) async {
-    final db = DatabaseService.instance.db;
+    final ds = DatabaseService.instance;
     final today = _todayString();
 
     // Cache hit: rows exist for today.
-    final cached = await db.query(
-      'daily_mission_progress',
-      where: 'user_id = ? AND date = ?',
-      whereArgs: [userId, today],
-    );
+    final cached = await ds.getDailyMissions(userId, today);
     if (cached.isNotEmpty) {
       return cached.map(_rowToMission).toList();
     }
@@ -64,25 +59,19 @@ class DailyMissionsService {
       streak: streak,
     );
 
-    // Insert slate rows into local SQLite.
-    final batch = db.batch();
+    // Upsert slate rows.
     for (final mission in slate) {
-      batch.insert(
-        'daily_mission_progress',
-        {
-          'id': '${userId}_${today}_${mission.slug}',
-          'user_id': userId,
-          'date': today,
-          'slug': mission.slug,
-          'progress': 0,
-          'target': mission.targetValue,
-          'completed_at': null,
-          'synced_at': null,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
+      await ds.upsertMissionProgress({
+        'id': '${userId}_${today}_${mission.slug}',
+        'user_id': userId,
+        'date': today,
+        'slug': mission.slug,
+        'progress': 0,
+        'target': mission.targetValue,
+        'completed_at': null,
+        'synced_at': null,
+      });
     }
-    await batch.commit(noResult: true);
 
     // Fire-and-forget: retry any pending completions from offline sessions.
     _retryPendingCompletions(userId).catchError((_) {});
@@ -93,15 +82,11 @@ class DailyMissionsService {
   /// FR-3: called by TerritoryService / RunRecorderService etc.
   /// Increments local progress; if progress >= target, triggers completeMission.
   Future<void> reportProgress(String userId, String slug, int delta) async {
-    final db = DatabaseService.instance.db;
+    final ds = DatabaseService.instance;
     final today = _todayString();
 
-    final rows = await db.query(
-      'daily_mission_progress',
-      where: 'user_id = ? AND date = ? AND slug = ?',
-      whereArgs: [userId, today, slug],
-      limit: 1,
-    );
+    final allRows = await ds.getDailyMissions(userId, today);
+    final rows = allRows.where((r) => r['slug'] == slug).toList();
     if (rows.isEmpty) return; // slug not on today's slate
 
     final row = rows.first;
@@ -112,12 +97,16 @@ class DailyMissionsService {
     final target = (row['target'] as int?) ?? 1;
     final newProgress = math.min(current + delta, target);
 
-    await db.update(
-      'daily_mission_progress',
-      {'progress': newProgress},
-      where: 'user_id = ? AND date = ? AND slug = ?',
-      whereArgs: [userId, today, slug],
-    );
+    await ds.upsertMissionProgress({
+      'id': '${userId}_${today}_$slug',
+      'user_id': userId,
+      'date': today,
+      'slug': slug,
+      'progress': newProgress,
+      'target': target,
+      'completed_at': row['completed_at'],
+      'synced_at': row['synced_at'],
+    });
 
     // Fire-and-forget telemetry.
     TelemetryService.instance.logEvent('mission_progressed', props: {
@@ -180,18 +169,16 @@ class DailyMissionsService {
         ? DateTime.tryParse(data['completed_at'] as String)
         : DateTime.now().toUtc();
 
-    // Update local SQLite mirror.
-    final db = DatabaseService.instance.db;
-    await db.update(
-      'daily_mission_progress',
-      {
-        'completed_at':
-            (completedAt ?? DateTime.now().toUtc()).toIso8601String(),
-        'synced_at': DateTime.now().toUtc().toIso8601String(),
-      },
-      where: 'user_id = ? AND date = ? AND slug = ?',
-      whereArgs: [userId, today, slug],
-    );
+    // Update remote mirror.
+    final ds = DatabaseService.instance;
+    await ds.upsertMissionProgress({
+      'id': '${userId}_${today}_$slug',
+      'user_id': userId,
+      'date': today,
+      'slug': slug,
+      'completed_at': (completedAt ?? DateTime.now().toUtc()).toIso8601String(),
+      'synced_at': DateTime.now().toUtc().toIso8601String(),
+    });
 
     final result = MissionCompletionResult(
       slug: slug,
@@ -325,16 +312,9 @@ class DailyMissionsService {
 
   Future<int> _getCurrentStreak(String userId) async {
     try {
-      final db = DatabaseService.instance.db;
-      final rows = await db.query(
-        'profiles',
-        columns: ['current_streak'],
-        where: 'id = ?',
-        whereArgs: [userId],
-        limit: 1,
-      );
-      if (rows.isEmpty) return 0;
-      return (rows.first['current_streak'] as int?) ?? 0;
+      final profile = await DatabaseService.instance.getProfile(userId);
+      if (profile == null) return 0;
+      return (profile['current_streak'] as int?) ?? 0;
     } catch (_) {
       return 0;
     }
@@ -371,13 +351,11 @@ class DailyMissionsService {
   /// R-2: retry missions completed offline (completed_at set, synced_at null).
   Future<void> _retryPendingCompletions(String userId) async {
     try {
-      final db = DatabaseService.instance.db;
-      final pending = await db.query(
-        'daily_mission_progress',
-        where:
-            'user_id = ? AND completed_at IS NOT NULL AND synced_at IS NULL',
-        whereArgs: [userId],
-      );
+      final today = _todayString();
+      final rows = await DatabaseService.instance.getDailyMissions(userId, today);
+      final pending = rows.where(
+        (r) => r['completed_at'] != null && r['synced_at'] == null,
+      ).toList();
       for (final row in pending) {
         final slug = row['slug'] as String;
         try {

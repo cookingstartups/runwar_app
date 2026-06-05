@@ -54,8 +54,7 @@ class RunRecorderService {
     final uid = _activeUserId;
     if (uid != null) {
       try {
-        await DatabaseService.instance.db
-            .delete('run_scratch', where: 'user_id = ?', whereArgs: [uid]);
+        DatabaseService.instance.deleteScratchRun(uid);
       } catch (_) {}
     }
     await _startForegroundTask();
@@ -76,13 +75,15 @@ class RunRecorderService {
     // Persist point to scratch table for crash/process-kill recovery.
     final uid = _activeUserId;
     if (uid != null) {
-      unawaited(DatabaseService.instance.db.insert('run_scratch', {
-        'user_id': uid,
-        'lat': pos.latitude,
-        'lng': pos.longitude,
-        'accuracy': pos.accuracy,
-        'ts': pos.timestamp.toIso8601String(),
-      }).catchError((_) => 0));
+      try {
+        DatabaseService.instance.insertScratchPoint(
+          uid,
+          pos.latitude,
+          pos.longitude,
+          pos.accuracy,
+          pos.timestamp.toIso8601String(),
+        );
+      } catch (_) {}
     }
   }
 
@@ -167,9 +168,9 @@ class RunRecorderService {
     // Invalid loop — clear scratch immediately.
     final uid = _activeUserId;
     if (uid != null) {
-      unawaited(DatabaseService.instance.db
-          .delete('run_scratch', where: 'user_id = ?', whereArgs: [uid])
-          .catchError((_) => 0));
+      try {
+        DatabaseService.instance.deleteScratchRun(uid);
+      } catch (_) {}
     }
     _clearTrackInternal();
     stateNotifier.value = RecorderState.idle;
@@ -195,9 +196,9 @@ class RunRecorderService {
     unawaited(FlutterForegroundTask.stopService());
     final uid = _activeUserId;
     if (uid != null) {
-      unawaited(DatabaseService.instance.db
-          .delete('run_scratch', where: 'user_id = ?', whereArgs: [uid])
-          .catchError((_) => 0));
+      try {
+        DatabaseService.instance.deleteScratchRun(uid);
+      } catch (_) {}
     }
     _clearTrackInternal();
     stateNotifier.value = RecorderState.idle;
@@ -223,12 +224,7 @@ class RunRecorderService {
   Future<void> resumeFromScratch(String userId) async {
     if (stateNotifier.value == RecorderState.recording) return;
     try {
-      final rows = await DatabaseService.instance.db.query(
-        'run_scratch',
-        where: 'user_id = ?',
-        whereArgs: [userId],
-        orderBy: 'ts ASC',
-      );
+      final rows = DatabaseService.instance.getScratchRun(userId);
       if (rows.isEmpty) return;
       _track.clear();
       DateTime? earliest;
@@ -255,8 +251,7 @@ class RunRecorderService {
   /// the foreground service, or state (AC-14, and used internally by discardRun).
   Future<void> clearScratch(String userId) async {
     try {
-      await DatabaseService.instance.db
-          .delete('run_scratch', where: 'user_id = ?', whereArgs: [userId]);
+      DatabaseService.instance.deleteScratchRun(userId);
     } catch (_) {}
   }
 

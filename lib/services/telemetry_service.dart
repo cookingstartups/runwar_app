@@ -1,10 +1,8 @@
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'database_service.dart';
+import 'supabase_service.dart';
 
-// Singleton local telemetry. All events stored in sqflite `events` table.
-// events table schema (already created by DatabaseService v2):
-//   id TEXT PK, name TEXT NOT NULL, props_json TEXT, created_at TEXT NOT NULL
+// Singleton telemetry. All events stored in Supabase `events` table.
 
 class TelemetryService {
   TelemetryService._();
@@ -12,14 +10,13 @@ class TelemetryService {
 
   Future<void> logEvent(String name, {Map<String, dynamic>? props}) async {
     try {
-      final db = DatabaseService.instance.db;
-      final now = DateTime.now().toUtc().toIso8601String();
-      await db.insert('events', {
-        'id': _uuid(),
-        'name': name,
-        'props_json': props != null ? jsonEncode(props) : null,
-        'created_at': now,
-      });
+      final userId = SupabaseService.instance.currentUserId;
+      await DatabaseService.instance.insertEvent(
+        _uuid(),
+        userId,
+        name,
+        props: props,
+      );
       debugPrint('[Telemetry] $name ${props ?? ''}');
     } catch (e) {
       debugPrint('[Telemetry] log error: $e');
@@ -31,7 +28,7 @@ class TelemetryService {
   // share_tapped, timelapse_started, timelapse_replayed, session_duration
 
   static String _uuid() {
-    // Simple time-based ID sufficient for local telemetry
+    // Simple time-based ID sufficient for telemetry
     return '${DateTime.now().microsecondsSinceEpoch}-${_counter++}';
   }
 

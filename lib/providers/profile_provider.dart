@@ -1,5 +1,4 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:sqflite/sqflite.dart';
 import '../services/database_service.dart';
 import '../services/profile_service.dart';
 import '../services/supabase_service.dart';
@@ -36,45 +35,37 @@ final referralCodeProvider =
     FutureProvider.family<String?, String>((ref, userId) async {
   // Gate: only players who are invited AND have redeemed an invitation code can refer.
   try {
-    final db = DatabaseService.instance.db;
-    final profile = await db.query(
-      'profiles', columns: ['invited_at'], where: 'id = ?', whereArgs: [userId], limit: 1,
-    );
-    final isInvited = profile.isNotEmpty && profile.first['invited_at'] != null;
+    final profile = await DatabaseService.instance.getProfile(userId);
+    final isInvited = profile != null && profile['invited_at'] != null;
     if (!isInvited) return null;
-    final redeemed = await db.query(
-      'redeemed_codes', columns: ['code'], where: 'user_id = ?', whereArgs: [userId], limit: 1,
-    );
-    if (redeemed.isEmpty) return null;
+
+    // Check code_redemptions via Supabase.
+    if (SupabaseService.instance.isConnected) {
+      final redeemed = await SupabaseService.instance.supabase
+          .from('code_redemptions')
+          .select('code')
+          .eq('user_id', userId)
+          .limit(1);
+      if ((redeemed as List).isEmpty) return null;
+    }
   } catch (_) {
     return null;
   }
   const cacheKey = 'referral_code_';
-  // 1. Local prefs cache (permanent — code never changes).
+  // 1. Remote prefs cache (permanent — code never changes).
   try {
-    final cached = await DatabaseService.instance.db.query(
-      'prefs',
-      columns: ['value'],
-      where: 'key = ?',
-      whereArgs: ['$cacheKey$userId'],
-      limit: 1,
-    );
-    if (cached.isNotEmpty) return cached.first['value'] as String;
+    final cached = await DatabaseService.instance.getPref(userId, '$cacheKey$userId');
+    if (cached != null && cached.isNotEmpty) return cached;
   } catch (_) {}
   // 2. Generate deterministically from username + userId.
   String username = '';
   try {
-    final rows = await DatabaseService.instance.db.query(
-      'profiles', columns: ['username'], where: 'id = ?', whereArgs: [userId], limit: 1,
-    );
-    username = rows.isEmpty ? '' : (rows.first['username'] as String? ?? '');
+    final profile = await DatabaseService.instance.getProfile(userId);
+    username = profile == null ? '' : (profile['username'] as String? ?? '');
   } catch (_) {}
   final code = _buildReferralCode(username, userId);
   try {
-    await DatabaseService.instance.db.insert(
-      'prefs', {'key': '$cacheKey$userId', 'value': code},
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
+    await DatabaseService.instance.setPref(userId, '$cacheKey$userId', code);
   } catch (_) {}
   if (SupabaseService.instance.isConnected) {
     try {
@@ -96,19 +87,11 @@ String _buildReferralCode(String username, String userId) {
   return '$prefix$suffix';
 }
 
-/// Whether the player has linked a phone number (reads from local SQLite profiles).
+/// Whether the player has linked a phone number (reads from Supabase players).
 final hasPhoneProvider =
     FutureProvider.family<bool, String>((ref, userId) async {
   try {
-    final rows = await DatabaseService.instance.db.query(
-      'profiles',
-      columns: ['phone'],
-      where: 'id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-    if (rows.isEmpty) return false;
-    return (rows.first['phone'] as String?)?.isNotEmpty ?? false;
+    return DatabaseService.instance.hasPhoneLinked(userId);
   } catch (_) {
     return false;
   }

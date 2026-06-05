@@ -1,385 +1,444 @@
-import 'dart:async';
-import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart' as p;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class DatabaseService {
   DatabaseService._();
   static final DatabaseService instance = DatabaseService._();
 
-  Database? _db;
-  Completer<void>? _initCompleter;
+  // In-memory scratch store for in-progress GPS runs.
+  final List<Map<String, dynamic>> _scratchPoints = [];
 
-  Database get db {
-    final d = _db;
-    if (d == null) {
-      throw StateError(
-        'DatabaseService.db accessed before init() completed. '
-        'Await DatabaseService.instance.init() in main() before runApp.',
-      );
-    }
-    return d;
+  /// No-op — Supabase client is already initialised by SupabaseService.init().
+  Future<void> init() async {}
+
+  // ── Players (maps from SQLite "profiles") ──────────────────────────────────
+
+  Future<Map<String, dynamic>?> getProfile(String userId) async {
+    final client = Supabase.instance.client;
+    final rows = await client
+        .from('players')
+        .select()
+        .eq('id', userId)
+        .limit(1);
+    final list = rows as List<dynamic>;
+    if (list.isEmpty) return null;
+    return _normalizeProfile(list.first as Map<String, dynamic>);
   }
 
-  /// Idempotent — concurrent callers all await the same Future.
-  Future<void> init() {
-    final existing = _initCompleter;
-    if (existing != null) return existing.future;
-    final c = Completer<void>();
-    _initCompleter = c;
-    _doInit().then((_) => c.complete()).catchError((Object e, StackTrace s) {
-      _initCompleter = null; // allow retry on failure
-      c.completeError(e, s);
+  Future<void> insertProfile(
+    String id,
+    String username,
+    String city,
+    String color, {
+    double influence = 1,
+    String? invitedAt,
+    int isTester = 0,
+    int isBot = 0,
+    String? createdAt,
+  }) async {
+    final client = Supabase.instance.client;
+    await client.from('players').insert({
+      'id': id,
+      'username': username,
+      'city': city,
+      'color': color,
+      'influence_level': influence,
+      'invited_at': invitedAt,
+      'is_tester': isTester,
+      'is_bot': isBot,
+      'created_at': createdAt ?? DateTime.now().toUtc().toIso8601String(),
     });
-    return c.future;
   }
 
-  Future<void> _doInit() async {
-    final dbPath = p.join(await getDatabasesPath(), 'runwar.db');
-    _db = await openDatabase(
-      dbPath,
-      version: 11,
-      onCreate: (db, version) async {
-        await _createSchema(db);
+  Future<void> upsertProfileIgnore(
+    String id,
+    String username,
+    String city,
+    String color, {
+    double influence = 1,
+    String? invitedAt,
+    int isTester = 0,
+    int isBot = 0,
+  }) async {
+    final client = Supabase.instance.client;
+    await client.from('players').upsert(
+      {
+        'id': id,
+        'username': username,
+        'city': city,
+        'color': color,
+        'influence_level': influence,
+        'invited_at': invitedAt,
+        'is_tester': isTester,
+        'is_bot': isBot,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
       },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
-          await _migrateToV2(db);
-        }
-        if (oldVersion < 3) {
-          await _migrateToV3(db);
-        }
-        if (oldVersion < 4) {
-          await _migrateToV4(db);
-        }
-        if (oldVersion < 5) {
-          await _migrateToV5(db);
-        }
-        if (oldVersion < 6) {
-          await _migrateToV6(db);
-        }
-        if (oldVersion < 7) {
-          await _migrateToV7(db);
-        }
-        if (oldVersion < 8) {
-          await _migrateToV8(db);
-        }
-        if (oldVersion < 9) {
-          await _migrateToV9(db);
-        }
-        if (oldVersion < 10) {
-          await _migrateToV10(db);
-        }
-        if (oldVersion < 11) {
-          await _migrateToV11(db);
-        }
-      },
-      onOpen: (db) async {
-        // CREATE TABLE IF NOT EXISTS is a no-op when tables already exist.
-        await _createSchema(db);
-      },
+      onConflict: 'id',
+      ignoreDuplicates: true,
     );
   }
 
-  Future<void> _createSchema(Database db) async {
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS users (
-        id          TEXT PRIMARY KEY,
-        email       TEXT UNIQUE NOT NULL,
-        password    TEXT NOT NULL,
-        created_at  TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS profiles (
-        id                    TEXT PRIMARY KEY,
-        username              TEXT NOT NULL DEFAULT '',
-        city                  TEXT NOT NULL DEFAULT '',
-        color                 TEXT NOT NULL DEFAULT '#FF7A00',
-        influence_level       INTEGER NOT NULL DEFAULT 1,
-        invited_at            TEXT,
-        is_tester             INTEGER NOT NULL DEFAULT 0,
-        phone                 TEXT,
-        created_at            TEXT NOT NULL,
-        trial_started_at      TEXT,
-        trial_days_remaining  INTEGER NOT NULL DEFAULT 14,
-        trial_last_tick_date  TEXT,
-        freeze_tokens                INTEGER NOT NULL DEFAULT 2,
-        freeze_refreshed_at          TEXT,
-        current_streak               INTEGER NOT NULL DEFAULT 0,
-        first_mission_completed_at   TEXT,
-        first_attack_completed_at    TEXT,
-        streak_started_at            TEXT,
-        is_bot                       INTEGER NOT NULL DEFAULT 0,
-        subscription_tier            TEXT NOT NULL DEFAULT 'free',
-        subscription_expires         TEXT,
-        last_login_at                TEXT,
-        longest_streak               INTEGER NOT NULL DEFAULT 0,
-        milestones_claimed           TEXT NOT NULL DEFAULT '[]'
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS zones (
-        id                TEXT PRIMARY KEY,
-        owner_id          TEXT NOT NULL,
-        city              TEXT NOT NULL,
-        geom_json         TEXT NOT NULL,
-        influence         REAL NOT NULL DEFAULT 1,
-        status            TEXT NOT NULL DEFAULT 'owned',
-        contested_by_id   TEXT,
-        created_at        TEXT NOT NULL,
-        updated_at        TEXT NOT NULL,
-        credits_earned    REAL NOT NULL DEFAULT 0,
-        last_income_at    TEXT,
-        last_active_at    TEXT,
-        dispute_at        TEXT,
-        parent_id         TEXT
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS runs (
-        id          TEXT PRIMARY KEY,
-        user_id     TEXT NOT NULL,
-        city        TEXT NOT NULL,
-        track_json  TEXT NOT NULL,
-        started_at  TEXT NOT NULL,
-        closed_at   TEXT NOT NULL,
-        zone_id     TEXT,
-        created_at  TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS prefs (
-        key   TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS redeemed_codes (
-        code        TEXT PRIMARY KEY,
-        redeemed_at TEXT NOT NULL,
-        user_id     TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS events (
-        id         TEXT PRIMARY KEY,
-        name       TEXT NOT NULL,
-        props_json TEXT,
-        created_at TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS feedback (
-        id         TEXT PRIMARY KEY,
-        trigger    TEXT NOT NULL,
-        rating     TEXT NOT NULL,
-        note       TEXT,
-        created_at TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS city_waitlists (
-        user_id    TEXT NOT NULL,
-        city_slug  TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (user_id, city_slug)
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS daily_mission_progress (
-        id           TEXT PRIMARY KEY,
-        user_id      TEXT NOT NULL,
-        date         TEXT NOT NULL,
-        slug         TEXT NOT NULL,
-        progress     INTEGER NOT NULL DEFAULT 0,
-        target       INTEGER NOT NULL DEFAULT 1,
-        completed_at TEXT,
-        synced_at    TEXT,
-        UNIQUE(user_id, date, slug)
-      )
-    ''');
-    await db.execute('''
-      CREATE INDEX IF NOT EXISTS idx_dmp_local_date
-        ON daily_mission_progress(user_id, date)
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS run_scratch (
-        id       INTEGER PRIMARY KEY,
-        user_id  TEXT NOT NULL,
-        lat      REAL NOT NULL,
-        lng      REAL NOT NULL,
-        accuracy REAL,
-        ts       TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE INDEX IF NOT EXISTS idx_run_scratch_user_ts
-        ON run_scratch(user_id, ts)
-    ''');
+  Future<void> updateProfile(String userId, Map<String, dynamic> patch) async {
+    if (patch.isEmpty) return;
+    final client = Supabase.instance.client;
+    // Map local column names to Supabase column names.
+    final remote = <String, dynamic>{};
+    patch.forEach((k, v) {
+      remote[k] = v;
+    });
+    await client.from('players').update(remote).eq('id', userId);
   }
 
-  Future<void> _migrateToV6(Database db) async {
-    try {
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS city_waitlists (
-          user_id    TEXT NOT NULL,
-          city_slug  TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY (user_id, city_slug)
+  Future<bool> isProfileInvited(String userId) async {
+    final profile = await getProfile(userId);
+    if (profile == null) return false;
+    return profile['invited_at'] != null;
+  }
+
+  Future<String?> getUsername(String userId) async {
+    final profile = await getProfile(userId);
+    return profile?['username'] as String?;
+  }
+
+  Future<bool> hasPhoneLinked(String userId) async {
+    final profile = await getProfile(userId);
+    final phone = profile?['phone'] as String?;
+    return phone != null && phone.isNotEmpty;
+  }
+
+  Future<Map<String, dynamic>?> getTrialState(String userId) async {
+    final client = Supabase.instance.client;
+    final rows = await client
+        .from('players')
+        .select(
+          'trial_started_at, trial_days_remaining, trial_last_tick_date, '
+          'freeze_tokens, freeze_refreshed_at, current_streak',
         )
-      ''');
-    } catch (_) {}
+        .eq('id', userId)
+        .limit(1);
+    final list = rows as List<dynamic>;
+    if (list.isEmpty) return null;
+    return Map<String, dynamic>.from(list.first as Map<String, dynamic>);
   }
 
-  Future<void> _migrateToV5(Database db) async {
+  Future<void> updateTrialState(
+    String userId, {
+    String? trialStartedAt,
+    int? trialDaysRemaining,
+    String? trialLastTickDate,
+    int? freezeTokens,
+    String? freezeRefreshedAt,
+    int? currentStreak,
+    String? streakStartedAt,
+    int? longestStreak,
+  }) async {
+    final patch = <String, dynamic>{};
+    if (trialStartedAt != null) patch['trial_started_at'] = trialStartedAt;
+    if (trialDaysRemaining != null) patch['trial_days_remaining'] = trialDaysRemaining;
+    if (trialLastTickDate != null) patch['trial_last_tick_date'] = trialLastTickDate;
+    if (freezeTokens != null) patch['freeze_tokens'] = freezeTokens;
+    if (freezeRefreshedAt != null) patch['freeze_refreshed_at'] = freezeRefreshedAt;
+    if (currentStreak != null) patch['current_streak'] = currentStreak;
+    if (streakStartedAt != null) patch['streak_started_at'] = streakStartedAt;
+    if (longestStreak != null) patch['longest_streak'] = longestStreak;
+    if (patch.isEmpty) return;
+    await updateProfile(userId, patch);
+  }
+
+  Future<void> updateInvitationStatus(
+    String userId,
+    String invitedAt, {
+    int isTester = 1,
+  }) async {
+    await updateProfile(userId, {
+      'invited_at': invitedAt,
+      'is_tester': isTester,
+    });
+  }
+
+  /// Bulk upsert for demo-seed bot players (no Supabase Auth row needed).
+  Future<void> bulkUpsertPlayers(List<Map<String, dynamic>> players) async {
+    if (players.isEmpty) return;
+    final client = Supabase.instance.client;
+    await client.from('players').upsert(players, onConflict: 'id', ignoreDuplicates: true);
+  }
+
+  // ── Zones ───────────────────────────────────────────────────────────────────
+
+  Future<List<Map<String, dynamic>>> getZonesByCity(
+    String city, {
+    String? status,
+  }) async {
+    final client = Supabase.instance.client;
+    final List<dynamic> rows;
+    if (status != null) {
+      rows = await client
+          .from('zones')
+          .select()
+          .eq('city', city)
+          .eq('status', status);
+    } else {
+      rows = await client.from('zones').select().eq('city', city);
+    }
+    return rows
+        .map((r) => Map<String, dynamic>.from(r as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getOwnedZonesByUser(
+    String userId,
+    String city,
+  ) async {
+    final client = Supabase.instance.client;
+    final rows = await client
+        .from('zones')
+        .select()
+        .eq('owner_id', userId)
+        .eq('city', city)
+        .eq('status', 'owned');
+    return (rows as List<dynamic>)
+        .map((r) => Map<String, dynamic>.from(r as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>?> getZone(String zoneId) async {
+    final client = Supabase.instance.client;
+    final rows = await client
+        .from('zones')
+        .select()
+        .eq('id', zoneId)
+        .limit(1);
+    final list = rows as List<dynamic>;
+    if (list.isEmpty) return null;
+    return Map<String, dynamic>.from(list.first as Map<String, dynamic>);
+  }
+
+  Future<List<Map<String, dynamic>>> getZonesByOwner(
+    String ownerId, {
+    int? limit,
+  }) async {
+    final client = Supabase.instance.client;
+    final List<dynamic> rows;
+    if (limit != null) {
+      rows = await client
+          .from('zones')
+          .select()
+          .eq('owner_id', ownerId)
+          .limit(limit);
+    } else {
+      rows = await client.from('zones').select().eq('owner_id', ownerId);
+    }
+    return rows
+        .map((r) => Map<String, dynamic>.from(r as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> insertZone(Map<String, dynamic> zone) async {
+    final client = Supabase.instance.client;
+    await client.from('zones').insert(zone);
+  }
+
+  Future<void> updateZone(String id, Map<String, dynamic> patch) async {
+    if (patch.isEmpty) return;
+    final client = Supabase.instance.client;
+    await client.from('zones').update(patch).eq('id', id);
+  }
+
+  Future<void> deleteZone(String id) async {
+    final client = Supabase.instance.client;
+    await client.from('zones').delete().eq('id', id);
+  }
+
+  Future<void> bulkInsertZones(List<Map<String, dynamic>> zones) async {
+    if (zones.isEmpty) return;
+    final client = Supabase.instance.client;
+    await client.from('zones').upsert(zones, onConflict: 'id', ignoreDuplicates: true);
+  }
+
+  // ── Prefs ───────────────────────────────────────────────────────────────────
+
+  Future<String?> getPref(String userId, String key) async {
+    final client = Supabase.instance.client;
+    final rows = await client
+        .from('prefs')
+        .select('value')
+        .eq('user_id', userId)
+        .eq('key', key)
+        .limit(1);
+    final list = rows as List<dynamic>;
+    if (list.isEmpty) return null;
+    return list.first['value'] as String?;
+  }
+
+  Future<void> setPref(String userId, String key, String value) async {
+    final client = Supabase.instance.client;
+    await client.from('prefs').upsert(
+      {'user_id': userId, 'key': key, 'value': value},
+      onConflict: 'user_id,key',
+    );
+  }
+
+  // ── Runs ────────────────────────────────────────────────────────────────────
+
+  Future<void> insertRun(Map<String, dynamic> run) async {
+    final client = Supabase.instance.client;
+    await client.from('runs').insert(run);
+  }
+
+  Future<List<Map<String, dynamic>>> getUserRuns(
+    String userId,
+    String city,
+  ) async {
+    final client = Supabase.instance.client;
+    final rows = await client
+        .from('runs')
+        .select('track_json')
+        .eq('user_id', userId)
+        .eq('city', city);
+    return (rows as List<dynamic>)
+        .map((r) => Map<String, dynamic>.from(r as Map<String, dynamic>))
+        .toList();
+  }
+
+  // ── Run scratch (in-memory) ─────────────────────────────────────────────────
+
+  void insertScratchPoint(
+    String userId,
+    double lat,
+    double lng,
+    double? accuracy,
+    String ts,
+  ) {
+    _scratchPoints.add({
+      'user_id': userId,
+      'lat': lat,
+      'lng': lng,
+      'accuracy': accuracy,
+      'ts': ts,
+    });
+  }
+
+  List<Map<String, dynamic>> getScratchRun(String userId) {
+    return _scratchPoints
+        .where((r) => r['user_id'] == userId)
+        .map((r) => Map<String, dynamic>.from(r))
+        .toList()
+      ..sort((a, b) => (a['ts'] as String).compareTo(b['ts'] as String));
+  }
+
+  void deleteScratchRun(String userId) {
+    _scratchPoints.removeWhere((r) => r['user_id'] == userId);
+  }
+
+  void deleteScratchBefore(String userId, String cutoffIso) {
+    _scratchPoints.removeWhere(
+      (r) => r['user_id'] == userId && (r['ts'] as String).compareTo(cutoffIso) < 0,
+    );
+  }
+
+  // ── Events / Telemetry ──────────────────────────────────────────────────────
+
+  Future<void> insertEvent(
+    String id,
+    String? userId,
+    String name, {
+    Map<String, dynamic>? props,
+  }) async {
     try {
-      await db.execute('ALTER TABLE profiles ADD COLUMN phone TEXT');
-    } catch (_) {}
-  }
-
-  Future<void> _migrateToV4(Database db) async {
-    // influence → REAL (SQLite ALTER COLUMN not supported; add new columns only;
-    // existing INTEGER values are read back as REAL automatically in Dart)
-    for (final col in [
-      'ALTER TABLE zones ADD COLUMN credits_earned REAL NOT NULL DEFAULT 0',
-      'ALTER TABLE zones ADD COLUMN last_income_at TEXT',
-      'ALTER TABLE zones ADD COLUMN last_active_at TEXT',
-      'ALTER TABLE zones ADD COLUMN dispute_at TEXT',
-      'ALTER TABLE zones ADD COLUMN parent_id TEXT',
-    ]) {
-      try {
-        await db.execute(col);
-      } catch (_) {}
+      final client = Supabase.instance.client;
+      await client.from('events').insert({
+        'id': id,
+        'user_id': userId,
+        'name': name,
+        'props_json': props != null ? props.toString() : null,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      });
+    } catch (_) {
+      // Telemetry is fire-and-forget; never rethrow.
     }
   }
 
-  Future<void> _migrateToV3(Database db) async {
-    try {
-      await db.execute('ALTER TABLE zones ADD COLUMN contested_by_id TEXT');
-    } catch (_) {}
+  // ── Feedback ────────────────────────────────────────────────────────────────
+
+  Future<void> insertFeedback(
+    String id,
+    String? userId,
+    String trigger,
+    String rating, {
+    String? note,
+    String? createdAt,
+  }) async {
+    final client = Supabase.instance.client;
+    await client.from('feedback').insert({
+      'id': id,
+      'user_id': userId,
+      'trigger': trigger,
+      'rating': rating,
+      'note': note,
+      'created_at': createdAt ?? DateTime.now().toUtc().toIso8601String(),
+    });
   }
 
-  Future<void> _migrateToV7(Database db) async {
-    for (final col in [
-      'ALTER TABLE profiles ADD COLUMN trial_started_at TEXT',
-      'ALTER TABLE profiles ADD COLUMN trial_days_remaining INTEGER NOT NULL DEFAULT 14',
-      'ALTER TABLE profiles ADD COLUMN trial_last_tick_date TEXT',
-      'ALTER TABLE profiles ADD COLUMN freeze_tokens INTEGER NOT NULL DEFAULT 2',
-      'ALTER TABLE profiles ADD COLUMN freeze_refreshed_at TEXT',
-      'ALTER TABLE profiles ADD COLUMN current_streak INTEGER NOT NULL DEFAULT 0',
-    ]) {
-      try {
-        await db.execute(col);
-      } catch (_) {}
+  // ── City waitlists ──────────────────────────────────────────────────────────
+
+  Future<List<String>> getJoinedCities(String userId) async {
+    final client = Supabase.instance.client;
+    final rows = await client
+        .from('city_waitlists')
+        .select('city_slug')
+        .eq('user_id', userId);
+    return (rows as List<dynamic>)
+        .map((r) => r['city_slug'] as String)
+        .toList();
+  }
+
+  Future<void> joinCityWaitlist(String userId, String citySlug) async {
+    final client = Supabase.instance.client;
+    await client.from('city_waitlists').upsert(
+      {
+        'user_id': userId,
+        'city_slug': citySlug,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      onConflict: 'user_id,city_slug',
+      ignoreDuplicates: true,
+    );
+  }
+
+  // ── Daily mission progress ──────────────────────────────────────────────────
+
+  Future<List<Map<String, dynamic>>> getDailyMissions(
+    String userId,
+    String date,
+  ) async {
+    final client = Supabase.instance.client;
+    final rows = await client
+        .from('daily_mission_progress')
+        .select()
+        .eq('user_id', userId)
+        .eq('date', date);
+    return (rows as List<dynamic>)
+        .map((r) => Map<String, dynamic>.from(r as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> upsertMissionProgress(Map<String, dynamic> row) async {
+    final client = Supabase.instance.client;
+    await client.from('daily_mission_progress').upsert(
+      row,
+      onConflict: 'user_id,date,slug',
+    );
+  }
+
+  // ── Private helpers ─────────────────────────────────────────────────────────
+
+  /// Normalise the Supabase `players` row to match the local profile field
+  /// names used throughout the app (e.g. `display_name` → `username`).
+  Map<String, dynamic> _normalizeProfile(Map<String, dynamic> row) {
+    final out = Map<String, dynamic>.from(row);
+    // Supabase column is `username`; fall back to `display_name` for old rows.
+    if (!out.containsKey('username')) {
+      out['username'] = out['display_name'] ?? '';
     }
-  }
-
-  Future<void> _migrateToV8(Database db) async {
-    for (final col in [
-      'ALTER TABLE profiles ADD COLUMN first_mission_completed_at TEXT',
-      'ALTER TABLE profiles ADD COLUMN first_attack_completed_at TEXT',
-      'ALTER TABLE profiles ADD COLUMN streak_started_at TEXT',
-      'ALTER TABLE profiles ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0',
-    ]) {
-      try {
-        await db.execute(col);
-      } catch (_) {}
-    }
-    // Backfill bot flag for demo seed accounts.
-    try {
-      await db.execute(
-        "UPDATE profiles SET is_bot = 1 WHERE EXISTS "
-        "(SELECT 1 FROM users WHERE users.id = profiles.id AND users.email LIKE '%@runwar.demo')",
-      );
-    } catch (_) {}
-  }
-
-  Future<void> _migrateToV9(Database db) async {
-    try {
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS daily_mission_progress (
-          id           TEXT PRIMARY KEY,
-          user_id      TEXT NOT NULL,
-          date         TEXT NOT NULL,
-          slug         TEXT NOT NULL,
-          progress     INTEGER NOT NULL DEFAULT 0,
-          target       INTEGER NOT NULL DEFAULT 1,
-          completed_at TEXT,
-          synced_at    TEXT,
-          UNIQUE(user_id, date, slug)
-        )
-      ''');
-    } catch (_) {}
-    try {
-      await db.execute('''
-        CREATE INDEX IF NOT EXISTS idx_dmp_local_date
-          ON daily_mission_progress(user_id, date)
-      ''');
-    } catch (_) {}
-  }
-
-  Future<void> _migrateToV10(Database db) async {
-    for (final col in [
-      "ALTER TABLE profiles ADD COLUMN subscription_tier TEXT NOT NULL DEFAULT 'free'",
-      'ALTER TABLE profiles ADD COLUMN subscription_expires TEXT',
-      'ALTER TABLE profiles ADD COLUMN last_login_at TEXT',
-      'ALTER TABLE profiles ADD COLUMN longest_streak INTEGER NOT NULL DEFAULT 0',
-      "ALTER TABLE profiles ADD COLUMN milestones_claimed TEXT NOT NULL DEFAULT '[]'",
-    ]) {
-      try {
-        await db.execute(col);
-      } catch (_) {}
-    }
-  }
-
-  Future<void> _migrateToV11(Database db) async {
-    try {
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS run_scratch (
-          id       INTEGER PRIMARY KEY,
-          user_id  TEXT NOT NULL,
-          lat      REAL NOT NULL,
-          lng      REAL NOT NULL,
-          accuracy REAL,
-          ts       TEXT NOT NULL
-        )
-      ''');
-    } catch (_) {}
-  }
-
-  Future<void> _migrateToV2(Database db) async {
-    try {
-      await db.execute('ALTER TABLE profiles ADD COLUMN is_tester INTEGER NOT NULL DEFAULT 0');
-    } catch (_) {}
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS prefs (
-        key   TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS redeemed_codes (
-        code        TEXT PRIMARY KEY,
-        redeemed_at TEXT NOT NULL,
-        user_id     TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS events (
-        id         TEXT PRIMARY KEY,
-        name       TEXT NOT NULL,
-        props_json TEXT,
-        created_at TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS feedback (
-        id         TEXT PRIMARY KEY,
-        trigger    TEXT NOT NULL,
-        rating     TEXT NOT NULL,
-        note       TEXT,
-        created_at TEXT NOT NULL
-      )
-    ''');
+    return out;
   }
 }

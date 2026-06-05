@@ -24,48 +24,22 @@ class TrialService {
 
   /// Sets trial_started_at on first run FAB tap. No-op if already set.
   Future<void> initTrial(String userId) async {
-    final db = DatabaseService.instance.db;
-    final rows = await db.query(
-      'profiles',
-      columns: ['trial_started_at'],
-      where: 'id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-    if (rows.isEmpty || rows.first['trial_started_at'] != null) return;
+    final row = await DatabaseService.instance.getTrialState(userId);
+    if (row == null || row['trial_started_at'] != null) return;
     final today = _todayStr();
-    await db.update(
-      'profiles',
-      {
-        'trial_started_at': DateTime.now().toUtc().toIso8601String(),
-        'trial_last_tick_date': today,
-        'freeze_refreshed_at': today,
-      },
-      where: 'id = ?',
-      whereArgs: [userId],
+    await DatabaseService.instance.updateTrialState(
+      userId,
+      trialStartedAt: DateTime.now().toUtc().toIso8601String(),
+      trialLastTickDate: today,
+      freezeRefreshedAt: today,
     );
   }
 
   /// Called on app foreground. Applies streak/freeze mechanics to trial credits.
   /// Same-day calls are no-ops.
   Future<void> processDailyTick(String userId) async {
-    final db = DatabaseService.instance.db;
-    final rows = await db.query(
-      'profiles',
-      columns: [
-        'trial_started_at',
-        'trial_days_remaining',
-        'trial_last_tick_date',
-        'freeze_tokens',
-        'freeze_refreshed_at',
-        'current_streak',
-      ],
-      where: 'id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-    if (rows.isEmpty) return;
-    final row = rows.first;
+    final row = await DatabaseService.instance.getTrialState(userId);
+    if (row == null) return;
     if (row['trial_started_at'] == null) return;
 
     final today = _todayStr();
@@ -104,33 +78,21 @@ class TrialService {
       newStreak = 1;
     }
 
-    await db.update(
-      'profiles',
-      {
-        'trial_days_remaining': daysRemaining.clamp(0, 14),
-        'trial_last_tick_date': today,
-        'freeze_tokens': freezeTokens,
-        'freeze_refreshed_at': refreshedAt ?? today,
-        'current_streak': newStreak,
-      },
-      where: 'id = ?',
-      whereArgs: [userId],
+    await DatabaseService.instance.updateTrialState(
+      userId,
+      trialDaysRemaining: daysRemaining.clamp(0, 14),
+      trialLastTickDate: today,
+      freezeTokens: freezeTokens,
+      freezeRefreshedAt: refreshedAt ?? today,
+      currentStreak: newStreak,
     );
   }
 
   Future<TrialStatus> getStatus(String userId) async {
-    final db = DatabaseService.instance.db;
-    final rows = await db.query(
-      'profiles',
-      columns: ['trial_started_at', 'trial_days_remaining', 'current_streak'],
-      where: 'id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-    if (rows.isEmpty) {
+    final row = await DatabaseService.instance.getTrialState(userId);
+    if (row == null) {
       return const TrialStatus(started: false, daysRemaining: 14, streak: 0);
     }
-    final row = rows.first;
     return TrialStatus(
       started: row['trial_started_at'] != null,
       daysRemaining: (row['trial_days_remaining'] as int?) ?? 14,
