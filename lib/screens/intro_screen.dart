@@ -137,7 +137,7 @@ const _slides = [
   ),
   // 9 — Real-world events
   _Slide(
-    tag: 'REAL EVENTS',
+    tag: 'YEARLY IN-PERSON EVENT',
     tagColor: kAccent2,
     headline: 'THE GAME\nGETS REAL.',
     body: 'Real-world races coming to your city — limited seats, livestreamed, glory on the line.',
