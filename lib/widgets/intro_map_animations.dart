@@ -297,9 +297,19 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   @override
   void initState() {
     super.initState();
-    _ctrl =
-        AnimationController(vsync: this, duration: const Duration(seconds: 12))
-          ..repeat();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 12));
+    _startLoop();
+  }
+
+  void _startLoop() {
+    _ctrl.reset();
+    _ctrl.forward().then((_) {
+      if (!mounted) return;
+      Future.delayed(const Duration(seconds: 2), () {
+        if (!mounted) return;
+        _startLoop();
+      });
+    });
   }
 
   void _updatePoints() {
@@ -372,14 +382,15 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
   });
 
   // Segment indices where each block loop closes.
-  // Block 3 uses idx 10 (one before the final point) so the fill can ramp up
-  // before traveled caps at 11.
-  static const int _block1CloseIdx = 4;
-  static const int _block2CloseIdx = 8;
-  static const int _block3CloseIdx = 10;
+  // Block 1 closes at idx 4 (A), block 2 at idx 8 (B), block 3 at idx 11 (G).
+  // Block 3 ramp starts 0.5 segs before close so fill reaches full opacity
+  // exactly when the route ends (traveled=11). Blocks 1+2 ramp after close.
+  static const double _block1CloseIdx = 4.0;
+  static const double _block2CloseIdx = 8.0;
+  static const double _block3CloseIdx = 10.5; // 10.5→11.0 = full at close
 
-  // Fill opacity driven by how far past each close index the runner has traveled.
-  // Ramp window of 0.5 segments; holds until t=0.94, then fades out over 0.94–1.0.
+  // Fill opacity ramps over 0.5 segments past each close index; holds until
+  // t=0.94, then fades out over 0.94–1.0.
   double _fillOpacity(double traveled, double closeIdx, double t) {
     final frac = ((traveled - closeIdx) / 0.5).clamp(0.0, 1.0);
     final fade =
@@ -397,9 +408,9 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
     final traveled = routeProgress * segs;
 
     // Block fills — appear as the runner closes each loop.
-    final fill1Opacity = _fillOpacity(traveled, _block1CloseIdx.toDouble(), t);
-    final fill2Opacity = _fillOpacity(traveled, _block2CloseIdx.toDouble(), t);
-    final fill3Opacity = _fillOpacity(traveled, _block3CloseIdx.toDouble(), t);
+    final fill1Opacity = _fillOpacity(traveled, _block1CloseIdx, t);
+    final fill2Opacity = _fillOpacity(traveled, _block2CloseIdx, t);
+    final fill3Opacity = _fillOpacity(traveled, _block3CloseIdx, t);
     drawFill(canvas, block1, fill1Opacity);
     drawFill(canvas, block2, fill2Opacity);
     drawFill(canvas, block3, fill3Opacity);
@@ -407,46 +418,40 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
     // Single trace covering all 3 blocks.
     drawTrace(canvas, route, routeProgress);
 
-    // Runner dot — traces route, then micro-drifts and fades (GPS lost in building).
-    if (t < 0.94) {
+    // Runner dot:
+    //   t < 0.82  — traces route normally
+    //   t 0.82–0.94 — continues past close point, turns right, fades out
+    //   t >= 0.94  — runner gone; fills continue fading via _fillOpacity
+    if (t < 0.82) {
       drawRunner(canvas, route, routeProgress);
-    } else if (route.isNotEmpty) {
-      // drift 0..1 over t=0.94..1.0
-      final drift = ((t - 0.94) / 0.06).clamp(0.0, 1.0);
-      final exitFade = 1.0 - drift;
-      // tiny sinusoidal wobble + slight northward creep simulating last steps into building
-      final microOffset = Offset(
-        math.sin(drift * math.pi * 2.5) * 3.5,
-        -drift * 5.0,
-      );
-      final driftPos = route.last + microOffset;
-      // halo
-      canvas.drawCircle(
-          driftPos,
-          12,
-          Paint()
-            ..color = accent.withValues(alpha: 0.25 * exitFade)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
-      // main dot
-      canvas.drawCircle(driftPos, 4.5,
-          Paint()..color = accent.withValues(alpha: exitFade));
-      // inner white
-      canvas.drawCircle(
-          driftPos,
-          1.8,
-          Paint()
-            ..color = Colors.white.withValues(alpha: 0.8 * exitFade));
-      // expanding GPS-lost ring (appears at drift=0.3, expands+fades to drift=1.0)
-      if (drift > 0.3) {
-        final lostT = ((drift - 0.3) / 0.7).clamp(0.0, 1.0);
+    } else if (t < 0.94 && route.length >= 2) {
+      final contT = ((t - 0.82) / 0.12).clamp(0.0, 1.0);
+      // Direction of the last segment (I → G).
+      final dir = route.last - route[route.length - 2];
+      final dirLen = dir.distance;
+      if (dirLen > 0.01) {
+        final unitDir = dir / dirLen;
+        // 90° right turn: (dx,dy) → (dy,−dx)
+        final rightDir = Offset(unitDir.dy, -unitDir.dx);
+        // Gradually blend forward direction into right-turn direction.
+        final blended = Offset.lerp(unitDir, rightDir, contT)!;
+        final blendNorm = blended / blended.distance;
+        final pos = route.last +
+            blendNorm * Curves.easeIn.transform(contT) * 34;
+        final fade = 1.0 - contT;
         canvas.drawCircle(
-            driftPos,
-            lostT * 22,
+            pos,
+            12,
             Paint()
-              ..color =
-                  accent.withValues(alpha: (1.0 - lostT) * 0.35 * exitFade)
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 1.5);
+              ..color = accent.withValues(alpha: 0.25 * fade)
+              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+        canvas.drawCircle(
+            pos, 4.5, Paint()..color = accent.withValues(alpha: fade));
+        canvas.drawCircle(
+            pos,
+            1.8,
+            Paint()
+              ..color = Colors.white.withValues(alpha: 0.8 * fade));
       }
     }
 
@@ -495,45 +500,44 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   late final AnimationController _ctrl;
   final _mapCtrl = MapController();
 
-  // Attacker route — blue rival (kSea) follows real Carrer de Cuba GPS coords
-  // (OSM-verified) entering from off-screen south, hooks onto Carrer de
-  // Puerto Rico to lasso the G/F vertices of kS1Block2.
+  // Attacker route — blue rival (kSea) follows real Ruzafa streets.
   //
-  //   pt0 — off-screen south (below viewport)
-  //   pt1–pt4 — Carrer de Cuba (real OSM: lat 39.4577→39.4604, lng -0.374→-0.376)
-  //   pt5 — LASSO ANCHOR near kS1Block2 F vertex
-  //   pt6 — Puerto Rico E (OSM G vertex ≈ 39.4610, -0.3764)
-  //   pt7 — Puerto Rico heading west
-  //   pt8 — south back toward anchor
-  //   pt9 — LASSO CLOSE = pt5
+  //   pt0–pt4 — straight approach up Carrer de Cuba heading NW (unchanged)
+  //   pt4     — CORNER: TURN RIGHT onto cross-street heading NE
+  //   pt5–pt6 — 2 city blocks NE along Carrer de Sueca / cross-street
+  //   pt6     — TURN RIGHT heading SE (south-east, 1 block)
+  //   pt7     — TURN RIGHT heading SW back toward Cuba diagonal
+  //   pt8     — LASSO CLOSES: crosses own Cuba approach path
+  //   pt9     — continues a few metres past close → fades out
   static const _kAttackerRoute = [
-    LatLng(39.4556, -0.3732), // 0: off-screen south on Cuba approach
-    LatLng(39.4577, -0.3740), // 1: Cuba southern start (OSM)
-    LatLng(39.4586, -0.3747), // 2: Cuba mid (OSM)
-    LatLng(39.4598, -0.3755), // 3: Cuba continuing NW (OSM)
-    LatLng(39.4604, -0.3760), // 4: Cuba at kS1Block2 F area (OSM)
-    LatLng(39.4605, -0.3764), // 5: LASSO ANCHOR — Cuba/Puerto Rico junction
-    LatLng(39.4610, -0.3763), // 6: Puerto Rico E (near G vertex, OSM)
-    LatLng(39.4610, -0.3769), // 7: Puerto Rico heading west (OSM)
-    LatLng(39.4605, -0.3770), // 8: south back toward anchor
-    LatLng(39.4605, -0.3764), // 9: LASSO CLOSE = pt5
+    LatLng(39.4556, -0.3732), //  0: off-screen south approach
+    LatLng(39.4577, -0.3740), //  1: Carrer de Cuba south
+    LatLng(39.4586, -0.3747), //  2: Cuba mid
+    LatLng(39.4598, -0.3755), //  3: Cuba NW
+    LatLng(39.4604, -0.3760), //  4: Cuba — CORNER: turn right (NE)
+    LatLng(39.4611, -0.3754), //  5: 1 block NE (Sueca cross-street)
+    LatLng(39.4618, -0.3748), //  6: 2 blocks NE — overlapping kS1Block2 east edge
+    LatLng(39.4612, -0.3741), //  7: TURN RIGHT: 1 block SE
+    LatLng(39.4605, -0.3748), //  8: TURN RIGHT: heading SW back toward Cuba
+    LatLng(39.4602, -0.3757), //  9: LASSO CLOSES (crosses own Cuba approach path)
+    LatLng(39.4601, -0.3764), // 10: continues past close → FADE
   ];
 
-  // The polygon enclosed by the attacker's lasso (pts 5–9).
+  // The polygon enclosed by the lasso (pts 4–9).
   static const _kAttackerLasso = [
-    LatLng(39.4605, -0.3764), // 5: anchor
-    LatLng(39.4610, -0.3763), // 6: Puerto Rico E (near G vertex)
-    LatLng(39.4610, -0.3769), // 7: Puerto Rico W
-    LatLng(39.4605, -0.3770), // 8: south
+    LatLng(39.4604, -0.3760), // 4: SW corner (Cuba turn)
+    LatLng(39.4618, -0.3748), // 6: NE corner
+    LatLng(39.4612, -0.3741), // 7: SE corner
+    LatLng(39.4605, -0.3748), // 8: S
   ];
 
-  // Disputed area — overlap of attacker lasso with kS1Block2 near G/F vertices.
+  // Disputed area — overlap of attacker lasso with kS1Block2 (A/E vertices).
   static const _kDisputedArea = [
-    LatLng(39.4605, -0.3764),
-    LatLng(39.4610, -0.3763),
-    LatLng(39.4610, -0.3765),
-    LatLng(39.4608, -0.3768),
-    LatLng(39.4605, -0.3767),
+    LatLng(39.4618, -0.3752), // near E vertex of kS1Block2
+    LatLng(39.4621, -0.3755), // near A vertex
+    LatLng(39.4615, -0.3758), // SE edge
+    LatLng(39.4612, -0.3756), // S
+    LatLng(39.4611, -0.3752), // SE of E
   ];
 
   List<List<Offset>> _inheritedPts = [];
@@ -708,11 +712,13 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
     drawFillColor(canvas, ownedBlock1, kAccent, 0.22 * fade);
     drawFillColor(canvas, ownedBlock2, kAccent, 0.22 * fade);
 
-    // 2. Attacker (blue) trail: runner traces route up to lasso close.
+    // 2. Attacker (blue) trail: runner traces route, then continues past close.
+    //   t < _lassoCloseT        : runner moving along route
+    //   t [close, close+0.08]   : runner continues past close, turns, fades
+    //   t > close+0.08          : lasso outline only
     final routeProgress = (t / _lassoCloseT).clamp(0.0, 1.0);
     if (t < _lassoCloseT) {
       drawTraceColor(canvas, attackerRoute, routeProgress, kSea);
-      // Runner dot
       if (attackerRoute.length >= 2) {
         final segs = attackerRoute.length - 1;
         final totalLen = routeProgress * segs;
@@ -734,8 +740,34 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
             pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.8));
       }
     } else {
-      // After close — show full attacker lasso outline.
+      // Lasso outline stays visible.
       drawTraceColor(canvas, attackerRoute, 1.0, kSea.withValues(alpha: fade));
+      // Runner continues past close, fades over 0.08 of t.
+      if (t < _lassoCloseT + 0.08 && attackerRoute.length >= 2) {
+        final contT = ((t - _lassoCloseT) / 0.08).clamp(0.0, 1.0);
+        final dir = attackerRoute.last - attackerRoute[attackerRoute.length - 2];
+        final dirLen = dir.distance;
+        if (dirLen > 0.01) {
+          final unitDir = dir / dirLen;
+          final pos = attackerRoute.last +
+              unitDir * Curves.easeIn.transform(contT) * 22;
+          final runnerFade = 1.0 - contT;
+          canvas.drawCircle(
+              pos,
+              12,
+              Paint()
+                ..color = kSea.withValues(alpha: 0.25 * runnerFade)
+                ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+          canvas.drawCircle(
+              pos, 4.5, Paint()..color = kSea.withValues(alpha: runnerFade));
+          canvas.drawCircle(
+              pos,
+              1.8,
+              Paint()
+                ..color =
+                    Colors.white.withValues(alpha: 0.8 * runnerFade));
+        }
+      }
     }
 
     // 3. Disputed area fill — snaps on at t=0.60, lerps amber→blue at t=0.75–0.85.

@@ -125,7 +125,17 @@ const _slides = [
     layout: _Layout.textTopVisualBottom,
     bodyMaxLines: 4,
   ),
-  // 8 — Invite only
+  // 8 — ICP targeting: survival cut mechanic
+  _Slide(
+    tag: 'SURVIVAL CUT WEEK',
+    tagColor: kAccent2,
+    headline: 'STAY IN THE TOP 90%.\nOR LOSE EVERYTHING.',
+    body: 'From time to time, we cut the bottom 10%. Zones wiped. Rank gone. No warnings, no appeals. Earn your seat in this war room — or lose it.',
+    anim: _Anim.rivals,
+    layout: _Layout.visualTopTextBottom,
+    bodyMaxLines: 4,
+  ),
+  // 9 — Invite only
   _Slide(
     tag: 'INVITE ONLY',
     tagColor: kAccent,
