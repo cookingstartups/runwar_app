@@ -5,6 +5,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_service.dart';
 import '../config/supabase_config.dart';
 
+const Duration kPresenceBroadcastInterval = Duration(seconds: 5);
+const Duration kPresenceStaleTtl = Duration(seconds: 15);
+
 class PlayerPresence {
   const PlayerPresence({
     required this.playerId,
@@ -12,6 +15,8 @@ class PlayerPresence {
     required this.color,
     required this.position,
     required this.updatedAt,
+    this.isRecording = false,
+    this.colorHex,
   });
 
   final String playerId;
@@ -19,6 +24,8 @@ class PlayerPresence {
   final String color;
   final LatLng position;
   final DateTime updatedAt;
+  final bool isRecording;
+  final String? colorHex;
 
   factory PlayerPresence.fromPayload(Map<String, dynamic> p) =>
       PlayerPresence(
@@ -32,6 +39,8 @@ class PlayerPresence {
         updatedAt: DateTime.fromMillisecondsSinceEpoch(
           (p['t'] as int?) ?? 0,
         ),
+        isRecording: (p['rec'] as bool?) ?? false,
+        colorHex: p['color_hex'] as String?,
       );
 }
 
@@ -57,6 +66,8 @@ class RealtimePresenceService {
   String? _myPlayerId;
   String? _myDisplayName;
   String? _myColor;
+  bool _isRecording = false;
+  String? _colorHex;
 
   /// Call once after auth to begin presence tracking.
   void init({
@@ -100,9 +111,12 @@ class RealtimePresenceService {
     _currentPosition = position;
   }
 
+  void setRecording(bool v) => _isRecording = v;
+  void setColorHex(String? v) => _colorHex = v;
+
   void _startBroadcasting() {
     _broadcastTimer?.cancel();
-    _broadcastTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _broadcastTimer = Timer.periodic(kPresenceBroadcastInterval, (_) {
       final pos = _currentPosition;
       if (pos == null || _channel == null || _myPlayerId == null) return;
       _channel!.track({
@@ -112,6 +126,8 @@ class RealtimePresenceService {
         'lat': pos.latitude,
         'lng': pos.longitude,
         't': DateTime.now().millisecondsSinceEpoch,
+        'rec': _isRecording,
+        'color_hex': _colorHex ?? _myColor ?? '#FF7A00',
       });
     });
   }
@@ -135,7 +151,12 @@ class RealtimePresenceService {
         })
         .whereType<PlayerPresence>()
         .toList();
-    _controller.add(others);
+    final fresh = others
+        .where(
+          (p) => DateTime.now().difference(p.updatedAt) <= kPresenceStaleTtl,
+        )
+        .toList();
+    _controller.add(fresh);
   }
 
   Future<void> dispose() async {

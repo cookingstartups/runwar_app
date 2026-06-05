@@ -5,6 +5,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'database_service.dart';
+import 'realtime_presence_service.dart';
 import 'telemetry_service.dart';
 import 'daily_missions_service.dart';
 
@@ -59,6 +60,7 @@ class RunRecorderService {
     }
     await _startForegroundTask();
     _openGpsStream();
+    RealtimePresenceService.instance.setRecording(true);
     stateNotifier.value = RecorderState.recording;
     TelemetryService.instance.logEvent('start_run').catchError((_) {});
   }
@@ -69,6 +71,7 @@ class RunRecorderService {
     if (pos.latitude.isNaN || pos.longitude.isNaN) return;
     if (pos.latitude.isInfinite || pos.longitude.isInfinite) return;
     _track.add(LatLng(pos.latitude, pos.longitude));
+    RealtimePresenceService.instance.updatePosition(LatLng(pos.latitude, pos.longitude));
     trackVersion.value++;
     // Persist point to scratch table for crash/process-kill recovery.
     final uid = _activeUserId;
@@ -134,6 +137,7 @@ class RunRecorderService {
     _notifTimer = null;
     await _posSub?.cancel();
     _posSub = null;
+    RealtimePresenceService.instance.setRecording(false);
     unawaited(FlutterForegroundTask.stopService());
     _closedAt = DateTime.now().toUtc();
 
@@ -187,6 +191,7 @@ class RunRecorderService {
     _notifTimer = null;
     _posSub?.cancel();
     _posSub = null;
+    RealtimePresenceService.instance.setRecording(false);
     unawaited(FlutterForegroundTask.stopService());
     final uid = _activeUserId;
     if (uid != null) {

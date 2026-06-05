@@ -32,6 +32,7 @@ import '../widgets/superpower_inventory_strip.dart';
 import '../widgets/mission_mode_overlay.dart';
 import '../widgets/first_zone_celebration_overlay.dart';
 import '../widgets/beam_pulse_dot.dart';
+import '../widgets/rival_runner_marker.dart';
 // Phase 2 providers — written by @Backend-Developer (design.md §5.1).
 import '../providers/drops/active_drops_provider.dart';
 // Phase 2 repositories — written by @Backend-Developer.
@@ -103,6 +104,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initLocation();
       CtfService.instance.refresh();
+      final userId = ref.read(authProvider).user?['id'] as String?;
+      if (userId != null) {
+        ref.read(profileGateProvider(userId).future).then((profile) {
+          final color = (profile?['color'] as String?) ?? '#FF7A00';
+          RealtimePresenceService.instance.setColorHex(color);
+        }).catchError((_) {});
+      }
     });
   }
 
@@ -121,6 +129,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       ).listen((pos) {
         if (!mounted) return;
         setState(() => _currentPosition = pos);
+        RealtimePresenceService.instance.updatePosition(LatLng(pos.latitude, pos.longitude));
         if (!_centeredOnGps) {
           _centeredOnGps = true;
           _mapController.move(
@@ -582,28 +591,15 @@ class _MapScreenState extends ConsumerState<MapScreen>
                   if (players.isEmpty) return const SizedBox.shrink();
                   return MarkerLayer(
                     markers: players.map((p) {
-                      final color = _hexToColor(p.color);
                       return Marker(
                         point: p.position,
-                        width: 60,
-                        height: 70,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            BeamPulseDot(color: color, size: 10),
-                            Text(
-                              p.displayName,
-                              style: TextStyle(
-                                color: color,
-                                fontSize: 7,
-                                fontFamily: 'monospace',
-                                fontWeight: FontWeight.bold,
-                                shadows: const [
-                                  Shadow(color: Colors.black, blurRadius: 4),
-                                ],
-                              ),
-                            ),
-                          ],
+                        width: 70,
+                        height: 80,
+                        child: RivalRunnerMarker(
+                          presence: p,
+                          myPos: _currentPosition != null
+                              ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
+                              : p.position,
                         ),
                       );
                     }).toList(),
@@ -675,6 +671,40 @@ class _MapScreenState extends ConsumerState<MapScreen>
               currentPosition: _currentPosition,
             ),
           ],
+        ),
+        // Runners nearby chip — top-left, only visible when rivals within 1 km.
+        StreamBuilder<List<PlayerPresence>>(
+          stream: RealtimePresenceService.instance.playersStream,
+          builder: (_, snap) {
+            final players = snap.data ?? [];
+            if (players.isEmpty) return const SizedBox.shrink();
+            // Count rivals within 1 km.
+            final myPos = _currentPosition;
+            final nearby = myPos == null
+                ? players.length
+                : players.where((p) {
+                    final dlat = (p.position.latitude - myPos.latitude).abs();
+                    final dlng = (p.position.longitude - myPos.longitude).abs();
+                    return dlat < 0.009 && dlng < 0.009; // ~1 km
+                  }).length;
+            if (nearby == 0) return const SizedBox.shrink();
+            return Positioned(
+              top: 48,
+              left: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: kBg.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: kAccent.withValues(alpha: 0.4), width: 1),
+                ),
+                child: Text(
+                  '$nearby RUNNER${nearby == 1 ? '' : 'S'} NEARBY',
+                  style: monoStyle(size: 9, color: kAccent),
+                ),
+              ),
+            );
+          },
         ),
         // Pre-announce CTF banner — shown when there are pending events to join.
         if (SupabaseService.instance.isConnected)
