@@ -14,6 +14,9 @@ TileLayer _cartoDbDarkNoLabels(BuildContext context) => TileLayer(
       subdomains: const ['a', 'b', 'c', 'd'],
       retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
       userAgentPackageName: 'app.runwar.runwar_app',
+      keepBuffer: 4,
+      panBuffer: 2,
+      tileDisplay: const TileDisplay.instantaneous(),
     );
 
 Widget _buildIntroMap({
@@ -41,6 +44,9 @@ Widget _buildIntroMap({
             maxZoom: maxZoom,
             retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
             userAgentPackageName: 'app.runwar.runwar_app',
+            keepBuffer: 4,
+            panBuffer: 2,
+            tileDisplay: const TileDisplay.instantaneous(),
           )
         else
           _cartoDbDarkNoLabels(context),
@@ -254,8 +260,9 @@ class IntroPulseMap extends StatefulWidget {
 }
 
 class _IntroPulseMapState extends State<IntroPulseMap>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _ctrl;
+  late final AnimationController _fadeCtrl;
   final _mapCtrl = MapController();
 
   // Three adjacent Ruzafa blocks captured in order (OSM-verified, no backtrack).
@@ -299,14 +306,18 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   bool _mapReady = false;
 
   static const _kPanStartLat = 39.4599;
-  static const _kPanEndLat = 39.4584; // 150 m south (content drifts up)
+  static const _kPanEndLat = 39.4592; // ~77 m south (content drifts up)
   static const _kPanStartLng = -0.3756;
-  static const _kPanEndLng = -0.37734; // 150 m west (content drifts right)
+  static const _kPanEndLng = -0.37647; // ~75 m west (content drifts right)
 
   @override
   void initState() {
     super.initState();
+    _fadeCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 200));
     _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 12));
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (mounted) _fadeCtrl.forward();
+    });
     _startLoop();
   }
 
@@ -338,13 +349,16 @@ class _IntroPulseMapState extends State<IntroPulseMap>
 
   @override
   void dispose() {
+    _fadeCtrl.dispose();
     _ctrl.dispose();
     _mapCtrl.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => Stack(
+  Widget build(BuildContext context) => FadeTransition(
+        opacity: _fadeCtrl,
+        child: Stack(
         children: [
           _buildIntroMap(
             context: context,
@@ -358,8 +372,9 @@ class _IntroPulseMapState extends State<IntroPulseMap>
               animation: _ctrl,
               builder: (_, __) {
                 final v = _ctrl.value;
-                final lat = _kPanStartLat + (_kPanEndLat - _kPanStartLat) * v;
-                final lng = _kPanStartLng + (_kPanEndLng - _kPanStartLng) * v;
+                final panV = Curves.easeInOut.transform(v);
+                final lat = _kPanStartLat + (_kPanEndLat - _kPanStartLat) * panV;
+                final lng = _kPanStartLng + (_kPanEndLng - _kPanStartLng) * panV;
                 _mapCtrl.move(LatLng(lat, lng), 16.0);
                 final cam = _mapCtrl.camera;
                 Offset s(LatLng ll) {
@@ -436,7 +451,8 @@ class _IntroPulseMapState extends State<IntroPulseMap>
             ),
           ),
         ],
-      );
+      ),
+    );
 }
 
 class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
