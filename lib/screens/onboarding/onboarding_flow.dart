@@ -194,26 +194,80 @@ class _Step1UsernameState extends ConsumerState<_Step1Username> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Step 2 (was Step 3) — Color
+// Step 2 — Color (palette swatches + custom hex input)
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _Step3Color extends ConsumerWidget {
+/// Returns true if [hex] is a valid #RRGGBB string.
+bool _isValidHex(String hex) =>
+    RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(hex);
+
+class _Step3Color extends ConsumerStatefulWidget {
   const _Step3Color();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_Step3Color> createState() => _Step3ColorState();
+}
+
+class _Step3ColorState extends ConsumerState<_Step3Color> {
+  late final TextEditingController _hexCtrl;
+  String? _hexError;
+
+  @override
+  void initState() {
+    super.initState();
+    _hexCtrl = TextEditingController(
+      text: ref.read(onboardingProvider).color,
+    );
+  }
+
+  @override
+  void dispose() {
+    _hexCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onSwatchTap(Color color) {
+    final hex = _colorToHex(color);
+    ref.read(onboardingProvider.notifier).setColor(hex);
+    _hexCtrl.text = hex;
+    setState(() => _hexError = null);
+  }
+
+  void _onHexChanged(String value) {
+    final trimmed = value.trim().toUpperCase();
+    if (trimmed.length == 6 && !trimmed.startsWith('#')) {
+      // auto-prefix if user omitted #
+      final prefixed = '#$trimmed';
+      if (_isValidHex(prefixed)) {
+        _hexCtrl.value = _hexCtrl.value.copyWith(
+          text: prefixed,
+          selection: TextSelection.collapsed(offset: prefixed.length),
+        );
+        ref.read(onboardingProvider.notifier).setColor(prefixed);
+        setState(() => _hexError = null);
+        return;
+      }
+    }
+    if (_isValidHex(trimmed)) {
+      ref.read(onboardingProvider.notifier).setColor(trimmed);
+      setState(() => _hexError = null);
+    } else {
+      setState(() => _hexError = trimmed.isEmpty ? null : 'Enter a valid hex e.g. #FF7A00');
+    }
+  }
+
+  Future<void> _startPlaying() async {
+    final user = AuthService.instance.getCurrentUser();
+    if (user == null) return;
+    final userId = user['id'] as String;
+    await ref.read(onboardingProvider.notifier).submit(userId);
+    ref.invalidate(profileGateProvider(userId));
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(onboardingProvider);
     final selectedColor = _hexToColor(state.color);
-
-    Future<void> startPlaying() async {
-      final user = AuthService.instance.getCurrentUser();
-      if (user == null) return; // guard will handle unauthenticated state
-      final userId = user['id'] as String;
-      await ref.read(onboardingProvider.notifier).submit(userId);
-      // Invalidate the cached profile so _RouteGuard re-fetches and
-      // transitions to MapScreen now that profiles.username is non-empty.
-      ref.invalidate(profileGateProvider(userId));
-    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
@@ -234,11 +288,9 @@ class _Step3Color extends ConsumerWidget {
               spacing: 12,
               runSpacing: 12,
               children: _kPaletteColors.map((color) {
-                final isSelected = color == selectedColor;
+                final isSelected = color.toARGB32() == selectedColor.toARGB32();
                 return GestureDetector(
-                  onTap: () => ref
-                      .read(onboardingProvider.notifier)
-                      .setColor(_colorToHex(color)),
+                  onTap: () => _onSwatchTap(color),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
                     width: 48,
@@ -247,17 +299,11 @@ class _Step3Color extends ConsumerWidget {
                       color: color,
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color:
-                            isSelected ? Colors.white : Colors.transparent,
+                        color: isSelected ? Colors.white : Colors.transparent,
                         width: 3,
                       ),
                       boxShadow: isSelected
-                          ? [
-                              BoxShadow(
-                                color: color.withValues(alpha: 0.6),
-                                blurRadius: 8,
-                              ),
-                            ]
+                          ? [BoxShadow(color: color.withValues(alpha: 0.6), blurRadius: 8)]
                           : [],
                     ),
                   ),
@@ -265,24 +311,52 @@ class _Step3Color extends ConsumerWidget {
               }).toList(),
             ),
           ),
+          const SizedBox(height: 28),
+          // Custom hex input row with live preview swatch.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Live preview dot.
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: _hexError == null ? selectedColor : kFgMuted,
+                  shape: BoxShape.circle,
+                  boxShadow: _hexError == null
+                      ? [BoxShadow(color: selectedColor.withValues(alpha: 0.5), blurRadius: 8)]
+                      : [],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _hexCtrl,
+                  autocorrect: false,
+                  textCapitalization: TextCapitalization.characters,
+                  onChanged: _onHexChanged,
+                  decoration: InputDecoration(
+                    labelText: 'CUSTOM HEX',
+                    hintText: '#FF7A00',
+                    errorText: _hexError,
+                  ),
+                ),
+              ),
+            ],
+          ),
           if (state.error != null) ...[
             const SizedBox(height: 12),
-            Text(
-              state.error!,
-              style: bodyStyle(size: 13, color: kDanger),
-            ),
+            Text(state.error!, style: bodyStyle(size: 13, color: kDanger)),
           ],
           const SizedBox(height: 24),
           ElevatedButton(
-            onPressed: state.isLoading ? null : startPlaying,
+            onPressed: state.isLoading || _hexError != null ? null : _startPlaying,
             child: state.isLoading
                 ? const SizedBox(
                     height: 20,
                     width: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: kBg,
-                    ),
+                    child: CircularProgressIndicator(strokeWidth: 2, color: kBg),
                   )
                 : const Text('START PLAYING'),
           ),

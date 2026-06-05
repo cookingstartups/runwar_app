@@ -203,8 +203,10 @@ class RunRecorderService {
   /// subscription setup without duplicating code.
   void _openGpsStream() {
     _posSub = Geolocator.getPositionStream(
-      locationSettings:
-          const LocationSettings(accuracy: LocationAccuracy.high),
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 15, // skip updates when device hasn't moved 15 m+
+      ),
     ).listen(_onPosition, onError: (_) {});
   }
 

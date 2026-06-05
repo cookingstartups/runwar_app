@@ -31,6 +31,7 @@ import '../widgets/streak_chip.dart';
 import '../widgets/superpower_inventory_strip.dart';
 import '../widgets/mission_mode_overlay.dart';
 import '../widgets/first_zone_celebration_overlay.dart';
+import '../widgets/beam_pulse_dot.dart';
 // Phase 2 providers — written by @Backend-Developer (design.md §5.1).
 import '../providers/drops/active_drops_provider.dart';
 // Phase 2 repositories — written by @Backend-Developer.
@@ -79,14 +80,21 @@ class MapScreen extends ConsumerStatefulWidget {
   ConsumerState<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends ConsumerState<MapScreen> {
+class _MapScreenState extends ConsumerState<MapScreen>
+    with TickerProviderStateMixin {
   final MapController _mapController = MapController();
   StreamSubscription<Position>? _posSub;
   Position? _currentPosition;
   bool _centeredOnGps = false;
+  late final AnimationController _terrainPulse;
+
   @override
   void initState() {
     super.initState();
+    _terrainPulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..repeat(reverse: true);
     SuperpowerService.instance.onShieldEarned = (grant) {
       if (mounted) _showShieldEarnedModal(grant);
     };
@@ -129,6 +137,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   void dispose() {
     SuperpowerService.instance.onShieldEarned = null;
+    _terrainPulse.dispose();
     _posSub?.cancel();
     super.dispose();
   }
@@ -531,8 +540,17 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
               userAgentPackageName: 'app.runwar.runwar_app',
             ),
-            // zone polygon layer — fog-gated.
-            PolygonLayer(polygons: _buildPolygons(visibleZones)),
+            // zone polygon layers — fog-gated, beam-pulse aesthetic.
+            AnimatedBuilder(
+              animation: _terrainPulse,
+              builder: (_, __) {
+                final pulse = _terrainPulse.value;
+                return Stack(children: [
+                  PolygonLayer(polygons: _buildPolygonsGlow(visibleZones, pulse)),
+                  PolygonLayer(polygons: _buildPolygons(visibleZones, pulse)),
+                ]);
+              },
+            ),
             // ZoneLevelBadge + DisputeCountdownLabel markers at polygon centroids.
             MarkerLayer(
               markers: _buildZoneMarkers(visibleZones),
@@ -567,20 +585,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       final color = _hexToColor(p.color);
                       return Marker(
                         point: p.position,
-                        width: 70,
-                        height: 40,
+                        width: 60,
+                        height: 70,
                         child: Column(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Container(
-                              width: 9,
-                              height: 9,
-                              decoration: BoxDecoration(
-                                color: color,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white, width: 1.5),
-                              ),
-                            ),
-                            const SizedBox(height: 2),
+                            BeamPulseDot(color: color, size: 10),
                             Text(
                               p.displayName,
                               style: TextStyle(
@@ -618,19 +628,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 ),
               ]);
             }),
-            // GPS dot rendered only when position is available.
+            // GPS dot — beam-pulse aesthetic matching intro slides.
             if (_currentPosition != null)
-              CircleLayer(circles: [
-                CircleMarker(
+              MarkerLayer(markers: [
+                Marker(
                   point: LatLng(
                     _currentPosition!.latitude,
                     _currentPosition!.longitude,
                   ),
-                  radius: 8,
-                  useRadiusInMeter: false,
-                  color: _kGpsDotColor,
-                  borderColor: kFg,
-                  borderStrokeWidth: 2,
+                  width: 60,
+                  height: 60,
+                  child: Center(
+                    child: BeamPulseDot(color: _kGpsDotColor, size: 11),
+                  ),
                 ),
               ]),
             // CTF flag pins — fog-gated: only render if the pin is revealed.
@@ -725,8 +735,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             },
           ),
         // Daily streak chip + credit balance chip (top-right).
+        // Pushed down during mission mode to clear the instruction banner.
         Positioned(
-          top: 48,
+          top: widget.missionStep != null ? 100 : 48,
           right: 16,
           child: Opacity(
             opacity: widget.missionStep != null && !isRecording ? 0.35 : 1.0,
@@ -810,10 +821,43 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return markers;
   }
 
-  /// Builds the list of Polygon widgets for the PolygonLayer.
+  /// Builds the glow (background) polygon layer — wide low-alpha stroke per zone.
+  List<Polygon> _buildPolygonsGlow(List<Zone> zones, double pulse) {
+    final out = <Polygon>[];
+    for (final z in zones) {
+      if (z.status == ZoneStatus.owned) {
+        final ownerProfile =
+            ref.watch(profileCacheProvider(z.ownerId)).valueOrNull;
+        final ownerColor =
+            _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
+        final glowAlpha = 0.12 + pulse * 0.14; // 12% → 26%
+        out.add(Polygon(
+          points: z.points,
+          isFilled: false,
+          color: Colors.transparent,
+          borderColor: ownerColor.withValues(alpha: glowAlpha),
+          borderStrokeWidth: 8.0,
+          isDotted: false,
+        ));
+      } else if (z.status == ZoneStatus.disputed) {
+        final glowAlpha = 0.08 + pulse * 0.10;
+        out.add(Polygon(
+          points: z.points,
+          isFilled: false,
+          color: Colors.transparent,
+          borderColor: _kDisputedColor.withValues(alpha: glowAlpha),
+          borderStrokeWidth: 6.0,
+          isDotted: false,
+        ));
+      }
+    }
+    return out;
+  }
+
+  /// Builds the main polygon layer.
   /// Owned zones: fill opacity and stroke width scale with influence (1–15).
   /// Disputed zones: amber at fixed 15% fill regardless of influence.
-  List<Polygon> _buildPolygons(List<Zone> zones) {
+  List<Polygon> _buildPolygons(List<Zone> zones, double pulse) {
     final out = <Polygon>[];
     for (final z in zones) {
       if (z.status == ZoneStatus.owned) {
@@ -822,22 +866,27 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final ownerColor =
             _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
         final level = z.influenceLevel.clamp(1, 15);
-        final fillAlpha = 0.0633 * level;        // 6.33% … 95%
+        // Fill breathes between 75% and 100% of base alpha (intro-slide glow).
+        final baseAlpha = 0.0633 * level;
+        final fillAlpha = baseAlpha * (0.75 + 0.25 * pulse);
         final strokeWidth = 1.0 + (level / 15.0) * 2.0;
+        final borderAlpha = 0.60 + 0.40 * pulse; // stroke pulses 60% → 100%
         out.add(Polygon(
           points: z.points,
           isFilled: true,
           color: ownerColor.withValues(alpha: fillAlpha),
-          borderColor: ownerColor,
+          borderColor: ownerColor.withValues(alpha: borderAlpha),
           borderStrokeWidth: strokeWidth,
           isDotted: false,
         ));
       } else if (z.status == ZoneStatus.disputed) {
+        final fillAlpha = 0.10 + pulse * 0.08; // 10% → 18%
+        final borderAlpha = 0.50 + 0.30 * pulse;
         out.add(Polygon(
           points: z.points,
           isFilled: true,
-          color: _kDisputedColor.withValues(alpha: 0.15),
-          borderColor: _kDisputedColor,
+          color: _kDisputedColor.withValues(alpha: fillAlpha),
+          borderColor: _kDisputedColor.withValues(alpha: borderAlpha),
           borderStrokeWidth: 1.5,
           isDotted: true,
         ));
