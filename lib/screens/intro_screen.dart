@@ -130,7 +130,7 @@ const _slides = [
     tag: 'SURVIVAL CUT WEEK',
     tagColor: kAccent2,
     headline: 'STAY IN THE TOP 90%.\nOR LOSE EVERYTHING.',
-    body: 'From time to time, we cut the bottom 10%. Zones wiped. Rank gone. No warnings, no appeals. Earn your seat in this war room — or lose it.',
+    body: 'From time to time we cut off the bottom 10% of runners — You must earn your seat in this war room.',
     anim: _Anim.rivals,
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
