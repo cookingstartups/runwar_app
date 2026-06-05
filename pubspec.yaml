@@ -50,6 +50,9 @@ dependencies:
   # Timezone support for scheduled notifications
   timezone: ^0.9.4
 
+  # Network connectivity
+  connectivity_plus: ^6.0.3
+
   # Supabase
   supabase_flutter: ^2.5.0
 

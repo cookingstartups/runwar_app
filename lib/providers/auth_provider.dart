@@ -72,8 +72,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       final user = await _authService.signInWithGoogle();
       if (user == null) {
-        // User cancelled the picker — silently reset loading.
-        state = state.copyWith(isLoading: false, error: null);
+        state = state.copyWith(
+          isLoading: false,
+          error: 'Sign-in was cancelled or rejected by Google. Please try again.',
+        );
       } else {
         state = state.copyWith(isLoading: false, user: user, error: null);
       }

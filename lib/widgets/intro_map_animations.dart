@@ -507,12 +507,10 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
     final routeProgress = (t / 0.82).clamp(0.0, 1.0);
     final traveled = routeProgress * segs;
 
-    // Block fills — appear as the runner closes each loop, merging into one
-    // unified polygon so captured territory reads as a single contiguous shape.
-    final fill1Opacity = _fillOpacity(traveled, _block1CloseIdx, t);
-    final fill2Opacity = _fillOpacity(traveled, _block2CloseIdx, t);
-    final fill3Opacity = _block3FillOpacity(t);
-
+    // Build a single union path from every block whose close threshold has been
+    // reached. Drawing fill+stroke ONCE from this union means contiguous
+    // captured blocks render as a single polygon with only an outer perimeter
+    // border — no internal seams between blocks that share an edge or vertex.
     Path makePoly(List<Offset> pts) {
       if (pts.isEmpty) return Path();
       final p = Path()..moveTo(pts[0].dx, pts[0].dy);
@@ -522,29 +520,48 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
       return p..close();
     }
 
-    var unified = fill1Opacity > 0 ? makePoly(block1) : Path();
-    if (fill2Opacity > 0) {
-      unified = Path.combine(PathOperation.union, unified, makePoly(block2));
+    // Per-block fill opacity ramps (kept for the union opacity envelope).
+    final fill1Opacity = _fillOpacity(traveled, _block1CloseIdx, t);
+    final fill2Opacity = _fillOpacity(traveled, _block2CloseIdx, t);
+    final fill3Opacity = _block3FillOpacity(t);
+
+    // A block is "closed" once its close threshold has been crossed — that is,
+    // the moment its fill opacity becomes non-zero. Use the same gating as the
+    // opacity ramps so the union appears exactly when each block captures.
+    var capturedUnion = Path();
+    if (fill1Opacity > 0 && block1.isNotEmpty) {
+      capturedUnion = Path.combine(
+          PathOperation.union, capturedUnion, makePoly(block1));
     }
-    if (fill3Opacity > 0) {
-      unified = Path.combine(PathOperation.union, unified, makePoly(block3));
+    if (fill2Opacity > 0 && block2.isNotEmpty) {
+      capturedUnion = Path.combine(
+          PathOperation.union, capturedUnion, makePoly(block2));
+    }
+    if (fill3Opacity > 0 && block3.isNotEmpty) {
+      capturedUnion = Path.combine(
+          PathOperation.union, capturedUnion, makePoly(block3));
     }
 
+    // Single opacity envelope for the union = the peak of any contributing
+    // block's ramp. Keeps the existing fade-in behavior per block while still
+    // drawing the merged outline only once.
     final activeOpacity = [fill1Opacity, fill2Opacity, fill3Opacity]
         .where((o) => o > 0)
         .fold(0.0, math.max);
     if (activeOpacity > 0) {
+      // Fill — one call across the unioned polygon.
       canvas.drawPath(
-        unified,
+        capturedUnion,
         Paint()
           ..color = accent.withValues(alpha: activeOpacity)
           ..style = PaintingStyle.fill,
       );
-      // Single stroke on the unified union path — no internal seams between blocks.
+      // Stroke — one call; outer perimeter only, no internal block seams.
       canvas.drawPath(
-        unified,
+        capturedUnion,
         Paint()
-          ..color = accent.withValues(alpha: (activeOpacity / 0.28).clamp(0.0, 1.0) * 0.7)
+          ..color = accent.withValues(
+              alpha: (activeOpacity / 0.28).clamp(0.0, 1.0) * 0.7)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5
           ..strokeJoin = StrokeJoin.round,
@@ -636,33 +653,47 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  // Attacker route — blue rival (kSea) follows real Ruzafa streets (OSM-verified).
+  // Attacker route — blue rival (kSea) follows the same 4-waypoint loop circuit
+  // used by IntroFortifyMap (slide 3) so the attacker's traversal matches the
+  // defender's repeating fortify loop. The attacker enters from off-screen
+  // south, arrives at the top of the loop, runs one full circuit, then closes
+  // the lasso back at the loop start.
+  // pt0 → pt1: straight north (entry from off-screen south)
+  // pt1 → pt2: west (top → west of loop)
+  // pt2 → pt3: south (west → south-west of loop)
+  // pt3 → pt4: east (south-west → east of loop)
+  // pt4 → pt5: lasso close (east → back to top, pt5 ≈ pt1)
   static const _kAttackerRoute = [
-    LatLng(39.4588, -0.3795), // 0: off-screen south
-    LatLng(39.4608, -0.3785), // 1: Buenos Aires S (OSM node 39.4608462,-0.3784709)
-    LatLng(39.4613, -0.3777), // 2: Buenos Aires mid
-    LatLng(39.4616, -0.3768), // 3: TURN EAST — Buenos Aires N (near kS1Block2 B vertex)
-    LatLng(39.4616, -0.3752), // 4: NE corner (near E vertex of kS1Block2)
-    LatLng(39.4604, -0.3752), // 5: SE corner — heading south
-    LatLng(39.4604, -0.3760), // 6: TURN WEST — at F vertex of kS1Block2
-    LatLng(39.4610, -0.3783), // 7: LASSO CLOSES — crosses seg[1→2] at (39.4610,-0.37822)
+    LatLng(39.45876687267654,   -0.3714029660927564),    // 0: off-screen south — entry
+    LatLng(39.46217783167975,   -0.37378187786513245),   // 1: loop[0] — top (loop start)
+    LatLng(39.460341182218244,  -0.37809528932053965),   // 2: loop[1] — west
+    LatLng(39.45912365004915,   -0.3772626255741333),    // 3: loop[2] — south-west
+    LatLng(39.460939442465346,  -0.37295328466461247),   // 4: loop[3] — east
+    LatLng(39.46217783167975,   -0.37378187786513245),   // 5: lasso close = loop[0]
   ];
 
-  // Lasso polygon — corners of the enclosed loop.
+  // Lasso polygon — closed loop pt1 → pt2 → pt3 → pt4 → pt5 (≈ pt1).
+  // Matches IntroFortifyMap's _kFortifyLoop circuit exactly.
   static const _kAttackerLasso = [
-    LatLng(39.4616, -0.3768), // pt3: NW — B vertex
-    LatLng(39.4616, -0.3752), // pt4: NE — E vertex
-    LatLng(39.4604, -0.3752), // pt5: SE
-    LatLng(39.4604, -0.3760), // pt6: SW — F vertex
-    LatLng(39.4610, -0.3783), // close point
+    LatLng(39.46217783167975,   -0.37378187786513245),   // pt1 — loop[0] top
+    LatLng(39.460341182218244,  -0.37809528932053965),   // pt2 — loop[1] west
+    LatLng(39.45912365004915,   -0.3772626255741333),    // pt3 — loop[2] south-west
+    LatLng(39.460939442465346,  -0.37295328466461247),   // pt4 — loop[3] east
+    LatLng(39.46217783167975,   -0.37378187786513245),   // pt5 — close = loop[0]
   ];
 
-  // Disputed area — intersection quad.
+  // Disputed area — exact Sutherland-Hodgman intersection of _kAttackerLasso
+  // with the union of defender blocks (kS1Block2 ∪ kS1Block3). kS1Block1 does
+  // not overlap the lasso. The intersections (lasso ∩ B2, 5 verts) and
+  // (lasso ∩ B3, 3 verts) share the edge G ↔ lasso-crossing-of-B-G; merging
+  // along that shared edge fuses them into a single 6-vertex CCW polygon.
   static const _kDisputedArea = [
-    LatLng(39.4616, -0.3768), // B — NW
-    LatLng(39.4616, -0.3752), // E — NE
-    LatLng(39.4604, -0.3760), // F — SE (F vertex of kS1Block2)
-    LatLng(39.4611, -0.3764), // G — SW interior
+    LatLng(39.461568000000000, -0.375167000000000),   // E — kS1Block2 vertex (inside lasso)
+    LatLng(39.461583456798429, -0.375177780281812),   // lasso edge (pt4→pt5) crossing A–E
+    LatLng(39.461062095301116, -0.376402209168246),   // lasso edge (pt3→pt4) crossing B–G
+    LatLng(39.460375379397249, -0.378014976497241),   // lasso edge (pt1→pt2) crossing I–G
+    LatLng(39.461050000000000, -0.376394000000000),   // G — shared B2/B3 vertex
+    LatLng(39.460439999999998, -0.375966000000000),   // F — kS1Block2 vertex (inside lasso)
   ];
 
   List<List<Offset>> _inheritedPts = [];
@@ -719,7 +750,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
           _buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4627, -0.3756),
+            center: const LatLng(39.4632, -0.3773),
             zoom: 16.0,
             onReady: _updatePoints,
           ),
@@ -768,8 +799,8 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
     required this.disputedArea,
   });
 
-  // Timeline (route has 7 segments; close is at traveled == _kLassoCloseSegIdx == 6):
-  //   traveled 0→6   : attacker runs; lasso closes when traveled reaches 6
+  // Timeline (route has 5 segments; close is at traveled == _kLassoCloseSegIdx == 4):
+  //   traveled 0→4   : attacker runs; lasso closes when traveled reaches 4
   //   t 0.60–0.78    : disputed phase — fill cross-fades kAccent orange → amber
   //   t 0.78–0.90    : border flash — dashed yellow/black alternating, fill stays amber
   //   t 0.90–1.0     : claimed — fill + border lerp to kSea blue
@@ -778,8 +809,9 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
   // Route finishes drawing by t=0.70; remaining t budget used for post-close effects.
   static const double _kRouteCompleteT = 0.70;
 
-  // Segment index in _kAttackerRoute where the path geometrically crosses itself.
-  static const int _kLassoCloseSegIdx = 6;
+  // Segment index in _kAttackerRoute where the path closes the loop.
+  // Segment 4 = pt4→pt5, with pt5 ≈ pt1.
+  static const int _kLassoCloseSegIdx = 4;
 
   double _disputedOpacity(double traveled) {
     if (traveled < _kLassoCloseSegIdx) return 0.0;
@@ -832,11 +864,32 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
     return p..close();
   }
 
+  /// Shoelace formula — absolute area of a screen-space polygon (px²).
+  /// Used to detect a degenerate disputed polygon (touching but no overlap).
+  double _polygonArea(List<Offset> pts) {
+    if (pts.length < 3) return 0.0;
+    double sum = 0.0;
+    for (int i = 0; i < pts.length; i++) {
+      final a = pts[i];
+      final b = pts[(i + 1) % pts.length];
+      sum += a.dx * b.dy - b.dx * a.dy;
+    }
+    return sum.abs() * 0.5;
+  }
+
+  /// _kUnifyT — t at which the disputed area's lerp toward kSea is "complete
+  /// enough" that we replace the separate attacker-only + disputed renders
+  /// with one unioned blue polygon. The 3-phase color lerp reaches full kSea
+  /// at t=1.0; we unify slightly earlier at 0.95 so the merge is visible
+  /// before the global fade-out (which begins at t=0.88 and finishes at 1.0)
+  /// drives opacity to zero.
+  static const double _kUnifyT = 0.95;
+
   @override
   void paint(Canvas canvas, Size size) {
     if (attackerRoute.isEmpty) return;
 
-    final segs = attackerRoute.length - 1; // 7 segments for 8-point route
+    final segs = attackerRoute.length - 1; // 4 segments for 5-point route
     final routeProgress = (t / _kRouteCompleteT).clamp(0.0, 1.0);
     final traveled = routeProgress * segs;
     final lassoIsClosed = traveled >= _kLassoCloseSegIdx;
@@ -900,14 +953,52 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
       }
     }
 
-    // 3. Disputed fill — 3-phase claim VFX.
-    if (disputedArea.isNotEmpty) {
+    // ── Dispute detection ────────────────────────────────────────────────
+    // A "genuine" dispute requires the clipped polygon to have ≥3 vertices
+    // and a non-zero screen-space area. Touching at a single vertex or
+    // along an edge yields a degenerate polygon (area ≈ 0) and is NOT a
+    // dispute — the attacker simply claims their full lasso area in kSea.
+    final hasGenuineDispute = disputedArea.length >= 3 &&
+        _polygonArea(disputedArea) > 1.0; // > 1 px² in screen space
+
+    // Build screen-space paths for the lasso and the disputed clip. The
+    // attacker-only path = lasso \ disputed (set difference); if there is
+    // no genuine dispute we treat the whole lasso as attacker-only.
+    Path? attackerOnlyPath;
+    Path? disputedPath;
+    if (lassoIsClosed && attackerLasso.isNotEmpty) {
+      final lassoPath = _makePoly(attackerLasso);
+      if (hasGenuineDispute) {
+        disputedPath = _makePoly(disputedArea);
+        attackerOnlyPath =
+            Path.combine(PathOperation.difference, lassoPath, disputedPath);
+      } else {
+        attackerOnlyPath = lassoPath;
+      }
+    }
+
+    // 3a. Attacker-only kSea fill (instant — no ramp) the moment the lasso
+    //     closes. Once the disputed VFX has resolved to blue (t >= _kUnifyT)
+    //     we stop drawing the pieces separately and emit a single unioned
+    //     polygon below so there is no seam between the two regions.
+    if (lassoIsClosed && t < _kUnifyT && attackerOnlyPath != null) {
+      canvas.drawPath(
+        attackerOnlyPath,
+        Paint()
+          ..color = kSea.withValues(alpha: 0.55 * fade)
+          ..style = PaintingStyle.fill,
+      );
+    }
+
+    // 3b. Disputed fill — 3-phase claim VFX (only when there's a genuine
+    //     overlap polygon and the unify threshold hasn't been crossed).
+    if (hasGenuineDispute && t < _kUnifyT) {
       final dispOp = _disputedOpacity(traveled) * fade;
       if (dispOp > 0) {
         final dispColor = _disputedFillColor(t);
         drawFillColor(canvas, disputedArea, dispColor, dispOp);
 
-        final dispPath = _makePoly(disputedArea);
+        final dispPath = disputedPath ?? _makePoly(disputedArea);
 
         if (t >= 0.78 && t < 0.90) {
           // Border flash: dashed yellow/black alternating every ~80ms.
@@ -940,15 +1031,42 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
       }
     }
 
-    // Ping burst when lasso closes — same traveled-based pattern as slide 1.
+    // 3c. Unified blue polygon — once the disputed VFX has resolved
+    //     to kSea, render (attacker-only ∪ disputed) as a single shape so
+    //     the seam disappears (one fill, one outer stroke). When there is
+    //     no genuine dispute, attackerOnlyPath already equals the full
+    //     lasso, so the union below collapses to that same shape and the
+    //     branch still produces the correct unified blue polygon.
+    if (lassoIsClosed && t >= _kUnifyT && attackerOnlyPath != null) {
+      final unifiedPath = disputedPath != null
+          ? Path.combine(PathOperation.union, attackerOnlyPath, disputedPath)
+          : attackerOnlyPath;
+      canvas.drawPath(
+        unifiedPath,
+        Paint()
+          ..color = kSea.withValues(alpha: 0.70 * fade)
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawPath(
+        unifiedPath,
+        Paint()
+          ..color = kSea.withValues(alpha: 0.90 * fade)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+    }
+
+    // Ping burst when lasso closes — only on a genuine dispute (no flash
+    // on a clean attacker claim).
     final pingT = traveled - _kLassoCloseSegIdx;
-    if (pingT > 0 && pingT < 1.5 && disputedArea.isNotEmpty) {
+    if (pingT > 0 && pingT < 1.5 && hasGenuineDispute) {
       drawPings(canvas, disputedArea, (pingT / 1.5).clamp(0.0, 1.0));
     }
 
-    // 4. Centroid of disputed area — used for labels.
+    // 4. Centroid of disputed area — used for labels. Only meaningful when
+    //    a genuine dispute exists; otherwise labels are suppressed below.
     Offset disputedCentroid = Offset.zero;
-    if (disputedArea.isNotEmpty) {
+    if (hasGenuineDispute) {
       double sumX = 0, sumY = 0;
       for (final pt in disputedArea) {
         sumX += pt.dx;
@@ -958,8 +1076,8 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
           Offset(sumX / disputedArea.length, sumY / disputedArea.length);
     }
 
-    // 5. "DISPUTED" label — t=0.62–0.75.
-    if (t > 0.62 && t < 0.75 && disputedArea.isNotEmpty) {
+    // 5. "DISPUTED" label — t=0.62–0.75. Only on a genuine dispute.
+    if (t > 0.62 && t < 0.75 && hasGenuineDispute) {
       final labelOpacity = t < 0.685
           ? ((t - 0.62) / 0.065).clamp(0.0, 1.0)
           : ((1.0 - (t - 0.685) / 0.065)).clamp(0.0, 1.0);
@@ -985,8 +1103,8 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
       }
     }
 
-    // 6. "CLAIMED" label — t=0.90–1.0 in kSea.
-    if (t > 0.90 && disputedArea.isNotEmpty) {
+    // 6. "CLAIMED" label — t=0.90–1.0 in kSea. Only on a genuine dispute.
+    if (t > 0.90 && hasGenuineDispute) {
       final claimedOpacity = ((t - 0.90) / 0.05).clamp(0.0, 1.0) * fade;
 
       if (claimedOpacity > 0) {
@@ -1015,6 +1133,7 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
   bool shouldRepaint(_IntroCaptureMapPainter old) =>
       old.t != t ||
       old.attackerRoute != attackerRoute ||
+      old.attackerLasso != attackerLasso ||
       old.disputedArea != disputedArea ||
       old.ownedBlock1 != ownedBlock1 ||
       old.ownedBlock2 != ownedBlock2 ||
@@ -1377,39 +1496,48 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
   // ── Fixed coordinates ──────────────────────────────────────────────────────
   static const _kDropCoord = LatLng(39.4553, -0.3510);
 
-  // Runner A — north start near Av. de França / Gran Via junction.
-  // Route: Gran Via → Av. de França (south) → Av. del Congrés Eucarístic →
-  //        Pont de l'Exposició → drop point.
+  // Routes below are OSM-verified — every interior waypoint lies on a real
+  // street centerline (Overpass API, queried 2026-06-05 against Valencia
+  // bbox 39.4450..39.4640 / -0.3650..-0.3380). The final snap from the last
+  // on-street node to _kDropCoord crosses the pedestrian plaza inside the
+  // Ciutat de les Arts complex — the drop sits on a pedestrian island that
+  // no vehicular street reaches directly, so a short plaza-crossing is
+  // unavoidable and physically walkable.
+
+  // Runner A — NW approach via Passeig de l'Albereda.
+  // The Albereda runs N→S along the dry Turia riverbed and curves SE around
+  // the Ciutat de les Arts, reaching ~248m of the drop on its eastern arc.
   static const _kRouteA = [
-    LatLng(39.4640, -0.3560), // 0: start — Gran Via / Av. de França
-    LatLng(39.4618, -0.3548), // 1: south on Av. de França
-    LatLng(39.4595, -0.3535), // 2: continues south
-    LatLng(39.4575, -0.3523), // 3: Av. del Congrés Eucarístic turn
-    LatLng(39.4560, -0.3515), // 4: approaching Pont de l'Exposició
-    LatLng(39.4553, -0.3510), // 5: DROP POINT
+    LatLng(39.46400, -0.35850), // 0: off-screen NW start
+    LatLng(39.46273, -0.35757), // 1: Passeig de l'Albereda — north
+    LatLng(39.46037, -0.35514), // 2: Passeig de l'Albereda — mid descent SE
+    LatLng(39.45774, -0.35018), // 3: Passeig de l'Albereda — south curve
+    LatLng(39.45635, -0.34842), // 4: Passeig de l'Albereda — east approach
+    LatLng(39.4553,  -0.3510),  // 5: DROP POINT (plaza snap)
   ];
 
-  // Runner B — northwest start near Ruzafa / Carrer de la Reina.
-  // Route: east along Carrer de la Reina → Av. de les Corts Valencianes →
-  //        Av. del Saler south → drop point.
+  // Runner B — NE approach along Carrer de Luis García-Berlanga Martí.
+  // This avenue runs E→W on the south flank of the Ciutat de les Arts,
+  // passing within ~310m of the drop at its closest point.
   static const _kRouteB = [
-    LatLng(39.4600, -0.3680), // 0: start — Ruzafa area
-    LatLng(39.4598, -0.3645), // 1: east on Carrer de la Reina
-    LatLng(39.4592, -0.3610), // 2: continues east
-    LatLng(39.4580, -0.3575), // 3: Av. de les Corts Valencianes junction
-    LatLng(39.4568, -0.3545), // 4: south on Av. del Saler
-    LatLng(39.4553, -0.3510), // 5: DROP POINT
+    LatLng(39.45650, -0.33800), // 0: off-screen NE start
+    LatLng(39.45546, -0.34164), // 1: García-Berlanga — east end
+    LatLng(39.45531, -0.34449), // 2: García-Berlanga — mid stretch
+    LatLng(39.45681, -0.34791), // 3: García-Berlanga — closest pass to drop
+    LatLng(39.4553,  -0.3510),  // 4: DROP POINT (plaza snap)
   ];
 
-  // Runner C — east start near beach/port area.
-  // Route: west along Av. del Port → Av. de França turn north → drop point.
+  // Runner C — SW approach along Avinguda d'Antonio Ferrandis (Actor)
+  // then north on Avinguda del Professor López Piñero.
+  // Antonio Ferrandis runs W→E south of the Ciutat de les Arts; López Piñero
+  // turns N from there and approaches the drop within ~181m.
   static const _kRouteC = [
-    LatLng(39.4500, -0.3380), // 0: start — near port/beach
-    LatLng(39.4508, -0.3410), // 1: west on Av. del Port
-    LatLng(39.4516, -0.3440), // 2: continues west
-    LatLng(39.4525, -0.3465), // 3: Av. de França turn north
-    LatLng(39.4537, -0.3488), // 4: north on Av. de França
-    LatLng(39.4553, -0.3510), // 5: DROP POINT
+    LatLng(39.44700, -0.36250), // 0: off-screen SW start
+    LatLng(39.44924, -0.36103), // 1: Av. d'Antonio Ferrandis — west end
+    LatLng(39.45077, -0.35818), // 2: Av. d'Antonio Ferrandis — mid (heading E)
+    LatLng(39.45245, -0.35358), // 3: Av. d'Antonio Ferrandis — east end
+    LatLng(39.45390, -0.35209), // 4: Av. del Professor López Piñero — north
+    LatLng(39.4553,  -0.3510),  // 5: DROP POINT (plaza snap)
   ];
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -1465,7 +1593,7 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
           _buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4540, -0.3520),
+            center: const LatLng(39.4545, -0.3520),
             zoom: 14.0,
             onReady: _updatePoints,
           ),
@@ -1770,14 +1898,46 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
     LatLng(39.4611, -0.3764), // G — SW interior
   ];
 
+  // ── Real-GPS runner route ───────────────────────────────────────────────────
+  // Phase 1 (t = 0.0 → 0.2): one-time approach polyline, 6 waypoints.
+  static const _kFortifyApproach = [
+    LatLng(39.45876687267654,  -0.3714029660927564),  // 0: off-screen south entry
+    LatLng(39.46215764898202,  -0.37378187786513245), // 1: north
+    LatLng(39.46036136544272,  -0.3781083602643439),  // 2: west turn
+    LatLng(39.45972559106001,  -0.377663948174999),   // 3: south
+    LatLng(39.460916401822544, -0.3729453374616596),  // 4: east
+    LatLng(39.462167740331644, -0.3738210906965453),  // 5: north — arrives at loop start
+  ];
+
+  // Phase 2 (t = 0.15 → 0.75): closed-loop circuit traversed 4 times.
+  // The closing edge from loop[3] back to loop[0] is implicit.
+  static const _kFortifyLoop = [
+    LatLng(39.46217783167975,  -0.37378187786513245), // 0: loop start (top)
+    LatLng(39.460341182218244, -0.37809528932053965), // 1: west
+    LatLng(39.45912365004915,  -0.3772626255741333), // 2: south-west
+    LatLng(39.460939442465346, -0.37295328466461247), // 3: east
+  ];
+
+  // Phase 3 (t = 0.75 → 1.0): runner exits north toward an off-screen point.
+  static const _kFortifyExit = LatLng(39.46536912894788, -0.3760824535918775);
+
+  // Phase boundaries.
+  static const double _kApproachEndT = 0.15;
+  static const double _kLoopEndT = 0.75;
+  static const int _kTotalLaps = 4;
+
+  // Approach segment time weights live on the painter (see
+  // _IntroFortifyMapPainter._kApproachWeights). Documented here for context:
+  // 6 approach points → 5 segments; segments 0 and 1 run at 1.6× speed
+  // (weight 0.625 vs 1.0). Cumulative normalized weights:
+  // [0, 0.147, 0.294, 0.529, 0.765, 1.0].
+
   List<List<Offset>> _inheritedPts = [];
   List<Offset> _claimedChunk = [];
-  int _level = 1;
-  double _lastLapFraction = 0.0;
-  int _lapCount = 0;
-
-  // Level milestones per lap completion.
-  static const _kLevelByLap = [1, 4, 8, 12, 15];
+  List<Offset> _approachPts = [];
+  List<Offset> _loopPts = [];
+  Offset _exitPt = Offset.zero;
+  int _level = 0;
 
   void _onMapReady() {
     final cam = mapCtrl.camera;
@@ -1790,6 +1950,9 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
           .map((block) => block.map(toScreen).toList())
           .toList();
       _claimedChunk = _kDisputedCoords.map(toScreen).toList();
+      _approachPts = _kFortifyApproach.map(toScreen).toList();
+      _loopPts = _kFortifyLoop.map(toScreen).toList();
+      _exitPt = toScreen(_kFortifyExit);
     });
   }
 
@@ -1797,7 +1960,7 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
   void initState() {
     super.initState();
     _fadeCtrl = AnimationController(vsync: this, duration: _kIntroFadeDuration);
-    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 8));
+    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 20));
     Future.delayed(_kIntroFadeDelay, () {
       if (mounted) _fadeCtrl.forward();
     });
@@ -1805,34 +1968,22 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
     _loopController(_ctrl, mounted: () => mounted);
   }
 
+  // Derive level purely from t. Approach phase (t < 0.15) keeps level at 0.
+  // Loop phase (0.15 → 0.75) increments level once per completed lap (4 total).
+  // Exit phase (t ≥ 0.75) holds level at _kTotalLaps so the fortified state
+  // is fully painted while the runner exits north.
+  int _levelFromT(double t) {
+    if (t < _kApproachEndT) return 0;
+    if (t >= _kLoopEndT) return _kTotalLaps;
+    final loopT = ((t - _kApproachEndT) / (_kLoopEndT - _kApproachEndT))
+        .clamp(0.0, 1.0);
+    return (loopT * _kTotalLaps).floor().clamp(0, _kTotalLaps);
+  }
+
   void _onTick() {
-    if (_claimedChunk.isEmpty) return;
-    final t = _ctrl.value;
-    // Compute perimeter length.
-    double perimTotal = 0;
-    for (int i = 0; i < _claimedChunk.length; i++) {
-      final a = _claimedChunk[i];
-      final b = _claimedChunk[(i + 1) % _claimedChunk.length];
-      perimTotal += (b - a).distance;
-    }
-    if (perimTotal == 0) return;
-    // Map t to perimeter fraction.
-    final lapFrac = t;
-    // Detect lap completion (fraction crosses from ~1.0 back to ~0.0).
-    if (_lastLapFraction > 0.85 && lapFrac < 0.15 && _lapCount < 4) {
-      _lapCount++;
-      final newLevel = _kLevelByLap[_lapCount.clamp(0, _kLevelByLap.length - 1)];
-      if (newLevel != _level) {
-        setState(() => _level = newLevel);
-      }
-    }
-    _lastLapFraction = lapFrac;
-    // Also reset on ctrl reset (t goes back to ~0).
-    if (lapFrac < 0.05 && _lastLapFraction > 0.9) {
-      setState(() {
-        _lapCount = 0;
-        _level = 1;
-      });
+    final newLevel = _levelFromT(_ctrl.value);
+    if (newLevel != _level) {
+      setState(() => _level = newLevel);
     }
   }
 
@@ -1854,7 +2005,7 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
           _buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4599, -0.3756),
+            center: const LatLng(39.4595, -0.3756),
             zoom: 16.0,
             onReady: _onMapReady,
           ),
@@ -1868,6 +2019,9 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
                   accent: widget.accent,
                   inheritedPts: _inheritedPts,
                   claimedChunk: _claimedChunk,
+                  approachPts: _approachPts,
+                  loopPts: _loopPts,
+                  exitPt: _exitPt,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -1878,7 +2032,10 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
             child: AnimatedBuilder(
               animation: _ctrl,
               builder: (_, __) {
-                if (_level < 1) return const SizedBox.shrink();
+                // Hide during approach (level 0) and exit phase (t ≥ 0.75).
+                if (_level < 1 || _ctrl.value >= _kLoopEndT) {
+                  return const SizedBox.shrink();
+                }
                 return Text(
                   'LVL $_level',
                   style: GoogleFonts.bebasNeue(
@@ -1902,6 +2059,9 @@ class _IntroFortifyMapPainter extends CustomPainter with _IntroPainterHelpers {
   final Color accent;
   final List<List<Offset>> inheritedPts;
   final List<Offset> claimedChunk;
+  final List<Offset> approachPts;
+  final List<Offset> loopPts;
+  final Offset exitPt;
 
   _IntroFortifyMapPainter({
     required this.t,
@@ -1909,7 +2069,18 @@ class _IntroFortifyMapPainter extends CustomPainter with _IntroPainterHelpers {
     required this.accent,
     required this.inheritedPts,
     required this.claimedChunk,
+    required this.approachPts,
+    required this.loopPts,
+    required this.exitPt,
   });
+
+  // Must mirror state-class constants — phase boundaries + total laps.
+  static const double _kApproachEndT = 0.15;
+  static const double _kLoopEndT = 0.75;
+  static const int _kTotalLaps = 4;
+
+  // Mirrors _IntroFortifyMapState._kApproachWeights — segment time weights.
+  static const _kApproachWeights = <double>[0.625, 0.625, 1.0, 1.0, 1.0];
 
   Offset _chunkCentroid() {
     if (claimedChunk.isEmpty) return Offset.zero;
@@ -1921,25 +2092,92 @@ class _IntroFortifyMapPainter extends CustomPainter with _IntroPainterHelpers {
     return Offset(sumX / claimedChunk.length, sumY / claimedChunk.length);
   }
 
-  /// Position of the runner dot at fraction `frac` around the chunk perimeter.
-  Offset _runnerPos(double frac) {
-    if (claimedChunk.isEmpty) return Offset.zero;
-    double totalPerim = 0;
-    for (int i = 0; i < claimedChunk.length; i++) {
-      totalPerim += (claimedChunk[(i + 1) % claimedChunk.length] - claimedChunk[i]).distance;
+  /// Arc-length interpolation along an open polyline of [pts] at fraction
+  /// [frac] (0..1). When [closed] is true, the closing edge from last back to
+  /// first is included.
+  Offset _posOnPolyline(List<Offset> pts, double frac, {bool closed = false}) {
+    if (pts.isEmpty) return Offset.zero;
+    if (pts.length == 1) return pts[0];
+    final segCount = closed ? pts.length : pts.length - 1;
+    double totalLen = 0;
+    final segLens = List<double>.filled(segCount, 0);
+    for (int i = 0; i < segCount; i++) {
+      final a = pts[i];
+      final b = pts[(i + 1) % pts.length];
+      final len = (b - a).distance;
+      segLens[i] = len;
+      totalLen += len;
     }
-    if (totalPerim == 0) return claimedChunk[0];
-    double target = frac.clamp(0.0, 1.0) * totalPerim;
-    for (int i = 0; i < claimedChunk.length; i++) {
-      final a = claimedChunk[i];
-      final b = claimedChunk[(i + 1) % claimedChunk.length];
-      final segLen = (b - a).distance;
+    if (totalLen == 0) return pts[0];
+    double target = frac.clamp(0.0, 1.0) * totalLen;
+    for (int i = 0; i < segCount; i++) {
+      final segLen = segLens[i];
       if (target <= segLen) {
+        final a = pts[i];
+        final b = pts[(i + 1) % pts.length];
         return Offset.lerp(a, b, segLen > 0 ? target / segLen : 0)!;
       }
       target -= segLen;
     }
-    return claimedChunk[0];
+    return pts[closed ? 0 : pts.length - 1];
+  }
+
+  /// Position along the approach polyline using per-segment time weights
+  /// instead of arc-length. Segments 0 and 1 consume 0.625/4.25 ≈ 14.7% of
+  /// approach time each (vs uniform 20%), so the runner traverses them ~1.6×
+  /// faster than the remaining three segments.
+  Offset _posOnApproachWeighted(double frac) {
+    if (approachPts.isEmpty) return Offset.zero;
+    if (approachPts.length == 1) return approachPts[0];
+
+    // Cumulative normalized weights — 6 entries for 5 segments.
+    double total = 0;
+    for (final w in _kApproachWeights) {
+      total += w;
+    }
+    if (total == 0) return approachPts[0];
+
+    final cum = <double>[0];
+    double acc = 0;
+    for (final w in _kApproachWeights) {
+      acc += w;
+      cum.add(acc / total);
+    }
+    final p = frac.clamp(0.0, 1.0);
+
+    // Find the segment p falls in.
+    for (int i = 0; i < _kApproachWeights.length; i++) {
+      final lo = cum[i];
+      final hi = cum[i + 1];
+      if (p <= hi) {
+        final span = hi - lo;
+        final localFrac = span > 0 ? (p - lo) / span : 0.0;
+        return Offset.lerp(approachPts[i], approachPts[i + 1], localFrac)!;
+      }
+    }
+    return approachPts.last;
+  }
+
+  /// Position of the runner dot at the master timeline t.
+  /// Phase 1 (t < 0.15):       walk approach polyline once (weighted time).
+  /// Phase 2 (0.15 ≤ t < 0.75): walk loop polyline 4 times (closed loop).
+  /// Phase 3 (t ≥ 0.75):       lerp from loop[0] (top) to exitPt off-screen.
+  Offset _runnerPosAtT(double t) {
+    if (t < _kApproachEndT) {
+      final approachFrac = (t / _kApproachEndT).clamp(0.0, 1.0);
+      return _posOnApproachWeighted(approachFrac);
+    }
+    if (t < _kLoopEndT) {
+      if (loopPts.isEmpty) return Offset.zero;
+      final loopT = ((t - _kApproachEndT) / (_kLoopEndT - _kApproachEndT))
+          .clamp(0.0, 1.0);
+      final lapPos = (loopT * _kTotalLaps) % 1.0;
+      return _posOnPolyline(loopPts, lapPos, closed: true);
+    }
+    // Exit phase — runner starts at loop[0] and travels to exitPt.
+    if (loopPts.isEmpty) return exitPt;
+    final exitFrac = ((t - _kLoopEndT) / (1.0 - _kLoopEndT)).clamp(0.0, 1.0);
+    return Offset.lerp(loopPts[0], exitPt, exitFrac)!;
   }
 
   void _drawPulseRing(Canvas canvas, Offset center, double t, Color color) {
@@ -1961,28 +2199,35 @@ class _IntroFortifyMapPainter extends CustomPainter with _IntroPainterHelpers {
     // 0. Inherited orange blocks — static base.
     drawInheritedBlocks(canvas, inheritedPts);
 
-    // 1. Claimed chunk — kSea fill.
-    drawFillColor(canvas, claimedChunk, kSea, 0.35);
+    // 1. Claimed chunk — kSea fill. Opacity ramps with level: 0.15 at level 0,
+    // up to 0.80 at level 4 (4 laps).
+    final fillOpacity = 0.15 + (level / 4.0) * 0.65;
+    drawFillColor(canvas, claimedChunk, kSea, fillOpacity);
 
-    // 2. Halo on fortified chunk — kSea glow outline, strength grows with level.
-    final haloOpacity = 0.25 + (level / 15.0) * 0.65;
-    final haloStroke = 1.5 + (level / 15.0) * 4.0;
-    final chunkPath = Path()..moveTo(claimedChunk[0].dx, claimedChunk[0].dy);
-    for (int i = 1; i < claimedChunk.length; i++) {
-      chunkPath.lineTo(claimedChunk[i].dx, claimedChunk[i].dy);
+    // 2. Halo on loop circuit path — kSea glow outline that traces the runner's
+    // looping route, intensity grows with level. Only drawn once the runner
+    // has entered the loop phase.
+    if (level > 0 && loopPts.length >= 2) {
+      final haloOpacity = 0.25 + (level / 4.0) * 0.65;
+      final haloStroke = 1.5 + (level / 4.0) * 4.0;
+      final loopPath = Path()..moveTo(loopPts[0].dx, loopPts[0].dy);
+      for (int i = 1; i < loopPts.length; i++) {
+        loopPath.lineTo(loopPts[i].dx, loopPts[i].dy);
+      }
+      loopPath.close();
+      canvas.drawPath(
+        loopPath,
+        Paint()
+          ..color = kSea.withValues(alpha: haloOpacity)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = haloStroke
+          ..strokeJoin = StrokeJoin.round,
+      );
     }
-    chunkPath.close();
-    canvas.drawPath(
-      chunkPath,
-      Paint()
-        ..color = kSea.withValues(alpha: haloOpacity)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = haloStroke
-        ..strokeJoin = StrokeJoin.round,
-    );
 
-    // 3. Runner dot loops the chunk perimeter.
-    final runnerPos = _runnerPos(t);
+    // 3. Runner dot — phase 1: approach polyline; phase 2: 4-lap loop circuit;
+    // phase 3: lerp toward off-screen exit point.
+    final runnerPos = _runnerPosAtT(t);
     canvas.drawCircle(
         runnerPos,
         10,
@@ -1993,8 +2238,8 @@ class _IntroFortifyMapPainter extends CustomPainter with _IntroPainterHelpers {
     canvas.drawCircle(
         runnerPos, 1.5, Paint()..color = Colors.white.withValues(alpha: 0.85));
 
-    // 4. At level 15: pulse ring + "FORTIFIED" label.
-    if (level >= 15) {
+    // 4. At max level (4): pulse ring + "FORTIFIED" label.
+    if (level >= _kTotalLaps) {
       final centroid = _chunkCentroid();
       _drawPulseRing(canvas, centroid, t, kSea);
 
@@ -2020,7 +2265,12 @@ class _IntroFortifyMapPainter extends CustomPainter with _IntroPainterHelpers {
 
   @override
   bool shouldRepaint(_IntroFortifyMapPainter old) =>
-      old.t != t || old.level != level || old.claimedChunk != claimedChunk;
+      old.t != t ||
+      old.level != level ||
+      old.claimedChunk != claimedChunk ||
+      old.approachPts != approachPts ||
+      old.loopPts != loopPts ||
+      old.exitPt != exitPt;
 }
 
 // ---------------------------------------------------------------------------

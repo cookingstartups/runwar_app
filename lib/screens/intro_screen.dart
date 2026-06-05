@@ -112,7 +112,7 @@ const _slides = [
     headline: 'A FLAG DROPS.\nONE RUNNER WINS.',
     body: 'A daily flag drops somewhere in the city. First feet claim the territory — and the glory.',
     anim: _Anim.rivals,
-    layout: _Layout.visualTopTextBottom,
+    layout: _Layout.textTopVisualBottom,
     bodyMaxLines: 4,
   ),
   // 7 — Competitive elimination (spec: earn your seat)
