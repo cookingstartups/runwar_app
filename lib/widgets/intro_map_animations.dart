@@ -383,19 +383,29 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
 
   // Segment indices where each block loop closes.
   // Block 1 closes at idx 4 (A), block 2 at idx 8 (B), block 3 at idx 11 (G).
-  // Block 3 ramp starts 0.5 segs before close so fill reaches full opacity
-  // exactly when the route ends (traveled=11). Blocks 1+2 ramp after close.
+  // Blocks 1+2 are traveled-based (runner continues past close, giving ramp headroom).
+  // Block 3 is time-based: traveled maxes at the close point (t=0.82), so there
+  // is no post-close headroom in traveled space — trigger on t directly instead.
   static const double _block1CloseIdx = 4.0;
   static const double _block2CloseIdx = 8.0;
-  static const double _block3CloseIdx = 10.5; // 10.5→11.0 = full at close
+  static const double _block3CloseT = 0.82; // t at which route completes = block 3 closes
 
   // Fill opacity ramps over 0.5 segments past each close index; holds until
-  // t=0.94, then fades out over 0.94–1.0.
+  // t=0.94, then fades out over 0.94–1.0. Used for blocks 1 and 2.
   double _fillOpacity(double traveled, double closeIdx, double t) {
     final frac = ((traveled - closeIdx) / 0.5).clamp(0.0, 1.0);
     final fade =
         t > 0.94 ? (1.0 - (t - 0.94) / 0.06).clamp(0.0, 1.0) : 1.0;
     return frac * fade * 0.28;
+  }
+
+  // Time-based fill opacity for block 3. Because traveled maxes at exactly the
+  // close point (t=0.82), there is no traveled headroom after close — ramp on t.
+  double _block3FillOpacity(double t) {
+    if (t < _block3CloseT) return 0.0;
+    final ramp = ((t - _block3CloseT) / 0.04).clamp(0.0, 1.0);
+    final fade = t > 0.94 ? (1.0 - (t - 0.94) / 0.06).clamp(0.0, 1.0) : 1.0;
+    return ramp * fade * 0.28;
   }
 
   @override
@@ -410,7 +420,7 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
     // Block fills — appear as the runner closes each loop.
     final fill1Opacity = _fillOpacity(traveled, _block1CloseIdx, t);
     final fill2Opacity = _fillOpacity(traveled, _block2CloseIdx, t);
-    final fill3Opacity = _fillOpacity(traveled, _block3CloseIdx, t);
+    final fill3Opacity = _block3FillOpacity(t);
     drawFill(canvas, block1, fill1Opacity);
     drawFill(canvas, block2, fill2Opacity);
     drawFill(canvas, block3, fill3Opacity);
@@ -467,10 +477,10 @@ class _IntroPulseMapPainter extends CustomPainter with _IntroPainterHelpers {
       drawPings(canvas, block2, (ping2T / 1.5).clamp(0.0, 1.0));
     }
 
-    // Ping burst when block 3 closes.
-    final ping3T = traveled - _block3CloseIdx;
-    if (ping3T > 0 && ping3T < 1.5) {
-      drawPings(canvas, block3, (ping3T / 1.5).clamp(0.0, 1.0));
+    // Ping burst when block 3 closes — time-based (traveled maxes at close point).
+    if (t >= _block3CloseT && t < _block3CloseT + 0.112) {
+      final pingFrac = ((t - _block3CloseT) / 0.112).clamp(0.0, 1.0);
+      drawPings(canvas, block3, pingFrac);
     }
   }
 
