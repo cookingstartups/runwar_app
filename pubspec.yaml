@@ -78,6 +78,15 @@ dependencies:
   # Foreground service — keeps GPS alive when screen locks (MIUI/Android)
   flutter_foreground_task: ^8.0.0
 
+  # Camera / gallery photo selection for profile avatar
+  image_picker: ^1.1.2
+
+  # HSV colour wheel picker
+  flutter_colorpicker: ^1.1.0
+
+  # EXIF metadata extraction (GPS, datetime, device info)
+  exif: ^3.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

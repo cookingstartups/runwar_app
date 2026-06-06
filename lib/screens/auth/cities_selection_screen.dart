@@ -6,8 +6,8 @@ import '../../data/cities_catalog.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/cities_provider.dart';
 import '../../providers/profile_provider.dart';
-import '../../services/database/waitlist_repository.dart';
 import '../../services/database_service.dart';
+import '../../services/database/waitlist_repository.dart';
 import '../../widgets/city_card.dart';
 import '../../widgets/milestone_progress_bar.dart';
 import '../../widgets/grain_overlay.dart';
@@ -46,6 +46,14 @@ class _CitiesSelectionScreenState
         vsync: this, duration: const Duration(milliseconds: 600));
     Future.delayed(const Duration(milliseconds: 80), () {
       if (mounted) _fadeCtrl.forward();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final userId = ref.read(authProvider).user?['id'] as String?;
+      if (userId == null) return;
+      final cached = ref.read(joinedCitySlugsProvider(userId)).valueOrNull;
+      if (cached != null && cached.isNotEmpty && mounted) {
+        setState(() => _selected.addAll(cached));
+      }
     });
   }
 
@@ -379,22 +387,20 @@ class _CitiesSelectionScreenState
             if (_selected.contains(city.slug)) {
               setState(() => _selected.remove(city.slug));
             } else if (_selected.length >= 3) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
+              showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: kSurface,
                   content: Text(
                     'Run & conquer to unlock more cities.',
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 11,
-                      letterSpacing: 1,
-                      color: kFg,
-                    ),
+                    style: TextStyle(color: kFg, fontFamily: 'SpaceGrotesk'),
                   ),
-                  backgroundColor: kSurface,
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  duration: const Duration(seconds: 3),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text('GOT IT', style: TextStyle(color: kAccent, fontWeight: FontWeight.w700)),
+                    ),
+                  ],
                 ),
               );
             } else {

@@ -59,6 +59,10 @@ class _IntroPulseMapState extends State<IntroPulseMap>
   List<Offset> _block2 = [];
   List<Offset> _block3 = [];
 
+  // Incremented each time the animation loop restarts so the painter can
+  // invalidate its shared-edge cache (keyed by loopGeneration).
+  int _loopGeneration = 0;
+
   @override
   void initState() {
     super.initState();
@@ -67,7 +71,19 @@ class _IntroPulseMapState extends State<IntroPulseMap>
     Future.delayed(kIntroFadeDelay, () {
       if (mounted) _fadeCtrl.forward();
     });
-    loopController(_ctrl, mounted: () => mounted);
+    _startLoop();
+  }
+
+  void _startLoop() {
+    _ctrl.reset();
+    _ctrl.forward().then((_) {
+      if (!mounted) return;
+      setState(() => _loopGeneration++);
+      Future.delayed(kIntroLoopPause, () {
+        if (!mounted) return;
+        _startLoop();
+      });
+    });
   }
 
   void _updatePoints() {
@@ -127,6 +143,7 @@ class _IntroPulseMapState extends State<IntroPulseMap>
                     block2: _block2,
                     block3: _block3,
                     tailLengthPx: tailPx,
+                    loopGeneration: _loopGeneration,
                   ),
                   child: const SizedBox.expand(),
                 );
@@ -198,6 +215,13 @@ class _IntroPulseMapPainter extends CustomPainter with IntroPainterHelpers {
   final List<Offset> block2;
   final List<Offset> block3;
   final double tailLengthPx;
+  final int loopGeneration;
+
+  // Shared-edge cache keyed by "$loopGeneration:$blockIndex" (0, 1, 2).
+  // Computed once at the first frame of each block's E&U window.
+  // Storing mutable state in the painter is acceptable here because the cache
+  // is purely a paint-time optimisation — it has no effect on semantics.
+  final Map<String, List<List<Offset>>?> _sharedEdgeCache = {};
 
   _IntroPulseMapPainter({
     required this.t,
@@ -207,6 +231,7 @@ class _IntroPulseMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.block2,
     required this.block3,
     required this.tailLengthPx,
+    required this.loopGeneration,
   });
 
   // Segment indices where each block loop closes.
@@ -217,6 +242,15 @@ class _IntroPulseMapPainter extends CustomPainter with IntroPainterHelpers {
   static const double _block1CloseIdx = 4.0;
   static const double _block2CloseIdx = 8.0;
   static const double _block3CloseT = 0.82; // t at which route completes = block 3 closes
+
+  // E&U start times in controller t-space.
+  //   t = (closeIdx / 11) * 0.82  for blocks 1+2 (11 total segments, 0.82 max t).
+  static const double _eu1StartT = (_block1CloseIdx / 11.0) * 0.82; // ≈ 0.2982
+  static const double _eu2StartT = (_block2CloseIdx / 11.0) * 0.82; // ≈ 0.5964
+  static const double _eu3StartT = _block3CloseT;                    // 0.82
+
+  // E&U window in t-space: 400 ms over a 12 s controller ≈ 0.0333.
+  static const double _euWindowT = 0.400 / 12.0;
 
   // Fill opacity ramps over 0.5 segments past each close index; holds at
   // 0.28 permanently (no fade at t>=0.85 so territory stays visible during pause).
@@ -231,6 +265,34 @@ class _IntroPulseMapPainter extends CustomPainter with IntroPainterHelpers {
     if (t < _block3CloseT) return 0.0;
     final ramp = ((t - _block3CloseT) / 0.04).clamp(0.0, 1.0);
     return ramp * 0.28;
+  }
+
+  // Compute the union opacity envelope for the current frame.
+  // During an active E&U window for block N, smoothly tweens the prior union's
+  // peak opacity toward the full union's peak using [unionOpacityHandoff].
+  // Outside any window falls back to math.max — preserves existing behaviour.
+  double _computeUnionOpacity(List<double> ramps, double currentT) {
+    const startTs = [_eu1StartT, _eu2StartT, _eu3StartT];
+    for (var i = 0; i < ramps.length; i++) {
+      final dt = currentT - startTs[i];
+      if (dt >= 0 && dt < _euWindowT) {
+        final windowT = (dt / _euWindowT).clamp(0.0, 1.0);
+        // Prior peak = max of ramps excluding block i.
+        final prior = ramps
+            .asMap()
+            .entries
+            .where((e) => e.key != i)
+            .map((e) => e.value)
+            .fold(0.0, math.max);
+        final newFull = ramps.fold(0.0, math.max);
+        return unionOpacityHandoff(
+          priorOpacity: prior,
+          newOpacity: newFull,
+          windowT: windowT,
+        );
+      }
+    }
+    return ramps.where((o) => o > 0).fold(0.0, math.max);
   }
 
   @override
@@ -278,11 +340,13 @@ class _IntroPulseMapPainter extends CustomPainter with IntroPainterHelpers {
     }
 
     // Single opacity envelope for the union = the peak of any contributing
-    // block's ramp. Keeps the existing fade-in behavior per block while still
-    // drawing the merged outline only once.
-    final activeOpacity = [fill1Opacity, fill2Opacity, fill3Opacity]
-        .where((o) => o > 0)
-        .fold(0.0, math.max);
+    // block's ramp. During an active E&U window the opacity is smoothly tweened
+    // via [_computeUnionOpacity] to avoid the step-up flicker when a new block
+    // ramp overtakes the prior peak. Outside any window falls back to math.max.
+    final activeOpacity = _computeUnionOpacity(
+      [fill1Opacity, fill2Opacity, fill3Opacity],
+      t,
+    );
     if (activeOpacity > 0) {
       // Fill — one call across the unioned polygon.
       canvas.drawPath(
@@ -300,6 +364,50 @@ class _IntroPulseMapPainter extends CustomPainter with IntroPainterHelpers {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5
           ..strokeJoin = StrokeJoin.round,
+      );
+    }
+
+    // ── Expand & Unify transitions ─────────────────────────────────────────
+    // For each block, if t is within its E&U window, draw the overlay.
+    const euCloseStarts = [_eu1StartT, _eu2StartT, _eu3StartT];
+    final euBlocks = [block1, block2, block3];
+
+    for (var i = 0; i < 3; i++) {
+      final startT = euCloseStarts[i];
+      final dt = t - startT;
+      if (dt < 0 || dt >= _euWindowT) continue;
+      final animT = (dt / _euWindowT).clamp(0.0, 1.0);
+
+      // Build prior-union path (blocks 0..i-1 that have already closed).
+      Path priorUnion = Path();
+      final priorBlockVerts = <List<Offset>>[];
+      for (var j = 0; j < i; j++) {
+        if (euBlocks[j].isNotEmpty) {
+          priorUnion = Path.combine(
+              PathOperation.union, priorUnion, makePoly(euBlocks[j]));
+          priorBlockVerts.add(euBlocks[j]);
+        }
+      }
+
+      // Cache shared edges on the first frame of this window.
+      // Key includes loopGeneration to auto-invalidate on loop restart.
+      final cacheKey = '$loopGeneration:$i';
+      if (!_sharedEdgeCache.containsKey(cacheKey)) {
+        final edges = sharedEdgePolylines(
+          priorBlocks: priorBlockVerts,
+          newBlock: euBlocks[i],
+        );
+        _sharedEdgeCache[cacheKey] = edges.isEmpty ? null : edges;
+      }
+
+      drawExpandUnify(
+        canvas,
+        priorUnion: priorUnion,
+        newBlock: euBlocks[i],
+        unionAfter: capturedUnion,
+        sharedEdges: _sharedEdgeCache[cacheKey],
+        t: animT,
+        color: accent,
       );
     }
 
@@ -379,5 +487,6 @@ class _IntroPulseMapPainter extends CustomPainter with IntroPainterHelpers {
       old.block1 != block1 ||
       old.block2 != block2 ||
       old.block3 != block3 ||
-      old.tailLengthPx != tailLengthPx;
+      old.tailLengthPx != tailLengthPx ||
+      old.loopGeneration != loopGeneration;
 }

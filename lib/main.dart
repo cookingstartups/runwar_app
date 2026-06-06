@@ -21,7 +21,7 @@ import 'screens/auth/phone_link_screen.dart';
 import 'screens/auth/cities_selection_screen.dart';
 import 'screens/auth/join_war_confirmation_screen.dart';
 // import 'screens/waitlist_gate_screen.dart'; // kept for named route fallback
-import 'screens/onboarding/onboarding_flow.dart';
+import 'screens/onboarding/sign_up_flow.dart';
 import 'screens/main_shell.dart';
 import 'screens/paywall_screen.dart';
 import 'screens/first_mission_briefing_screen.dart';
@@ -88,6 +88,10 @@ class RunWarApp extends StatelessWidget {
       title: 'RunWar',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
+      // INVARIANT: _RouteGuard is the MaterialApp home and must never be replaced or
+      // popped via Navigator.pushReplacement* or Navigator.pop. It manages all navigation
+      // reactively by returning different widgets. To "navigate" to a new screen, change
+      // provider state (e.g. ref.invalidate(showcaseSeenProvider)) — do NOT push a named route.
       home: const _RouteGuard(),
       onGenerateRoute: (settings) {
         switch (settings.name) {
@@ -116,12 +120,14 @@ class RunWarApp extends StatelessWidget {
 }
 
 /// Route guard — watches auth + profile state reactively.
+/// Screens rendered here must use ref.listen (not if(mounted)) for snackbars —
+/// isLoading=true replaces the screen, making the old instance's mounted flag false.
 /// Gate order:
 ///   user == null          → LoginScreen / IntroScreen
 ///   no phone linked       → PhoneLinkScreen
 ///   no cities joined      → CitiesSelectionScreen
+///   username == ''        → SignUpFlow
 ///   invited_at == null    → JoinWarConfirmationScreen (waitlisted)
-///   username == ''        → OnboardingFlow
 ///   trial expired         → PaywallScreen
 ///   otherwise             → MainShell
 class _RouteGuard extends ConsumerStatefulWidget {
@@ -170,8 +176,6 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
 
-    debugPrint('[RouteGuard] user=${authState.user?["id"]}, isLoading=${authState.isLoading}, error=${authState.error}');
-
     if (authState.isLoading) return const _GateLoading();
 
     if (authState.user == null) {
@@ -187,19 +191,16 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
 
     // Gate 1: phone linked?
     final hasPhoneAsync = ref.watch(hasPhoneProvider(userId));
-    debugPrint('[RouteGuard] Gate1(hasPhone) loading=${hasPhoneAsync.isLoading} value=${hasPhoneAsync.value} error=${hasPhoneAsync.error}');
     if (hasPhoneAsync.isLoading) return const _GateLoading();
     if (!(hasPhoneAsync.value ?? true)) return const PhoneLinkScreen();
 
     // Gate 2: any cities joined?
     final joinedAsync = ref.watch(joinedCitySlugsProvider(userId));
-    debugPrint('[RouteGuard] Gate2(joinedSlugs) loading=${joinedAsync.isLoading} value=${joinedAsync.value} error=${joinedAsync.error}');
     if (joinedAsync.isLoading) return const _GateLoading();
     if ((joinedAsync.value ?? []).isEmpty) return const CitiesSelectionScreen();
 
     // Gate 3: profile + invited_at + username
     final profileAsync = ref.watch(profileGateProvider(userId));
-    debugPrint('[RouteGuard] Gate3(profile) loading=${profileAsync.isLoading} hasError=${profileAsync.hasError} error=${profileAsync.error}');
     if (profileAsync.isLoading) {
       return const SplashScreen(
           showStatus: true, statusLabel: 'SYNCING TERRITORY');
@@ -210,11 +211,11 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
               child: Text('Error loading profile: ${profileAsync.error}')));
     }
     final profile = profileAsync.value;
-    if (profile == null || profile['invited_at'] == null) {
+    final username = (profile?['username'] as String?) ?? '';
+    if (profile == null || username.isEmpty) return const SignUpFlow();
+    if (profile['invited_at'] == null) {
       return const JoinWarConfirmationScreen();
     }
-    final username = (profile['username'] as String?) ?? '';
-    if (username.isEmpty) return const OnboardingFlow();
 
     // Gate 5a: first-mission onboarding
     final missionAsync = ref.watch(missionStatusProvider(userId));

@@ -64,13 +64,14 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
     LatLng(39.460439999999998, -0.375966000000000),   // F — kS1Block2 vertex (inside lasso)
   ];
 
-  // Vertices of _kDisputedArea that lie on the defender's block boundary.
-  // Ping rings fire here (not across the full disputed polygon) to highlight
-  // only the territory being transferred from defender to attacker.
+  // Edge-crossing vertices of _kDisputedArea — points where the attacker's
+  // lasso boundary cuts through the defender's block boundary. These are the
+  // true "transfer edge" points where territory changes hands, so ping rings
+  // fire here rather than at the pure interior defender vertices (E, F, G).
   static const _kSharedTransferVertices = [
-    LatLng(39.461568, -0.375167), // E — kS1Block2 vertex inside attacker lasso
-    LatLng(39.460440, -0.375966), // F — kS1Block2 vertex inside attacker lasso
-    LatLng(39.461050, -0.376394), // G — shared kS1Block2/kS1Block3 vertex
+    LatLng(39.461583456798429, -0.375177780281812), // lasso (pt4→pt5) ∩ block edge A–E
+    LatLng(39.461062095301116, -0.376402209168246), // lasso (pt3→pt4) ∩ block edge B–G
+    LatLng(39.460375379397249, -0.378014976497241), // lasso (pt1→pt2) ∩ block edge I–G
   ];
 
   static const _kPreRollRoute = [
@@ -147,7 +148,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4632, -0.3773),
+            center: const LatLng(39.4659, -0.3738),
             zoom: 16.0,
             onReady: _updatePoints,
           ),

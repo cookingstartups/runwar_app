@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:latlong2/latlong.dart' hide Path;
 
 import '../providers/auth_provider.dart';
 import '../providers/profile_provider.dart';
@@ -15,6 +15,8 @@ import '../providers/app_config_provider.dart';
 import '../services/run_recorder_service.dart';
 import '../services/battery_optimization_service.dart';
 import '../widgets/battery_warning_banner.dart';
+import '../widgets/territory_overlay_painter.dart';
+import '../widgets/intro/intro_helpers.dart' show sharedEdgePolylines;
 import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
 import '../services/superpower_service.dart';
@@ -89,6 +91,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
   bool _centeredOnGps = false;
   late final AnimationController _terrainPulse;
 
+  // ── Expand & Unify overlay state ──────────────────────────────────────────
+  AnimationController? _euController;
+  Path _euPriorUnion = Path();
+  List<Offset> _euNewBlock = const [];
+  Path _euUnionAfter = Path();
+  List<List<Offset>>? _euSharedEdges;
+
   @override
   void initState() {
     super.initState();
@@ -147,6 +156,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   void dispose() {
     SuperpowerService.instance.onShieldEarned = null;
     _terrainPulse.dispose();
+    _euController?.dispose();
     _posSub?.cancel();
     super.dispose();
   }
@@ -359,6 +369,85 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // s == awaitingClaim → sheet is isDismissible:false; tap ignored.
   }
 
+  /// Projects [latlngs] to screen Offsets using the current map camera.
+  /// Returns an empty list if the map camera is not yet ready.
+  List<Offset> _projectToScreen(List<LatLng> latlngs) {
+    try {
+      final cam = _mapController.camera;
+      return latlngs.map((ll) {
+        final p = cam.latLngToScreenPoint(ll);
+        return Offset(p.x.toDouble(), p.y.toDouble());
+      }).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Builds a closed screen-space Path from [pts].
+  Path _makePoly(List<Offset> pts) {
+    if (pts.isEmpty) return Path();
+    final path = Path()..moveTo(pts[0].dx, pts[0].dy);
+    for (var i = 1; i < pts.length; i++) {
+      path.lineTo(pts[i].dx, pts[i].dy);
+    }
+    return path..close();
+  }
+
+  /// Starts the 400 ms E&U overlay animation after a successful claim.
+  /// [priorZonePoints] — screen-space vertex lists for all zones owned by the
+  ///   player immediately before the claim.
+  /// [newBlockPts] — screen-space vertices of the newly-claimed block.
+  void _startEUAnimation(
+    List<List<Offset>> priorZonePoints,
+    List<Offset> newBlockPts,
+    Color ownerColor,
+  ) {
+    if (!mounted) return;
+
+    // Build prior union Path from all pre-claim owned zones.
+    var priorUnion = Path();
+    for (final pts in priorZonePoints) {
+      if (pts.isNotEmpty) {
+        priorUnion = Path.combine(
+          PathOperation.union,
+          priorUnion,
+          _makePoly(pts),
+        );
+      }
+    }
+
+    // Union after = prior + new block.
+    final newPoly = _makePoly(newBlockPts);
+    final unionAfter = priorZonePoints.isEmpty
+        ? newPoly
+        : Path.combine(PathOperation.union, priorUnion, newPoly);
+
+    // Shared edges — computed once, before animation starts.
+    final shared = sharedEdgePolylines(
+      priorBlocks: priorZonePoints,
+      newBlock: newBlockPts,
+    );
+
+    // Dispose any previous controller before creating a new one.
+    _euController?.dispose();
+    final ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    _euController = ctrl;
+
+    setState(() {
+      _euPriorUnion = priorUnion;
+      _euNewBlock = newBlockPts;
+      _euUnionAfter = unionAfter;
+      _euSharedEdges = shared.isEmpty ? null : shared;
+    });
+
+    ctrl.forward().then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
   Future<void> _autoClaim(BuildContext context, String city) async {
     final auth = ref.read(authProvider);
     final userId = auth.user?['id'] as String?;
@@ -366,6 +455,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
       ref.read(runRecorderProvider.notifier).discard();
       return;
     }
+
+    // Snapshot track and prior zones BEFORE confirmClaim (which calls discardRun).
+    final trackBefore = RunRecorderService.instance.trackSnapshot;
+    final zonesBefore = ref.read(zonesProvider(city)).valueOrNull ?? const [];
+
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Claiming territory…'), duration: Duration(seconds: 10)),
@@ -375,6 +469,23 @@ class _MapScreenState extends ConsumerState<MapScreen>
         .confirmClaim(userId, city);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    // Fire E&U animation on any successful claim or conquest.
+    if (outcome.result == TerritoryResult.claimed ||
+        outcome.result == TerritoryResult.conquered) {
+      final priorZoneScreenPts = zonesBefore
+          .where((z) => z.ownerId == userId)
+          .map((z) => _projectToScreen(z.points))
+          .where((pts) => pts.isNotEmpty)
+          .toList();
+      final newBlockScreenPts = _projectToScreen(trackBefore);
+      // Determine owner color from profile (default to kAccent).
+      final ownerProfile =
+          ref.read(profileGateProvider(userId)).valueOrNull;
+      final ownerColor =
+          _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
+      _startEUAnimation(priorZoneScreenPts, newBlockScreenPts, ownerColor);
+    }
 
     // Mission 1: successful claim triggers celebration overlay + edge fn.
     if (widget.missionStep == MissionStep.mission1Claim &&
@@ -665,6 +776,22 @@ class _MapScreenState extends ConsumerState<MapScreen>
             ),
           ],
         ),
+        // Expand & Unify overlay — rendered above the fog, transitions away in 400 ms.
+        if (_euController != null && _euController!.isAnimating)
+          AnimatedBuilder(
+            animation: _euController!,
+            builder: (_, __) => CustomPaint(
+              painter: TerritoryOverlayPainter(
+                accent: kAccent,
+                priorUnion: _euPriorUnion,
+                newBlock: _euNewBlock,
+                unionAfter: _euUnionAfter,
+                sharedEdgesList: _euSharedEdges,
+                animT: _euController!.value,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
         // Runners nearby chip — top-left, only visible when rivals within 1 km.
         StreamBuilder<List<PlayerPresence>>(
           stream: RealtimePresenceService.instance.playersStream,
