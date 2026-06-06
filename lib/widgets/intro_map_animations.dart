@@ -189,7 +189,11 @@ mixin _IntroPainterHelpers {
 
   void drawPings(Canvas canvas, List<Offset> pts, double pingT) {
     if (pts.length < 3) return;
-    final corners = [pts[0], pts[pts.length ~/ 2], pts[pts.length - 2]];
+    // For small lists (≤4 pts) ping every vertex so none are skipped.
+    // For larger lists sample 3 representative corners to avoid clutter.
+    final corners = pts.length <= 4
+        ? pts
+        : [pts[0], pts[pts.length ~/ 2], pts[pts.length - 2]];
     for (final corner in corners) {
       canvas.drawCircle(
           corner,
@@ -3532,6 +3536,371 @@ class _HexGlyphPainter extends CustomPainter {
   @override
   bool shouldRepaint(_HexGlyphPainter old) => old.color != color;
 }
+
+// ---------------------------------------------------------------------------
+// 6C. IntroDefenseMapC — SHIELD Variant C (Cinematic Flash + Shatter)
+// ---------------------------------------------------------------------------
+// Same defense-scene scaffold as IntroDefenseMap, but the shield activation
+// reads as a single cinematic strike:
+//   - 120ms white screen flash
+//   - SHIELD stamp scales 0.3→1.0 at the disputed centroid
+//   - attacker's blue lasso shatters into 7 outward-flying shards
+class IntroDefenseMapC extends StatefulWidget {
+  final Color accent;
+  const IntroDefenseMapC({required this.accent, super.key});
+  @override
+  State<IntroDefenseMapC> createState() => _IntroDefenseMapCState();
+}
+
+class _IntroDefenseMapCState extends State<IntroDefenseMapC>
+    with TickerProviderStateMixin, _IntroMapMixin<IntroDefenseMapC> {
+  late final AnimationController _ctrl;
+  late final AnimationController _fadeCtrl;
+
+  // Player 3 route — Renfe Norte → adjacent block lasso (per spec).
+  static const _kP3RouteC = [
+    LatLng(39.4658, -0.3766), // 0: Renfe Norte entrance
+    LatLng(39.4648, -0.3760), // 1
+    LatLng(39.4638, -0.3758), // 2
+    LatLng(39.4631, -0.3758), // 3: lasso start
+    LatLng(39.4631, -0.3750), // 4
+    LatLng(39.4623, -0.3750), // 5
+    LatLng(39.4623, -0.3758), // 6: closes
+  ];
+
+  static const _kDisputedC = [
+    LatLng(39.4631, -0.3758),
+    LatLng(39.4631, -0.3752),
+    LatLng(39.4626, -0.3752),
+    LatLng(39.4626, -0.3758),
+  ];
+
+  List<List<Offset>> _inheritedPts = [];
+  List<Offset> _attackerRoute = [];
+  List<Offset> _disputedArea = [];
+
+  void _onMapReady() {
+    final cam = mapCtrl.camera;
+    Offset toScreen(LatLng ll) {
+      final p = cam.latLngToScreenPoint(ll);
+      return Offset(p.x.toDouble(), p.y.toDouble());
+    }
+    markMapReady(() {
+      _inheritedPts = IntroZones.kS1All
+          .map((block) => block.map(toScreen).toList())
+          .toList();
+      _attackerRoute = _kP3RouteC.map(toScreen).toList();
+      _disputedArea = _kDisputedC.map(toScreen).toList();
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _fadeCtrl = AnimationController(vsync: this, duration: _kIntroFadeDuration);
+    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 9));
+    Future.delayed(_kIntroFadeDelay, () {
+      if (mounted) _fadeCtrl.forward();
+    });
+    _loopController(_ctrl, mounted: () => mounted);
+  }
+
+  @override
+  void dispose() {
+    _fadeCtrl.dispose();
+    _ctrl.dispose();
+    disposeMapCtrl();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fadeCtrl,
+      child: Stack(
+        children: [
+          _buildIntroMap(
+            context: context,
+            mapController: mapCtrl,
+            center: const LatLng(39.4635, -0.3758),
+            zoom: 16.0,
+            onReady: _onMapReady,
+          ),
+          if (mapReady)
+            AnimatedBuilder(
+              animation: _ctrl,
+              builder: (_, __) => CustomPaint(
+                painter: _IntroDefenseMapCPainter(
+                  t: _ctrl.value,
+                  accent: widget.accent,
+                  inheritedPts: _inheritedPts,
+                  attackerRoute: _attackerRoute,
+                  disputedArea: _disputedArea,
+                ),
+                child: const SizedBox.expand(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IntroDefenseMapCPainter extends CustomPainter with _IntroPainterHelpers {
+  final double t;
+  @override
+  final Color accent;
+  final List<List<Offset>> inheritedPts;
+  final List<Offset> attackerRoute;
+  final List<Offset> disputedArea;
+
+  _IntroDefenseMapCPainter({
+    required this.t,
+    required this.accent,
+    required this.inheritedPts,
+    required this.attackerRoute,
+    required this.disputedArea,
+  });
+
+  // Timeline (9s loop, t ∈ [0,1]):
+  //   0.00–0.20  inherited orange territory only
+  //   0.10–0.40  P3 (pink-red) runs from Renfe Norte; lasso draws
+  //   0.40–0.55  dispute phase: amber fill + dashed amber border
+  //   0.55–0.57  120ms white screen flash (alpha 0.85→0)
+  //   0.55–0.60  SHIELD stamp scales 0.3→1.0, alpha 0→1
+  //   0.60–0.68  SHIELD stamp held at 1.0
+  //   0.68–0.70  SHIELD stamp fades 1→0
+  //   0.65–0.80  7 lasso shards fly outward and fade
+  //   0.85–1.00  snap to orange, DEFENDED label
+  static const double _kRouteCompleteT = 0.40;
+  static const int _kLassoCloseSegIdx = 6;
+  static const Color _kP3 = Color(0xFFFF3B7A);
+
+  Offset _disputedCentroid() {
+    if (disputedArea.isEmpty) return Offset.zero;
+    double sumX = 0, sumY = 0;
+    for (final pt in disputedArea) {
+      sumX += pt.dx;
+      sumY += pt.dy;
+    }
+    return Offset(sumX / disputedArea.length, sumY / disputedArea.length);
+  }
+
+  /// Draw a dashed polygon outline (used for the amber dispute border).
+  void _drawDashedPolygon(
+      Canvas canvas, List<Offset> pts, Paint paint,
+      {double dash = 6.0, double gap = 4.0}) {
+    if (pts.length < 2) return;
+    for (int i = 0; i < pts.length; i++) {
+      final a = pts[i];
+      final b = pts[(i + 1) % pts.length];
+      final segLen = (b - a).distance;
+      if (segLen <= 0) continue;
+      final dir = (b - a) / segLen;
+      double travelled = 0;
+      while (travelled < segLen) {
+        final start = a + dir * travelled;
+        final end = a + dir * (travelled + dash).clamp(0.0, segLen);
+        canvas.drawLine(start, end, paint);
+        travelled += dash + gap;
+      }
+    }
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (attackerRoute.isEmpty) return;
+
+    final segs = attackerRoute.length - 1;
+    final centroid = _disputedCentroid();
+
+    // 0. Inherited blocks — pre-filled orange.
+    drawInheritedBlocks(canvas, inheritedPts);
+
+    // Phase 1: 0.10–0.40 — P3 runs and lasso forms.
+    // Map [0.10, 0.40] → [0, 1] for route progress.
+    final routeProgress = t < 0.10
+        ? 0.0
+        : ((t - 0.10) / (_kRouteCompleteT - 0.10)).clamp(0.0, 1.0);
+    final traveled = routeProgress * segs;
+    final lassoIsClosed = traveled >= _kLassoCloseSegIdx;
+
+    // Route fade: visible while drawing; held until shield fires; gone after shatter.
+    final routeFade = t < 0.65
+        ? 1.0
+        : t < 0.66
+            ? (1.0 - (t - 0.65) / 0.01).clamp(0.0, 1.0)
+            : 0.0;
+
+    if (routeFade > 0 && routeProgress > 0) {
+      drawTraceColor(canvas, attackerRoute, routeProgress, _kP3.withValues(alpha: routeFade));
+    }
+
+    // P3 runner dot — visible while running (0.10–0.40), then lerps back at retreat.
+    if (t >= 0.10 && t < 0.55) {
+      if (!lassoIsClosed) {
+        final segIdx = traveled.floor().clamp(0, segs - 1);
+        final segFrac = (traveled - segIdx).clamp(0.0, 1.0);
+        final pos = Offset.lerp(
+          attackerRoute[segIdx],
+          attackerRoute[(segIdx + 1).clamp(0, segs)],
+          segFrac,
+        )!;
+        canvas.drawCircle(
+            pos,
+            12,
+            Paint()
+              ..color = _kP3.withValues(alpha: 0.25)
+              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+        canvas.drawCircle(pos, 4.5, Paint()..color = _kP3);
+        canvas.drawCircle(pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.8));
+      }
+    } else if (t >= 0.55 && t < 0.75) {
+      // P3 retreats off-screen south after shield fires.
+      final retreatT = ((t - 0.55) / 0.20).clamp(0.0, 1.0);
+      final startPos = attackerRoute.last;
+      final endPos = attackerRoute.first;
+      final pos = Offset.lerp(startPos, endPos, retreatT)!;
+      final runnerFade = (1.0 - retreatT).clamp(0.0, 1.0);
+      if (runnerFade > 0) {
+        canvas.drawCircle(
+            pos,
+            12,
+            Paint()
+              ..color = _kP3.withValues(alpha: 0.25 * runnerFade)
+              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+        canvas.drawCircle(pos, 4.5, Paint()..color = _kP3.withValues(alpha: runnerFade));
+      }
+    }
+
+    // Phase 2: 0.40–0.55 — dispute phase (amber fill + dashed amber border).
+    // Amber fill persists through to 0.85, then snaps to orange.
+    if (lassoIsClosed && disputedArea.isNotEmpty) {
+      const amber = Color(0xFFFFB200);
+      if (t < 0.85) {
+        // Amber fill ramps in 0.40 → 0.55, then holds.
+        final fillRamp = ((t - 0.40) / 0.15).clamp(0.0, 1.0);
+        drawFillColor(canvas, disputedArea, amber, fillRamp * 0.35);
+
+        // Dashed amber border — visible during dispute (0.40–0.65).
+        if (t < 0.65) {
+          final borderAlpha = t < 0.55
+              ? ((t - 0.40) / 0.15).clamp(0.0, 1.0)
+              : (1.0 - (t - 0.55) / 0.10).clamp(0.0, 1.0);
+          if (borderAlpha > 0) {
+            _drawDashedPolygon(
+                canvas,
+                disputedArea,
+                Paint()
+                  ..color = amber.withValues(alpha: borderAlpha * 0.9)
+                  ..style = PaintingStyle.stroke
+                  ..strokeWidth = 2.0);
+          }
+        }
+      } else {
+        // Snap to orange at 0.85.
+        final snapT = ((t - 0.85) / 0.05).clamp(0.0, 1.0);
+        final dispColor = Color.lerp(amber, kAccent, snapT)!;
+        drawFillColor(canvas, disputedArea, dispColor, 0.35);
+      }
+    }
+
+    // Phase 3a: 0.55–0.57 — 120ms full-canvas white flash.
+    if (t >= 0.55 && t < 0.57) {
+      final flashAlpha = ((1.0 - (t - 0.55) / 0.02).clamp(0.0, 1.0)) * 0.85;
+      if (flashAlpha > 0) {
+        canvas.drawRect(
+            Offset.zero & size,
+            Paint()..color = Colors.white.withValues(alpha: flashAlpha));
+      }
+    }
+
+    // Phase 3b: 0.55–0.70 — SHIELD stamp scales in at centroid.
+    if (t >= 0.55 && t < 0.70 && centroid != Offset.zero) {
+      final scaleT = t < 0.60
+          ? ((t - 0.55) / 0.05).clamp(0.0, 1.0) * 0.7 + 0.3
+          : 1.0;
+      final stampAlpha = t < 0.60
+          ? ((t - 0.55) / 0.05).clamp(0.0, 1.0)
+          : t < 0.68
+              ? 1.0
+              : (1.0 - (t - 0.68) / 0.02).clamp(0.0, 1.0);
+      if (stampAlpha > 0) {
+        canvas.save();
+        canvas.translate(centroid.dx, centroid.dy);
+        canvas.scale(scaleT);
+        canvas.translate(-centroid.dx, -centroid.dy);
+        final tp = TextPainter(
+          text: TextSpan(
+            text: 'SHIELD',
+            style: GoogleFonts.bebasNeue(
+              fontSize: 48,
+              color: kAccent.withValues(alpha: stampAlpha),
+              shadows: [
+                Shadow(
+                  color: kAccent.withValues(alpha: stampAlpha * 0.6),
+                  blurRadius: 20,
+                ),
+              ],
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(
+          canvas,
+          Offset(centroid.dx - tp.width / 2, centroid.dy - tp.height / 2),
+        );
+        canvas.restore();
+      }
+    }
+
+    // Phase 4: 0.65–0.80 — 7 lasso shards fly outward and fade.
+    if (t >= 0.65 && t < 0.80 && centroid != Offset.zero) {
+      final shardT = ((t - 0.65) / 0.15).clamp(0.0, 1.0);
+      final shardAlpha = (1.0 - shardT).clamp(0.0, 1.0);
+      if (shardAlpha > 0) {
+        final shardPaint = Paint()
+          ..color = kSea.withValues(alpha: shardAlpha)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0
+          ..strokeCap = StrokeCap.round;
+        for (int i = 0; i < 7; i++) {
+          final angle = (2 * math.pi / 7) * i;
+          final dir = Offset(math.cos(angle), math.sin(angle));
+          final origin = centroid + dir * (shardT * 55);
+          final end = origin + dir * 18;
+          canvas.drawLine(origin, end, shardPaint);
+        }
+      }
+    }
+
+    // Phase 5: 0.85–1.00 — DEFENDED label.
+    if (t >= 0.85) {
+      final labelFade = ((t - 0.85) / 0.05).clamp(0.0, 1.0);
+      if (labelFade > 0 && size.width > 0) {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: 'DEFENDED',
+            style: GoogleFonts.bebasNeue(
+              fontSize: 22,
+              color: accent.withValues(alpha: labelFade),
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(canvas, const Offset(12, 12));
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_IntroDefenseMapCPainter old) =>
+      old.t != t ||
+      old.attackerRoute != attackerRoute ||
+      old.disputedArea != disputedArea ||
+      old.inheritedPts != inheritedPts;
+}
+
 // ---------------------------------------------------------------------------
 // 7. IntroPhysicalEventsMap — 3 runners race to finish (Real Events slide)
 //    Pure CustomPaint — no flutter_map.
