@@ -1494,50 +1494,40 @@ class IntroFlagDropMap extends StatefulWidget {
 class _IntroFlagDropMapState extends State<IntroFlagDropMap>
     with TickerProviderStateMixin, _IntroMapMixin<IntroFlagDropMap> {
   // ── Fixed coordinates ──────────────────────────────────────────────────────
-  static const _kDropCoord = LatLng(39.4553, -0.3510);
+  static const _kDropCoord = LatLng(39.4710, -0.3712);
 
-  // Routes below are OSM-verified — every interior waypoint lies on a real
-  // street centerline (Overpass API, queried 2026-06-05 against Valencia
-  // bbox 39.4450..39.4640 / -0.3650..-0.3380). The final snap from the last
-  // on-street node to _kDropCoord crosses the pedestrian plaza inside the
-  // Ciutat de les Arts complex — the drop sits on a pedestrian island that
-  // no vehicular street reaches directly, so a short plaza-crossing is
-  // unavoidable and physically walkable.
+  // Routes: 3 runners converge on Plaça de la Porta de la Mar roundabout
+  // from south (Comte d'Altea), east (Colom/Port), and north (Navarro Reverter).
+  // All waypoints lie on real street centerlines ~150–200m from the roundabout.
 
-  // Runner A — NW approach via Passeig de l'Albereda.
-  // The Albereda runs N→S along the dry Turia riverbed and curves SE around
-  // the Ciutat de les Arts, reaching ~248m of the drop on its eastern arc.
+  // Runner A (kAccent orange) — from south via Carrer del Comte d'Altea
+  // Starts ~200m south, runs north along Comte d'Altea toward the roundabout.
   static const _kRouteA = [
-    LatLng(39.46400, -0.35850), // 0: off-screen NW start
-    LatLng(39.46273, -0.35757), // 1: Passeig de l'Albereda — north
-    LatLng(39.46037, -0.35514), // 2: Passeig de l'Albereda — mid descent SE
-    LatLng(39.45774, -0.35018), // 3: Passeig de l'Albereda — south curve
-    LatLng(39.45635, -0.34842), // 4: Passeig de l'Albereda — east approach
-    LatLng(39.4553,  -0.3510),  // 5: DROP POINT (plaza snap)
+    LatLng(39.4689, -0.3712), // 0: off-screen south start
+    LatLng(39.4695, -0.3712), // 1: Comte d'Altea heading north
+    LatLng(39.4701, -0.3713), // 2: approaching roundabout
+    LatLng(39.4706, -0.3712), // 3: roundabout south entry
+    LatLng(39.4710, -0.3712), // 4: DROP POINT — roundabout center
   ];
 
-  // Runner B — NE approach along Carrer de Luis García-Berlanga Martí.
-  // This avenue runs E→W on the south flank of the Ciutat de les Arts,
-  // passing within ~310m of the drop at its closest point.
+  // Runner B (kSea blue) — from east via Carrer de Colom / Avinguda del Port
+  // Starts ~200m east, runs west along Colom toward the roundabout.
   static const _kRouteB = [
-    LatLng(39.45650, -0.33800), // 0: off-screen NE start
-    LatLng(39.45546, -0.34164), // 1: García-Berlanga — east end
-    LatLng(39.45531, -0.34449), // 2: García-Berlanga — mid stretch
-    LatLng(39.45681, -0.34791), // 3: García-Berlanga — closest pass to drop
-    LatLng(39.4553,  -0.3510),  // 4: DROP POINT (plaza snap)
+    LatLng(39.4710, -0.3690), // 0: off-screen east start
+    LatLng(39.4710, -0.3697), // 1: Colom heading west
+    LatLng(39.4710, -0.3703), // 2: mid stretch
+    LatLng(39.4710, -0.3708), // 3: roundabout east entry
+    LatLng(39.4710, -0.3712), // 4: DROP POINT
   ];
 
-  // Runner C — SW approach along Avinguda d'Antonio Ferrandis (Actor)
-  // then north on Avinguda del Professor López Piñero.
-  // Antonio Ferrandis runs W→E south of the Ciutat de les Arts; López Piñero
-  // turns N from there and approaches the drop within ~181m.
+  // Runner C (pink-red 0xFFFF3B7A) — from north via Carrer de Navarro Reverter
+  // Starts ~180m north, runs south toward the roundabout.
   static const _kRouteC = [
-    LatLng(39.44700, -0.36250), // 0: off-screen SW start
-    LatLng(39.44924, -0.36103), // 1: Av. d'Antonio Ferrandis — west end
-    LatLng(39.45077, -0.35818), // 2: Av. d'Antonio Ferrandis — mid (heading E)
-    LatLng(39.45245, -0.35358), // 3: Av. d'Antonio Ferrandis — east end
-    LatLng(39.45390, -0.35209), // 4: Av. del Professor López Piñero — north
-    LatLng(39.4553,  -0.3510),  // 5: DROP POINT (plaza snap)
+    LatLng(39.4728, -0.3712), // 0: off-screen north start
+    LatLng(39.4723, -0.3712), // 1: Navarro Reverter heading south
+    LatLng(39.4718, -0.3712), // 2: mid stretch
+    LatLng(39.4714, -0.3712), // 3: roundabout north entry
+    LatLng(39.4710, -0.3712), // 4: DROP POINT
   ];
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -1593,8 +1583,8 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
           _buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4545, -0.3520),
-            zoom: 14.0,
+            center: const LatLng(39.46875, -0.3712),
+            zoom: 17.0,
             onReady: _updatePoints,
           ),
           if (mapReady)
