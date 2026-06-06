@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import '../../theme.dart';
@@ -72,6 +73,21 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
     LatLng(39.461050, -0.376394), // G — shared kS1Block2/kS1Block3 vertex
   ];
 
+  static const _kPreRollRoute = [
+    LatLng(39.462077, -0.375522), // A
+    LatLng(39.461576, -0.376751), // B
+    LatLng(39.462155, -0.377171), // C
+    LatLng(39.462671, -0.375937), // D
+    LatLng(39.462077, -0.375522), // A — BLOCK 1 CLOSES
+    LatLng(39.461568, -0.375167), // E
+    LatLng(39.460440, -0.375966), // F
+    LatLng(39.461050, -0.376394), // G
+    LatLng(39.461576, -0.376751), // B — BLOCK 2 CLOSES
+    LatLng(39.460846, -0.378471), // H
+    LatLng(39.460335, -0.378112), // I
+    LatLng(39.461050, -0.376394), // G — BLOCK 3 CLOSES
+  ];
+
   List<List<Offset>> _inheritedPts = [];
   List<Offset> _ownedBlock1 = [];
   List<Offset> _ownedBlock2 = [];
@@ -79,6 +95,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   List<Offset> _attackerLasso = [];
   List<Offset> _disputedArea = [];
   List<Offset> _sharedTransferVertices = [];
+  List<Offset> _preRollRoute = [];
 
   @override
   void initState() {
@@ -117,6 +134,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
       _disputedArea = _kDisputedArea.map(toScreen).toList();
       _sharedTransferVertices =
           _kSharedTransferVertices.map(toScreen).toList();
+      _preRollRoute = _kPreRollRoute.map(toScreen).toList();
     });
   }
 
@@ -136,20 +154,33 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
           if (mapReady)
             AnimatedBuilder(
               animation: _ctrl,
-              builder: (_, __) => CustomPaint(
-                painter: _IntroCaptureMapPainter(
-                  t: _ctrl.value,
-                  accent: widget.accent,
-                  inheritedPts: _inheritedPts,
-                  ownedBlock1: _ownedBlock1,
-                  ownedBlock2: _ownedBlock2,
-                  attackerRoute: _attackerRoute,
-                  attackerLasso: _attackerLasso,
-                  disputedArea: _disputedArea,
-                  sharedTransferVertices: _sharedTransferVertices,
-                ),
-                child: const SizedBox.expand(),
-              ),
+              builder: (_, __) {
+                double tailPx = 200.0;
+                if (mapReady) {
+                  final zoom = mapCtrl.camera.zoom;
+                  final lat = mapCtrl.camera.center.latitudeInRad;
+                  const earthCircumference = 2 * math.pi * 6378137.0;
+                  final metersPerPx = (earthCircumference * math.cos(lat)) /
+                      (256.0 * math.pow(2.0, zoom));
+                  tailPx = kCometTailMeters / metersPerPx;
+                }
+                return CustomPaint(
+                  painter: _IntroCaptureMapPainter(
+                    t: _ctrl.value,
+                    accent: widget.accent,
+                    inheritedPts: _inheritedPts,
+                    ownedBlock1: _ownedBlock1,
+                    ownedBlock2: _ownedBlock2,
+                    attackerRoute: _attackerRoute,
+                    attackerLasso: _attackerLasso,
+                    disputedArea: _disputedArea,
+                    sharedTransferVertices: _sharedTransferVertices,
+                    tailLengthPx: tailPx,
+                    preRollRoute: _preRollRoute,
+                  ),
+                  child: const SizedBox.expand(),
+                );
+              },
             ),
         ],
       ),
@@ -168,6 +199,8 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
   final List<Offset> attackerLasso;
   final List<Offset> disputedArea;
   final List<Offset> sharedTransferVertices;
+  final double tailLengthPx;
+  final List<Offset> preRollRoute;
 
   _IntroCaptureMapPainter({
     required this.t,
@@ -179,6 +212,8 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.attackerLasso,
     required this.disputedArea,
     required this.sharedTransferVertices,
+    required this.tailLengthPx,
+    required this.preRollRoute,
   });
 
   // Timeline (route has 5 segments; close is at traveled == _kLassoCloseSegIdx == 4):
@@ -271,6 +306,61 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
   void paint(Canvas canvas, Size size) {
     if (attackerRoute.isEmpty) return;
 
+    // Pre-roll: replay slide-1 capture animation before the attacker appears.
+    if (preRollRoute.isNotEmpty && t < 0.25) {
+      final preT = (t / 0.25).clamp(0.0, 1.0);
+      final preSegs = preRollRoute.length - 1; // 11
+      final preTraveled = preT * preSegs;
+
+      // Per-block fill opacity ramps (same formula as slide 1).
+      double preFill(double closeIdx) =>
+          ((preTraveled - closeIdx) / 0.5).clamp(0.0, 1.0) * 0.28;
+      final f1 = preFill(4.0);
+      final f2 = preFill(8.0);
+      final f3 = preT >= 0.82
+          ? ((preT - 0.82) / 0.04).clamp(0.0, 1.0) * 0.28
+          : 0.0;
+
+      // Draw inherited blocks as they are captured.
+      if (inheritedPts.isNotEmpty && f1 > 0) {
+        drawFillColor(canvas, inheritedPts[0], kAccent, f1);
+      }
+      if (inheritedPts.length >= 2 && f2 > 0) {
+        drawFillColor(canvas, inheritedPts[1], kAccent, f2);
+      }
+      if (inheritedPts.length >= 3 && f3 > 0) {
+        drawFillColor(canvas, inheritedPts[2], kAccent, f3);
+      }
+
+      // Comet tail trace.
+      final preRouteProgress = (preT / 0.82).clamp(0.0, 1.0);
+      final preDecay = preT < 0.94
+          ? 1.0
+          : (1.0 - ((preT - 0.94) / 0.06)).clamp(0.0, 1.0);
+      drawComet(canvas, preRollRoute, preRouteProgress,
+          tailLengthPx: tailLengthPx, color: accent, decayMul: preDecay);
+
+      // Runner dot.
+      if (preT < 0.82) {
+        drawRunner(canvas, preRollRoute, preRouteProgress);
+      }
+
+      // Ping bursts.
+      final ping1 = preTraveled - 4.0;
+      if (ping1 > 0 && ping1 < 1.5 && inheritedPts.isNotEmpty) {
+        drawPings(canvas, inheritedPts[0], (ping1 / 1.5).clamp(0.0, 1.0));
+      }
+      final ping2 = preTraveled - 8.0;
+      if (ping2 > 0 && ping2 < 1.5 && inheritedPts.length >= 2) {
+        drawPings(canvas, inheritedPts[1], (ping2 / 1.5).clamp(0.0, 1.0));
+      }
+      if (preT >= 0.82 && preT < 0.932 && inheritedPts.length >= 3) {
+        drawPings(canvas, inheritedPts[2], ((preT - 0.82) / 0.112).clamp(0.0, 1.0));
+      }
+
+      return; // Skip attacker logic during pre-roll.
+    }
+
     final segs = attackerRoute.length - 1; // 4 segments for 5-point route
     final routeProgress = (t / _kRouteCompleteT).clamp(0.0, 1.0);
     final traveled = routeProgress * segs;
@@ -322,7 +412,8 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
 
     // 2. Attacker trail: runner traces route until close; afterwards full trace stays.
     if (!lassoIsClosed) {
-      drawTraceColor(canvas, attackerRoute, routeProgress, kSea);
+      drawComet(canvas, attackerRoute, routeProgress,
+          tailLengthPx: tailLengthPx, color: kSea);
       // Runner dot moving along the route.
       final segIdx = traveled.floor().clamp(0, segs - 1);
       final segFrac = (traveled - segIdx).clamp(0.0, 1.0);
@@ -341,8 +432,13 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
       canvas.drawCircle(
           pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.8));
     } else {
-      // Lasso outline stays visible.
-      drawTraceColor(canvas, attackerRoute, 1.0, kSea.withValues(alpha: fade));
+      // Lasso outline fades as dispute resolves — compute decayMul so the
+      // trace disappears after the runner's curve-out window ends (~t 0.64).
+      final lassoCloseT = (_kLassoCloseSegIdx / (attackerRoute.length - 1).toDouble()) * _kRouteCompleteT;
+      final traceDecay = t < lassoCloseT + 0.08
+          ? 1.0
+          : (1.0 - ((t - (lassoCloseT + 0.08)) / 0.10)).clamp(0.0, 1.0);
+      drawTraceColor(canvas, attackerRoute, 1.0, kSea, alphaMul: traceDecay * fade);
       // Runner continues past the close point, fades over 0.08 of t.
       final closeT = (_kLassoCloseSegIdx / segs) * _kRouteCompleteT;
       if (t < closeT + 0.08 && attackerRoute.length >= 2) {
@@ -549,5 +645,7 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
       old.disputedArea != disputedArea ||
       old.ownedBlock1 != ownedBlock1 ||
       old.ownedBlock2 != ownedBlock2 ||
-      old.inheritedPts != inheritedPts;
+      old.inheritedPts != inheritedPts ||
+      old.tailLengthPx != tailLengthPx ||
+      old.preRollRoute != preRollRoute;
 }
