@@ -10,6 +10,20 @@ const kIntroFadeDelay = Duration(milliseconds: 400);
 const kIntroFadeDuration = Duration(milliseconds: 200);
 const kIntroLoopPause = Duration(seconds: 2);
 
+// ── Expand & Unify animation constants ───────────────────────────────────────
+/// Total E&U animation window — longest of the three layers.
+const kExpandUnifyDuration = Duration(milliseconds: 400);
+
+/// Layer 1 (border sweep) sub-window fraction of the full 400 ms window.
+/// 0.625 = 250 ms of 400 ms.
+const double kEUBorderSweepFraction = 0.625;
+
+/// Layer 2 (perimeter pulse) sub-window — full 400 ms.
+const double kEUPulseFraction = 1.0;
+
+/// Vertex coincidence tolerance for shared-edge detection (screen pixels).
+const double kEUSharedVertexEpsPx = 1.5;
+
 // ── Runner color used across multiple slides ──────────────────────────────────
 const Color kRunnerCPink = Color(0xFFFF3B7A);
 
@@ -355,6 +369,222 @@ mixin IntroPainterHelpers {
     }
     path.close();
     canvas.drawPath(path, paint);
+  }
+
+  // ── Expand & Unify convenience wrappers ──────────────────────────────────
+
+  /// Returns lists of consecutive shared-vertex runs between [priorBlocks]
+  /// and [newBlock]. Delegates to the top-level [sharedEdgePolylines].
+  List<List<Offset>> sharedEdges({
+    required List<List<Offset>> priorBlocks,
+    required List<Offset> newBlock,
+    double epsPx = kEUSharedVertexEpsPx,
+  }) =>
+      sharedEdgePolylines(
+        priorBlocks: priorBlocks,
+        newBlock: newBlock,
+        epsPx: epsPx,
+      );
+
+  /// Smooth opacity tween during an E&U window. Delegates to
+  /// the top-level [unionOpacityHandoff].
+  double opacityHandoff({
+    required double priorOpacity,
+    required double newOpacity,
+    required double windowT,
+  }) =>
+      unionOpacityHandoff(
+        priorOpacity: priorOpacity,
+        newOpacity: newOpacity,
+        windowT: windowT,
+      );
+
+  /// Expand & Unify transient overlay. Delegates to the top-level
+  /// [drawExpandUnify].
+  void expandUnify(
+    Canvas canvas, {
+    required Path priorUnion,
+    required List<Offset> newBlock,
+    required Path unionAfter,
+    List<List<Offset>>? sharedEdges,
+    required double t,
+    required Color color,
+  }) =>
+      drawExpandUnify(
+        canvas,
+        priorUnion: priorUnion,
+        newBlock: newBlock,
+        unionAfter: unionAfter,
+        sharedEdges: sharedEdges,
+        t: t,
+        color: color,
+      );
+}
+
+// ---------------------------------------------------------------------------
+// Expand & Unify top-level helpers — callable from any CustomPainter or
+// class that does NOT mix in IntroPainterHelpers (e.g. production overlay).
+// ---------------------------------------------------------------------------
+
+/// Returns lists of consecutive shared-vertex runs between [priorBlocks] and
+/// [newBlock]. Uses pixel-space vertex coincidence with [epsPx] tolerance.
+///
+/// Each entry in the returned list is one contiguous polyline of shared
+/// vertices. Returns an empty list if no shared boundary is found.
+///
+/// Call ONCE at the block-close gate frame and cache; never call per-frame.
+List<List<Offset>> sharedEdgePolylines({
+  required List<List<Offset>> priorBlocks,
+  required List<Offset> newBlock,
+  double epsPx = kEUSharedVertexEpsPx,
+}) {
+  if (priorBlocks.isEmpty || newBlock.isEmpty) return [];
+
+  // Flatten all prior-block vertices for fast proximity checks.
+  final allPrior = <Offset>[];
+  for (final block in priorBlocks) {
+    allPrior.addAll(block);
+  }
+
+  bool isNearPrior(Offset v) {
+    for (final p in allPrior) {
+      if ((v - p).distance < epsPx) return true;
+    }
+    return false;
+  }
+
+  // Walk newBlock vertices (wrap-around included via modulo).
+  final n = newBlock.length;
+  final matched = List<bool>.generate(n, (i) => isNearPrior(newBlock[i]));
+
+  // Group consecutive matched vertices into polyline runs.
+  final result = <List<Offset>>[];
+  var i = 0;
+  while (i < n) {
+    if (matched[i]) {
+      final run = <Offset>[newBlock[i]];
+      var j = (i + 1) % n;
+      while (j != i && matched[j]) {
+        run.add(newBlock[j]);
+        j = (j + 1) % n;
+      }
+      // A valid shared edge needs at least 2 consecutive matched vertices.
+      if (run.length >= 2) result.add(run);
+      // Advance past the whole run (guard against infinite loop on full wrap).
+      final runLen = run.length;
+      i += runLen;
+    } else {
+      i++;
+    }
+  }
+  return result;
+}
+
+/// Smooth opacity tween during an E&U window, replacing `math.max` flicker.
+///
+/// [windowT] is 0..1 within the ~400 ms E&U window.
+/// Pass [windowT] = -1 if the call is outside the window; the function then
+/// returns `math.max(priorOpacity, newOpacity)` (existing behavior).
+///
+/// Inside the window the formula is:
+///   `priorOpacity + (newOpacity - priorOpacity) * easeInOutCubic(windowT)`
+/// where `easeInOutCubic(t) = t < 0.5 ? 4t³ : 1 - (-2t+2)³/2`.
+double unionOpacityHandoff({
+  required double priorOpacity,
+  required double newOpacity,
+  required double windowT,
+}) {
+  if (windowT < 0) return math.max(priorOpacity, newOpacity);
+
+  final t = windowT.clamp(0.0, 1.0);
+  final curved = t < 0.5
+      ? 4.0 * t * t * t
+      : 1.0 - math.pow(-2.0 * t + 2.0, 3) / 2.0;
+  return priorOpacity + (newOpacity - priorOpacity) * curved;
+}
+
+/// Expand & Unify transient overlay — draws up to two layers on [canvas] over
+/// a ~400 ms window. Call AFTER the union fill+stroke so layers are additive.
+///
+/// **Layer 1** (border sweep) — animated moving sub-segment along each polyline
+/// in [sharedEdges]. Only fires when [sharedEdges] is non-null and non-empty
+/// and while `t < kEUBorderSweepFraction` (first 250 ms of 400 ms).
+///
+/// **Layer 2** (perimeter ring) — strokes [unionAfter] across the full window
+/// `t ∈ [0, 1]`. Always fires for any block-close (isolated or adjacent).
+///
+/// [t] is 0..1 within the E&U window (0 = start, 1 = end at ~400 ms).
+/// [color] — base color; alpha is modulated internally per layer.
+void drawExpandUnify(
+  Canvas canvas, {
+  required Path priorUnion,
+  required List<Offset> newBlock,
+  required Path unionAfter,
+  List<List<Offset>>? sharedEdges,
+  required double t,
+  required Color color,
+}) {
+  final tc = t.clamp(0.0, 1.0);
+
+  // Early-out: nothing to draw at t == 1 (window fully elapsed).
+  if (tc >= 1.0) return;
+  // Early-out: no-op when color is fully transparent.
+  if (color.a == 0) return;
+
+  // ── Layer 1 — border sweep (shared edges only, first 62.5 % of window) ──
+  if (sharedEdges != null && sharedEdges.isNotEmpty) {
+    final layerT = (tc / kEUBorderSweepFraction).clamp(0.0, 1.0);
+    if (layerT < 1.0) {
+      final alpha = 0.9 * (1.0 - layerT * 1.6).clamp(0.0, 1.0);
+      final width = 2.5 * (1.0 - layerT * 1.6).clamp(0.0, 1.0);
+      if (alpha > 0 && width > 0) {
+        final sweepPaint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..color = color.withValues(alpha: alpha)
+          ..strokeWidth = width;
+
+        final headPct = layerT;
+        final tailPct = (headPct - 0.30).clamp(0.0, 1.0);
+
+        for (final polyline in sharedEdges) {
+          if (polyline.length < 2) continue;
+          final edgePath = Path()
+            ..moveTo(polyline[0].dx, polyline[0].dy);
+          for (var k = 1; k < polyline.length; k++) {
+            edgePath.lineTo(polyline[k].dx, polyline[k].dy);
+          }
+          for (final metric in edgePath.computeMetrics()) {
+            final len = metric.length;
+            if (len <= 0) continue;
+            final headLen = len * headPct;
+            final tailLen = len * tailPct;
+            if (headLen > tailLen) {
+              canvas.drawPath(
+                metric.extractPath(tailLen, headLen),
+                sweepPaint,
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ── Layer 2 — perimeter ring (full 400 ms window) ─────────────────────
+  final ringAlpha = (0.5 * (1.0 - tc)).clamp(0.0, 1.0);
+  final ringWidth = 2.0 - 1.5 * tc;
+  if (ringAlpha > 0 && ringWidth > 0) {
+    canvas.drawPath(
+      unionAfter,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..color = color.withValues(alpha: ringAlpha)
+        ..strokeWidth = ringWidth,
+    );
   }
 }
 
