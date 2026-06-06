@@ -31,7 +31,7 @@ class AttackSheet extends ConsumerWidget {
 
     final ownerName = ownerAsync.when(
       data: (profile) =>
-          profile?['display_name'] as String? ?? 'Unknown runner',
+          profile?['username'] as String? ?? 'Unknown runner',
       loading: () => '…',
       error: (_, __) => 'Unknown runner',
     );

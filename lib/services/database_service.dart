@@ -3,6 +3,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 // ── Patch normalisation (AC-2, AC-4) ─────────────────────────────────────────
 
+/// Strips any character that is not `+` or a digit from phone values, and
+/// trims leading/trailing whitespace from username values.
+final RegExp _kPhoneStrip = RegExp(r'[^+0-9]');
+
 /// Normalises a [DatabaseService.updateProfile] patch map before it is sent
 /// to Supabase:
 ///   - AC-2: strips non-`+`/digit characters from any `phone` value.
@@ -14,9 +18,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 /// initialising the Supabase singleton.
 @visibleForTesting
 Map<String, dynamic> normaliseProfilePatch(Map<String, dynamic> patch) {
-  // STUB — returns the patch unchanged so assertion tests FAIL (RED phase).
-  // Real implementation strips non-+digit chars from phone and trims username.
-  return Map<String, dynamic>.from(patch);
+  final remote = <String, dynamic>{...patch};
+  if (remote.containsKey('phone') && remote['phone'] is String) {
+    remote['phone'] = (remote['phone'] as String).replaceAll(_kPhoneStrip, '');
+  }
+  if (remote.containsKey('username') && remote['username'] is String) {
+    remote['username'] = (remote['username'] as String).trim();
+  }
+  return remote;
 }
 
 class DatabaseService {
@@ -40,29 +49,25 @@ class DatabaseService {
         .limit(1);
     final list = rows as List<dynamic>;
     if (list.isEmpty) return null;
-    return _normalizeProfile(list.first as Map<String, dynamic>);
+    return Map<String, dynamic>.from(list.first as Map<String, dynamic>);
   }
 
   Future<void> insertProfile(
     String id,
     String username,
-    String city,
     String color, {
     double influence = 1,
     String? invitedAt,
     int isTester = 0,
-    int isBot = 0,
     String? createdAt,
   }) async {
     final client = Supabase.instance.client;
     await client.from('players').insert({
       'id': id,
-      'username': username,
-      'city': city,
+      'username': username.trim(),
       'color': color,
       'invited_at': invitedAt,
       'is_tester': isTester,
-      'is_bot': isBot,
       'created_at': createdAt ?? DateTime.now().toUtc().toIso8601String(),
     });
   }
@@ -70,23 +75,19 @@ class DatabaseService {
   Future<void> upsertProfileIgnore(
     String id,
     String username,
-    String city,
     String color, {
     double influence = 1,
     String? invitedAt,
     int isTester = 0,
-    int isBot = 0,
   }) async {
     final client = Supabase.instance.client;
     await client.from('players').upsert(
       {
         'id': id,
-        'username': username,
-        'city': city,
+        'username': username.trim(),
         'color': color,
         'invited_at': invitedAt,
         'is_tester': isTester,
-        'is_bot': isBot,
         'created_at': DateTime.now().toUtc().toIso8601String(),
       },
       onConflict: 'id',
@@ -97,11 +98,7 @@ class DatabaseService {
   Future<void> updateProfile(String userId, Map<String, dynamic> patch) async {
     if (patch.isEmpty) return;
     final client = Supabase.instance.client;
-    // Map local column names to Supabase column names.
-    final remote = <String, dynamic>{};
-    patch.forEach((k, v) {
-      remote[k] = v;
-    });
+    final remote = normaliseProfilePatch(patch);
     await client.from('players').update(remote).eq('id', userId);
   }
 
@@ -470,16 +467,4 @@ class DatabaseService {
     );
   }
 
-  // ── Private helpers ─────────────────────────────────────────────────────────
-
-  /// Normalise the Supabase `players` row to match the local profile field
-  /// names used throughout the app (e.g. `display_name` → `username`).
-  Map<String, dynamic> _normalizeProfile(Map<String, dynamic> row) {
-    final out = Map<String, dynamic>.from(row);
-    // Supabase column is `username`; fall back to `display_name` for old rows.
-    if (!out.containsKey('username')) {
-      out['username'] = out['display_name'] ?? '';
-    }
-    return out;
-  }
 }

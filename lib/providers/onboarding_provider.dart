@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../services/database_service.dart';
+import '../services/database/account_uniqueness_error.dart';
 import '../services/profile_service.dart';
 import '../services/supabase_service.dart';
 
@@ -64,7 +66,7 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
 
   /// Updates username in-memory. Does NOT advance step (single-screen flow).
   void setUsername(String v) {
-    state = state.copyWith(username: v, error: null);
+    state = state.copyWith(username: v.trim(), error: null);
   }
 
   /// Updates city in-memory.
@@ -167,10 +169,11 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
             supabase.storage.from('avatars').getPublicUrl('$userId/avatar.jpg');
       }
 
+      await DatabaseService.instance.joinCityWaitlist(userId, state.city.toLowerCase());
+
       await ProfileService.instance.updateProfile(
         userId,
         username: state.username,
-        city: state.city,
         color: state.color,
         avatarUrl: avatarUrl,
         bio: state.bio.isEmpty ? null : state.bio,
@@ -179,9 +182,10 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
 
       state = state.copyWith(isLoading: false);
     } catch (e) {
+      final dupMsg = accountUniquenessMessage(e);
       state = state.copyWith(
         isLoading: false,
-        error: 'Could not save profile: $e',
+        error: dupMsg ?? 'Could not save profile: $e',
       );
     }
   }
