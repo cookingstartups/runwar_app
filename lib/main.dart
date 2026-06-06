@@ -54,22 +54,23 @@ Future<void> main() async {
     // Supabase must init first — DatabaseService and all callers use Supabase.instance.client.
     await SupabaseService.instance.init();
     await DatabaseService.instance.init();
-    // Establish Supabase anon session for DB/Realtime access.
+    // Restore persisted Supabase session (Google sign-in). No-op if not authenticated.
     await SupabaseService.instance.signIn();
     // Restore in-memory session from persisted Supabase session (e.g. Google sign-in).
     await AuthService.instance.restoreSessionFromSupabase();
     // Sweep stale run_scratch rows (>12h old) before auth resolves (AC-11).
     await RunRecoveryService.instance.sweepStale();
-    // Demo seed is best-effort — bot UUIDs may not be in auth.users on remote.
-    try {
-      await AuthService.instance.seedDemoDataIfNeeded();
-    } catch (e) {
-      debugPrint('[main] seedDemoData skipped: $e');
-    }
     final sessionUserId = SupabaseService.instance.supabase.auth.currentSession?.user.id;
     debugPrint('[main] isConnected=${SupabaseService.instance.isConnected} session=$sessionUserId');
-    // Presence + CTF init deferred to MainShell (after login provides profile data).
+    // Demo seed + daily decay only make sense once a real user session exists.
+    // Without a session, RLS blocks anon writes and seedDemoData is a wasted
+    // round-trip on every cold boot of an unauthenticated app.
     if (sessionUserId != null) {
+      try {
+        await AuthService.instance.seedDemoDataIfNeeded();
+      } catch (e) {
+        debugPrint('[main] seedDemoData skipped: $e');
+      }
       await TerritoryService.instance.runDailyDecayIfDue('Valencia', sessionUserId);
     }
   } catch (e) {

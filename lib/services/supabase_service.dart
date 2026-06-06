@@ -35,22 +35,13 @@ class SupabaseService {
     _initialized = true;
   }
 
-  /// Returns the Supabase user ID for this device session.
-  /// Creates a new anonymous session on first launch; restores on subsequent.
+  /// Restores the existing Supabase session if one is persisted on device.
+  /// Returns the current user ID, or null if not authenticated.
+  /// A null return means the route guard will redirect to LoginScreen.
   Future<String?> signIn() async {
     if (!_initialized) return null;
-
-    // Restore existing session if present.
     final existing = supabase.auth.currentSession;
-    if (existing != null) return existing.user.id;
-
-    try {
-      final response = await supabase.auth.signInAnonymously();
-      return response.user?.id;
-    } catch (e) {
-      // Network unavailable — offline mode, returns null.
-      return null;
-    }
+    return existing?.user.id;
   }
 
   /// Registers a new user with Supabase Auth (email + password).

@@ -11,58 +11,6 @@ class AuthService {
   // In-memory session map. Lost on process kill.
   Map<String, dynamic>? _currentUser;
 
-  /// Anonymous sign-in for PoC alpha testers.
-  /// Uses Supabase anonymous auth when connected; falls back to a local UUID.
-  /// Creates a players row with invited_at set so the route guard passes.
-  /// Idempotent — safe to call on every app launch.
-  Future<Map<String, dynamic>> signInAnonymously() async {
-    final nowIso = DateTime.now().toUtc().toIso8601String();
-
-    // Get (or create) the Supabase anonymous session.
-    final supabaseUid = await SupabaseService.instance.signIn();
-
-    // Use Supabase UID when connected; otherwise generate a stable local UUID.
-    final localId = supabaseUid ?? _uuidV4();
-
-    // Check if this device already has a remote profile.
-    final existing = await DatabaseService.instance.getProfile(localId);
-
-    if (existing != null) {
-      _currentUser = {
-        'id': localId,
-        'email': '${localId.substring(0, 8)}@runwar.anon',
-        'created_at': existing['created_at'] as String? ?? nowIso,
-        if (supabaseUid != null) 'supabase_uid': supabaseUid,
-      };
-      return _currentUser!;
-    }
-
-    // First launch — create profile.
-    final shortId = localId.replaceAll('-', '').substring(0, 6).toUpperCase();
-    final username = 'RUNNER-$shortId';
-    final email = '${localId.substring(0, 8)}@runwar.anon';
-
-    await DatabaseService.instance.insertProfile(
-      localId,
-      username,
-      'Valencia',
-      '#FF7A00',
-      influence: 1,
-      invitedAt: nowIso, // bypasses waitlist gate for PoC
-      isTester: 1,
-      createdAt: nowIso,
-    );
-
-    _currentUser = {
-      'id': localId,
-      'email': email,
-      'created_at': nowIso,
-      if (supabaseUid != null) 'supabase_uid': supabaseUid,
-    };
-    debugPrint('[AuthService] anonymous sign-in complete: $username ($localId)');
-    return _currentUser!;
-  }
-
   /// Creates a profile row in Supabase players table.
   /// Uses the Supabase-assigned UUID so `auth.uid()` matches the profile ID.
   /// Returns the new user map (id/email/created_at) or null on duplicate.
@@ -151,20 +99,23 @@ class AuthService {
   /// on every launch; players uses INSERT OR IGNORE; zones are
   /// guarded by an existence check so they are inserted at most once.
   Future<void> seedDemoDataIfNeeded() async {
+    // Guard: bots upsert into the remote `bots` table which requires an
+    // authenticated Supabase session; skip seeding on a bare/anonymous launch.
+    if (SupabaseService.instance.currentUserId == null) return;
+
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
-    // Players: idempotent via upsert ignore on primary key.
-    final playerRows = _allDemoUsers.map((u) => {
+    // Bots: idempotent via upsert ignore on primary key.
+    final botRows = _allDemoUsers.map((u) => {
       'id': u['id'],
       'username': u['username'],
       'city': 'Valencia',
       'color': u['color'],
-      'invited_at': nowIso,
-      'is_tester': 0,
-      'is_bot': 1,
+      'score': 1,
+      'is_active': true,
       'created_at': nowIso,
     }).toList();
-    await DatabaseService.instance.bulkUpsertPlayers(playerRows);
+    await DatabaseService.instance.bulkUpsertBots(botRows);
 
     // Zones: guard with existence check to avoid duplicates.
     final existingZones = await DatabaseService.instance.getZonesByOwner(_r1, limit: 1);
@@ -355,6 +306,13 @@ class AuthService {
 
   /// Restores _currentUser from a persisted Supabase session on app restart.
   /// Called once from main() after SupabaseService.init(). No-ops if no session.
+  ///
+  /// Does NOT write to the players table. The route guard will read the
+  /// existing profile via `profileGateProvider`; if no row exists (e.g., row
+  /// was deleted server-side, or the session was restored without ever
+  /// completing signInWithGoogle's upsert), the guard sends the user to
+  /// JoinWarConfirmationScreen. Creating a privileged players row from a bare
+  /// session would silently bypass the invitation/waitlist gates.
   Future<void> restoreSessionFromSupabase() async {
     final supabaseUid = SupabaseService.instance.currentUserId;
     if (supabaseUid == null) return;
@@ -362,28 +320,10 @@ class AuthService {
     final supabaseUser = SupabaseService.instance.supabase.auth.currentUser;
     if (supabaseUser == null) return;
 
-    final nowIso = DateTime.now().toUtc().toIso8601String();
-    // Ensure a players row exists for returning users (idempotent upsert-ignore).
-    final displayName = supabaseUser.userMetadata?['full_name'] as String? ??
-        supabaseUser.userMetadata?['name'] as String?;
-    final shortId = supabaseUid.replaceAll('-', '').substring(0, 6).toUpperCase();
-    final username = displayName?.toUpperCase().replaceAll(' ', '_') ?? 'RUNNER-$shortId';
-    try {
-      await DatabaseService.instance.upsertProfileIgnore(
-        supabaseUid,
-        username,
-        'Valencia',
-        '#FF7A00',
-        invitedAt: nowIso,
-        isTester: 1,
-      );
-    } catch (e) {
-      debugPrint('[AuthService] restoreSession upsert skipped: $e');
-    }
     _currentUser = {
       'id': supabaseUid,
       'email': supabaseUser.email ?? '$supabaseUid@runwar',
-      'created_at': supabaseUser.createdAt ?? nowIso,
+      'created_at': supabaseUser.createdAt,
     };
     debugPrint('[AuthService] session restored for $supabaseUid');
   }

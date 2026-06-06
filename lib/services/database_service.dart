@@ -156,11 +156,24 @@ class DatabaseService {
     });
   }
 
-  /// Bulk upsert for demo-seed bot players (no Supabase Auth row needed).
-  Future<void> bulkUpsertPlayers(List<Map<String, dynamic>> players) async {
-    if (players.isEmpty) return;
+  // ── Bots (NPC players — no auth.users FK) ──────────────────────────────────
+
+  Future<List<Map<String, dynamic>>> getBotsByCity(String city) async {
     final client = Supabase.instance.client;
-    await client.from('players').upsert(players, onConflict: 'id', ignoreDuplicates: true);
+    final rows = await client
+        .from('bots')
+        .select()
+        .eq('city', city)
+        .eq('is_active', true);
+    return (rows as List<dynamic>)
+        .map((r) => Map<String, dynamic>.from(r as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> bulkUpsertBots(List<Map<String, dynamic>> bots) async {
+    if (bots.isEmpty) return;
+    final client = Supabase.instance.client;
+    await client.from('bots').upsert(bots, onConflict: 'id', ignoreDuplicates: true);
   }
 
   // ── Zones ───────────────────────────────────────────────────────────────────
