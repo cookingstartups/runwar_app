@@ -80,7 +80,7 @@ class RealtimeZonesService {
       'owner_id': r['owner_id'] as String?,
       'city': r['city'] as String? ?? 'Valencia',
       'geom_json': geomStr,
-      'influence': ((r['influence_level'] as num?) ?? 1).toDouble(),
+      'influence': ((r['score'] as num?) ?? 1).toDouble(),
       'status': r['status'] as String? ?? 'owned',
       'shield_active': r['shield_active'] as bool? ?? false,
       'shield_expires_at': r['shield_expires_at'] as String?,

@@ -39,7 +39,7 @@ class ProfileService {
         'username': p['username'] ?? p['display_name'] ?? '',
         'color': _colorForId(userId),
         'city': '',
-        'influence_level': 0,
+        'score': 0,
         'invited_at': null,
         'is_tester': 0,
       };
