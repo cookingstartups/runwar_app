@@ -27,6 +27,8 @@ import 'screens/main_shell.dart';
 import 'screens/paywall_screen.dart';
 import 'screens/first_mission_briefing_screen.dart';
 import 'screens/first_attack_briefing_screen.dart';
+import 'screens/map_screen.dart';
+import 'models/mission_step.dart';
 import 'providers/cities_provider.dart';
 import 'providers/mission_provider.dart';
 import 'providers/daily_missions_provider.dart';
@@ -366,10 +368,23 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
     // Gate 5a: first-mission onboarding
     final mission = missionAsync?.value;
     if (mission != null && mission.needsMission1) {
-      return const FirstMissionBriefingScreen();
+      final accepted = ref.watch(mission1BriefingAcceptedProvider);
+      if (!accepted) return const FirstMissionBriefingScreen();
+      return const MapScreen(missionStep: MissionStep.mission1Claim);
     }
+
+    // Gate 5b: second-mission onboarding
     if (mission != null && mission.needsMission2) {
-      return const FirstAttackBriefingScreen(botZoneId: '');
+      final accepted = ref.watch(mission2BriefingAcceptedProvider);
+      if (!accepted) {
+        return const FirstAttackBriefingScreen(botZoneId: '');
+      }
+      // TODO(mission2-polish): pendingBotZoneIdProvider — see design.md §5.
+      //                        Empty string is acceptable per AC-7 edge case.
+      return const MapScreen(
+        missionStep: MissionStep.mission2Attack,
+        botZoneId: '',
+      );
     }
 
     // Gate 4: trial expired?

@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
 import '../providers/auth_provider.dart';
+import '../providers/cities_provider.dart';
 import '../providers/profile_provider.dart';
+import '../utils/string_utils.dart';
 import '../services/zones_service.dart';
 import '../theme.dart';
 import '../widgets/reputation_badge.dart';
@@ -41,7 +43,12 @@ class ProfileScreen extends ConsumerWidget {
           data: (p) {
             if (p == null) return const Center(child: SizedBox.shrink());
             final username = (p['username'] as String?) ?? '';
-            final city = (p['city'] as String?) ?? '';
+            final citySlug = ref
+                    .watch(joinedCitySlugsProvider(userId))
+                    .valueOrNull
+                    ?.firstOrNull ??
+                '';
+            final city = capitalize(citySlug);
             final colorHex = (p['color'] as String?) ?? '#FF7A00';
 
             return SingleChildScrollView(
@@ -51,8 +58,10 @@ class ProfileScreen extends ConsumerWidget {
                 children: [
                   const SizedBox(height: 24),
                   Text(username.toUpperCase(), style: displayStyle(size: 36)),
-                  const SizedBox(height: 8),
-                  Text(city, style: bodyStyle(size: 16)),
+                  if (city.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(city, style: bodyStyle(size: 16)),
+                  ],
                   const SizedBox(height: 24),
                   Row(
                     children: [

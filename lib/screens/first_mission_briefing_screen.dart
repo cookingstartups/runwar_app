@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/mission_step.dart';
+import '../providers/mission_provider.dart';
 import '../theme.dart';
-import 'map_screen.dart';
 
 /// Full-screen dark briefing for Mission 1: Claim Your First Territory.
 ///
 /// Shown by _RouteGuard (main.dart Gate 5a) when a new player has no zones
 /// and has not yet completed the first mission stamp.
-class FirstMissionBriefingScreen extends StatelessWidget {
+class FirstMissionBriefingScreen extends ConsumerWidget {
   const FirstMissionBriefingScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       backgroundColor: kBg,
       body: SafeArea(
@@ -42,22 +42,16 @@ class FirstMissionBriefingScreen extends StatelessWidget {
               const Spacer(flex: 2),
               // CTA — accent orange
               ElevatedButton(
-                onPressed: () => _onAccept(context),
-                child: const Text('ACCEPT MISSION  →'),
+                onPressed: () {
+                  ref.read(mission1BriefingAcceptedProvider.notifier).state =
+                      true;
+                },
+                child: const Text('ACCEPT MISSION'),
               ),
               const SizedBox(height: 24),
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  void _onAccept(BuildContext context) {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            const MapScreen(missionStep: MissionStep.mission1Claim),
       ),
     );
   }

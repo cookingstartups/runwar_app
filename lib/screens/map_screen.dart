@@ -7,7 +7,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 
 import '../providers/auth_provider.dart';
+import '../providers/cities_provider.dart';
 import '../providers/profile_provider.dart';
+import '../utils/string_utils.dart';
 import '../providers/runs_provider.dart';
 import '../providers/zones_provider.dart';
 import '../providers/run_recorder_provider.dart';
@@ -45,7 +47,6 @@ import '../services/bot_spawner_service.dart';
 import '../models/mission_step.dart';
 import '../providers/mission_provider.dart';
 import '../theme.dart';
-import 'first_attack_briefing_screen.dart';
 import 'main_shell.dart';
 import '../main.dart' show trialStatusProvider;
 
@@ -196,28 +197,35 @@ class _MapScreenState extends ConsumerState<MapScreen>
     );
   }
 
-  /// Resolves the user's city and map center.
-  /// City comes from the user profile; center comes from cityConfigProvider
-  /// (falls back to CityConfig.valencia when provider is loading or errors).
-  ({String city, LatLng center}) _resolveCenter() {
+  /// Resolves the user's city display name and map fallback center.
+  /// City comes from joinedCitySlugsProvider (capitalised first slug).
+  /// Center comes from cityConfigProvider (falls back to CityConfig.valencia).
+  /// Returns slugsAsync so build() can branch on loading/empty without
+  /// watching the provider twice.
+  ({AsyncValue<List<String>> slugsAsync, LatLng center}) _resolveCenter() {
     final auth = ref.watch(authProvider);
     final userId = auth.user?['id'] as String?;
     final cityConfig =
         ref.watch(cityConfigProvider).valueOrNull ?? CityConfig.valencia;
-    if (userId == null) return (city: '', center: cityConfig.center);
-    final p = ref.watch(profileGateProvider(userId)).valueOrNull;
-    final city = (p?['city'] as String?) ?? '';
-    return (city: city, center: cityConfig.center);
+    if (userId == null) {
+      return (
+        slugsAsync: const AsyncValue<List<String>>.data([]),
+        center: cityConfig.center,
+      );
+    }
+    final slugsAsync = ref.watch(joinedCitySlugsProvider(userId));
+    return (slugsAsync: slugsAsync, center: cityConfig.center);
   }
 
   @override
   Widget build(BuildContext context) {
-    final (:city, :center) = _resolveCenter();
     final auth = ref.watch(authProvider);
     final userId = (auth.user?['id'] as String?) ?? '';
 
-    // Show spinner while profile is resolving.
-    if (city.isEmpty) {
+    // Gate: show spinner only while joinedCitySlugsProvider is loading (AC-2).
+    // Once resolved to empty, show an error state — never a permanent spinner (AC-3, Condition C1).
+    final (:slugsAsync, :center) = _resolveCenter();
+    if (slugsAsync.isLoading) {
       return const Scaffold(
         backgroundColor: kBg,
         body: Center(
@@ -225,6 +233,14 @@ class _MapScreenState extends ConsumerState<MapScreen>
         ),
       );
     }
+    if ((slugsAsync.valueOrNull ?? []).isEmpty) {
+      return const Scaffold(
+        backgroundColor: kBg,
+        body: Center(child: Text('No city joined yet')),
+      );
+    }
+
+    final city = capitalize(slugsAsync.value!.first);
 
     // Auto-claim immediately when lasso closes — no button press required.
     ref.listen<RecorderState>(runRecorderProvider, (prev, next) {
@@ -552,10 +568,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
     if (!context.mounted) return;
 
     // 4. Spawn bot zone (server-idempotent; falls back to any existing rival).
-    String botZoneId = '';
+    // The spawned zone ID is not passed to _RouteGuard in this hotfix
+    // (see design.md §5 — pendingBotZoneIdProvider follow-up).
     try {
       final pos = _currentPosition;
-      botZoneId = await BotSpawnerService.instance.checkOrSpawn(
+      await BotSpawnerService.instance.checkOrSpawn(
         userId: userId,
         lat: pos?.latitude ?? 39.4699,
         lng: pos?.longitude ?? -0.3763,
@@ -565,12 +582,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
       debugPrint('[MapScreen] BotSpawnerService failed: $e');
     }
 
-    if (!context.mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(
-        builder: (_) => FirstAttackBriefingScreen(botZoneId: botZoneId),
-      ),
-    );
+    // Invalidate mission status — _RouteGuard rebuilds and shows Gate 5b (FirstAttackBriefingScreen).
+    // mission2BriefingAcceptedProvider is still false (default) →
+    // _RouteGuard returns FirstAttackBriefingScreen(botZoneId: '').
+    ref.invalidate(missionStatusProvider(userId));
   }
 
   /// Calls `complete_first_attack`, updates local SQLite, then clears the
@@ -738,7 +753,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
                   ),
                   width: 60,
                   height: 60,
-                  child: Center(
+                  child: const Center(
                     child: BeamPulseDot(color: _kGpsDotColor, size: 11),
                   ),
                 ),
@@ -876,11 +891,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
             future: BatteryOptimizationService.isOptimizationActive(),
             builder: (_, snap) {
               if (snap.data != true) return const SizedBox.shrink();
-              return Positioned(
+              return const Positioned(
                 top: 100,
                 left: 16,
                 right: 16,
-                child: const BatteryWarningBanner(),
+                child: BatteryWarningBanner(),
               );
             },
           ),
