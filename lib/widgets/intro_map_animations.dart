@@ -2706,22 +2706,31 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  // Player 3 route: Renfe Estación del Norte entrance → adjacent fresh block.
+  // Runner C (pink-red) — Renfe Norte → south on Xàtiva → lasso overlapping kS1Block1 north edge.
   static const _kP3RouteA = [
     LatLng(39.4658, -0.3766), // 0: Renfe Estación del Norte entrance
-    LatLng(39.4648, -0.3760), // 1: heading south
-    LatLng(39.4638, -0.3758), // 2: approaching Ruzafa north edge
-    LatLng(39.4631, -0.3758), // 3: lasso start
-    LatLng(39.4631, -0.3750), // 4: NE corner of new block
-    LatLng(39.4623, -0.3750), // 5: SE corner
-    LatLng(39.4623, -0.3758), // 6: SW corner — lasso closes back to pt3
+    LatLng(39.4645, -0.3766), // 1: south on Carrer de Xàtiva
+    LatLng(39.4635, -0.3763), // 2: approaching Ruzafa north boundary
+    LatLng(39.4632, -0.3762), // 3: lasso start — NW corner of lasso
+    LatLng(39.4632, -0.3750), // 4: NE corner (heading east)
+    LatLng(39.4614, -0.3750), // 5: SE corner (heading south)
+    LatLng(39.4614, -0.3762), // 6: SW corner — closes back to pt3
   ];
 
+  // Sutherland-Hodgman clip of kS1Block1 against the lasso rectangle.
+  // A and D are inside; B and C are outside. Two crossing points on the lasso's west edge.
   static const _kDisputedA = [
-    LatLng(39.4631, -0.3758),
-    LatLng(39.4631, -0.3752),
-    LatLng(39.4626, -0.3752),
-    LatLng(39.4626, -0.3758),
+    LatLng(39.46208, -0.37552), // A — kS1Block1 NE vertex (inside lasso)
+    LatLng(39.46267, -0.37594), // D — kS1Block1 N vertex (inside lasso)
+    LatLng(39.46255, -0.37620), // C→D segment × lasso west edge (lng=-0.3762)
+    LatLng(39.46181, -0.37620), // A→B segment × lasso west edge (lng=-0.3762)
+  ];
+
+  // Shared transfer vertices — actual kS1Block1 boundary vertices that lie
+  // inside the lasso. Used for ping bursts on the defender→attacker handoff.
+  static const _kSharedTransferVerticesA = [
+    LatLng(39.46208, -0.37552), // A — kS1Block1 vertex
+    LatLng(39.46267, -0.37594), // D — kS1Block1 vertex
   ];
 
   // Pink-red attacker color for player 3.
@@ -2730,6 +2739,7 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
   List<List<Offset>> _inheritedPts = [];
   List<Offset> _p3Route = [];
   List<Offset> _disputedArea = [];
+  List<Offset> _sharedTransferVertices = [];
 
   void _onMapReady() {
     final cam = mapCtrl.camera;
@@ -2743,6 +2753,8 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
           .toList();
       _p3Route = _kP3RouteA.map(toScreen).toList();
       _disputedArea = _kDisputedA.map(toScreen).toList();
+      _sharedTransferVertices =
+          _kSharedTransferVerticesA.map(toScreen).toList();
     });
   }
 
@@ -2774,7 +2786,7 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
           _buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4640, -0.3758),
+            center: const LatLng(39.4621, -0.3762),
             zoom: 16.0,
             onReady: _onMapReady,
           ),
@@ -2788,6 +2800,7 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
                   inheritedPts: _inheritedPts,
                   p3Route: _p3Route,
                   disputedArea: _disputedArea,
+                  sharedTransferVertices: _sharedTransferVertices,
                   p3Color: _kP3Color,
                 ),
                 child: const SizedBox.expand(),
@@ -2806,6 +2819,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with _IntroPainterHelpers {
   final List<List<Offset>> inheritedPts;
   final List<Offset> p3Route;
   final List<Offset> disputedArea;
+  final List<Offset> sharedTransferVertices;
   final Color p3Color;
 
   _IntroDefenseMapAPainter({
@@ -2814,6 +2828,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with _IntroPainterHelpers {
     required this.inheritedPts,
     required this.p3Route,
     required this.disputedArea,
+    required this.sharedTransferVertices,
     required this.p3Color,
   });
 
@@ -2923,6 +2938,15 @@ class _IntroDefenseMapAPainter extends CustomPainter with _IntroPainterHelpers {
       canvas.drawCircle(
         pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.85),
       );
+    }
+
+    // Ping burst at lasso close — fires on the shared kS1Block1 vertices
+    // (A and D) where defender territory transfers to the attacker.
+    if (sharedTransferVertices.isNotEmpty) {
+      final pingT = (t - _kDisputeStart) / 0.15; // ramp 0.40–0.55
+      if (pingT > 0 && pingT < 1.0) {
+        drawPings(canvas, sharedTransferVertices, pingT.clamp(0.0, 1.0));
+      }
     }
 
     // Phase 2: 0.40–0.95 — disputed area amber fill + dashed amber border.
@@ -3084,6 +3108,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with _IntroPainterHelpers {
       old.t != t ||
       old.p3Route != p3Route ||
       old.disputedArea != disputedArea ||
+      old.sharedTransferVertices != sharedTransferVertices ||
       old.inheritedPts != inheritedPts;
 }
 

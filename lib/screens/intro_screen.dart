@@ -95,31 +95,13 @@ const _slides = [
     anim: _Anim.defense,
     layout: _Layout.textTopVisualBottom,
   ),
-  // 4A — SHIELD variant A (Inventory Drop)
+  // SHIELD Variant A — winner. B and C archived (classes kept in intro_map_animations.dart).
   _Slide(
     tag: 'SHIELD · VARIANT A',
     tagColor: kAccent,
     headline: 'ACTIVATE.\nDROP THE SHIELD.',
     body: 'Earned on the streets — deployed from your couch. The inventory drop sends your shield flying to any territory you own.',
     anim: _Anim.defenseA,
-    layout: _Layout.textTopVisualBottom,
-  ),
-  // 4b — Superpowers (Variant B)
-  _Slide(
-    tag: 'SHIELD · VARIANT B',
-    tagColor: kSea,
-    headline: 'HUD CONFIRMS.\nHEX RINGS HOLD.',
-    body: 'The superpower activates with a HUD notification. Hex rings radiate across the territory. The shield glows as long as it holds.',
-    anim: _Anim.defenseB,
-    layout: _Layout.textTopVisualBottom,
-  ),
-  // 4C — SHIELD Variant C: Cinematic Flash + Shatter
-  _Slide(
-    tag: 'SHIELD · VARIANT C',
-    tagColor: kAccent,
-    headline: 'WHITE FLASH.\nATTACK SHATTERED.',
-    body: 'The shield fires with cinematic force. One flash. The attacker\'s lasso shatters outward. Territory sealed.',
-    anim: _Anim.defenseC,
     layout: _Layout.textTopVisualBottom,
   ),
   // 5 — Loot drops
