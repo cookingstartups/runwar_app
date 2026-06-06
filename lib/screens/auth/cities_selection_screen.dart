@@ -47,6 +47,14 @@ class _CitiesSelectionScreenState
     Future.delayed(const Duration(milliseconds: 80), () {
       if (mounted) _fadeCtrl.forward();
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final userId = ref.read(authProvider).user?['id'] as String?;
+      if (userId == null) return;
+      final cached = ref.read(joinedCitySlugsProvider(userId)).valueOrNull;
+      if (cached != null && cached.isNotEmpty && mounted) {
+        setState(() => _selected.addAll(cached));
+      }
+    });
   }
 
   @override
