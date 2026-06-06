@@ -159,7 +159,6 @@ class AuthService {
       'username': u['username'],
       'city': 'Valencia',
       'color': u['color'],
-      'influence_level': u['influence'],
       'invited_at': nowIso,
       'is_tester': 0,
       'is_bot': 1,
@@ -364,6 +363,23 @@ class AuthService {
     if (supabaseUser == null) return;
 
     final nowIso = DateTime.now().toUtc().toIso8601String();
+    // Ensure a players row exists for returning users (idempotent upsert-ignore).
+    final displayName = supabaseUser.userMetadata?['full_name'] as String? ??
+        supabaseUser.userMetadata?['name'] as String?;
+    final shortId = supabaseUid.replaceAll('-', '').substring(0, 6).toUpperCase();
+    final username = displayName?.toUpperCase().replaceAll(' ', '_') ?? 'RUNNER-$shortId';
+    try {
+      await DatabaseService.instance.upsertProfileIgnore(
+        supabaseUid,
+        username,
+        'Valencia',
+        '#FF7A00',
+        invitedAt: nowIso,
+        isTester: 1,
+      );
+    } catch (e) {
+      debugPrint('[AuthService] restoreSession upsert skipped: $e');
+    }
     _currentUser = {
       'id': supabaseUid,
       'email': supabaseUser.email ?? '$supabaseUid@runwar',

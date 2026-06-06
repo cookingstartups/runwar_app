@@ -41,7 +41,6 @@ class DatabaseService {
       'username': username,
       'city': city,
       'color': color,
-      'influence_level': influence,
       'invited_at': invitedAt,
       'is_tester': isTester,
       'is_bot': isBot,
@@ -66,7 +65,6 @@ class DatabaseService {
         'username': username,
         'city': city,
         'color': color,
-        'influence_level': influence,
         'invited_at': invitedAt,
         'is_tester': isTester,
         'is_bot': isBot,
@@ -101,7 +99,10 @@ class DatabaseService {
 
   Future<bool> hasPhoneLinked(String userId) async {
     final profile = await getProfile(userId);
-    final phone = profile?['phone'] as String?;
+    if (profile == null) return true; // no profile yet — defer to invited_at gate
+    // Testers bypass phone requirement.
+    if ((profile['is_tester'] as int? ?? 0) == 1) return true;
+    final phone = profile['phone'] as String?;
     return phone != null && phone.isNotEmpty;
   }
 
