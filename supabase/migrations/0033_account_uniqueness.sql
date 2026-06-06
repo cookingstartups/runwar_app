@@ -53,8 +53,14 @@ END $$;
 DROP VIEW   IF EXISTS players_and_bots;
 DROP POLICY IF EXISTS zones_city_read ON zones;
 
--- 3. Drop the deprecated columns.
---    - display_name: never existed on the live timeline; IF EXISTS makes it a no-op.
+-- 3. Drop trigger that depends on display_name before we can drop the column.
+--    trg_check_username_not_bot references display_name; the Dart-side
+--    username_validator.dart is the sole remaining guard. This trigger was
+--    installed on the live timeline despite the design doc stating otherwise.
+DROP TRIGGER IF EXISTS trg_check_username_not_bot ON players;
+
+-- 3b. Drop the deprecated columns.
+--    - display_name: live on the remote (contrary to design doc assumption); drops here.
 --    - city: stale vs city_waitlists for multi-city users (db-review §3).
 --    - is_bot: bots table is the authoritative NPC home (db-review §1).
 ALTER TABLE players
