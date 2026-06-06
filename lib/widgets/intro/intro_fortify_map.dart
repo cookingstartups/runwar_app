@@ -143,19 +143,28 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
           if (mapReady)
             AnimatedBuilder(
               animation: _ctrl,
-              builder: (_, __) => CustomPaint(
-                painter: _IntroFortifyMapPainter(
-                  t: _ctrl.value,
-                  level: _level,
-                  accent: widget.accent,
-                  inheritedPts: _inheritedPts,
-                  claimedChunk: _claimedChunk,
-                  approachPts: _approachPts,
-                  loopPts: _loopPts,
-                  exitPt: _exitPt,
-                ),
-                child: const SizedBox.expand(),
-              ),
+              builder: (_, __) {
+                final zoom = mapCtrl.camera.zoom;
+                final lat = mapCtrl.camera.center.latitudeInRad;
+                const earthCircumference = 2 * math.pi * 6378137.0;
+                final metersPerPx = (earthCircumference * math.cos(lat)) /
+                    (256.0 * math.pow(2.0, zoom));
+                final tailPx = kCometTailMeters / metersPerPx;
+                return CustomPaint(
+                  painter: _IntroFortifyMapPainter(
+                    t: _ctrl.value,
+                    level: _level,
+                    accent: widget.accent,
+                    inheritedPts: _inheritedPts,
+                    claimedChunk: _claimedChunk,
+                    approachPts: _approachPts,
+                    loopPts: _loopPts,
+                    exitPt: _exitPt,
+                    tailLengthPx: tailPx,
+                  ),
+                  child: const SizedBox.expand(),
+                );
+              },
             ),
         ],
       ),
@@ -173,6 +182,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
   final List<Offset> approachPts;
   final List<Offset> loopPts;
   final Offset exitPt;
+  final double tailLengthPx;
 
   _IntroFortifyMapPainter({
     required this.t,
@@ -183,6 +193,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.approachPts,
     required this.loopPts,
     required this.exitPt,
+    required this.tailLengthPx,
   });
 
   // Must mirror state-class constants — phase boundaries + total laps.
@@ -341,7 +352,31 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
       drawLevelBadge(canvas, claimedChunk, level, kAccent);
     }
 
-    // 3. Runner dot — phase 1: approach polyline; phase 2: 4-lap loop circuit;
+    // 3. Comet-tail trace for the active runner.
+    if (t < _kApproachEndT) {
+      // Phase 1 — approach polyline.
+      final approachFrac = (t / _kApproachEndT).clamp(0.0, 1.0);
+      drawComet(canvas, approachPts, approachFrac,
+          tailLengthPx: tailLengthPx, color: kSea);
+    } else if (t < _kLoopEndT) {
+      // Phase 2 — closed-loop circuit. Use lap fraction within current lap.
+      final loopT =
+          ((t - _kApproachEndT) / (_kLoopEndT - _kApproachEndT)).clamp(0.0, 1.0);
+      final lapPos = (loopT * _kTotalLaps) % 1.0;
+      // Build a closed polyline (append first point) so the comet tail
+      // wraps continuously around the circuit.
+      final closedLoop = [...loopPts, loopPts[0]];
+      drawComet(canvas, closedLoop, lapPos,
+          tailLengthPx: tailLengthPx, color: kSea);
+    } else if (loopPts.isNotEmpty) {
+      // Phase 3 — exit segment from loop[0] to exitPt.
+      final exitFrac =
+          ((t - _kLoopEndT) / (1.0 - _kLoopEndT)).clamp(0.0, 1.0);
+      drawComet(canvas, [loopPts[0], exitPt], exitFrac,
+          tailLengthPx: tailLengthPx, color: kSea);
+    }
+
+    // Runner dot — phase 1: approach polyline; phase 2: 4-lap loop circuit;
     // phase 3: lerp toward off-screen exit point.
     final runnerPos = _runnerPosAtT(t);
     canvas.drawCircle(
@@ -383,6 +418,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
   bool shouldRepaint(_IntroFortifyMapPainter old) =>
       old.t != t ||
       old.level != level ||
+      old.tailLengthPx != tailLengthPx ||
       old.claimedChunk != claimedChunk ||
       old.approachPts != approachPts ||
       old.loopPts != loopPts ||

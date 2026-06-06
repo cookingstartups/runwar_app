@@ -90,7 +90,7 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const MilestoneProgressBar(currentStep: 0, labels: ['PHONE', 'TERRITORY', 'WAITLIST']),
+                    const MilestoneProgressBar(currentStep: 0),
                     const SizedBox(height: 32),
                     Text(
                       'Verify your\naccount.',

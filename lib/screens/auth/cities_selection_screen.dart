@@ -170,27 +170,7 @@ class _CitiesSelectionScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Top bar
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      const Expanded(
-                        child: MilestoneProgressBar(currentStep: 1, labels: ['PHONE', 'TERRITORY', 'WAITLIST']),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 20),
-                        child: Text(
-                          '${_selected.length} / 3',
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 10,
-                            letterSpacing: 2,
-                            color: _selected.isEmpty ? kFgMuted : kAccent,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  const MilestoneProgressBar(currentStep: 1),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
                     child: Column(
