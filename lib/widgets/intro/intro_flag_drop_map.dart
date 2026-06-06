@@ -122,17 +122,26 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
             Positioned.fill(
               child: AnimatedBuilder(
                 animation: _ctrl,
-                builder: (_, __) => CustomPaint(
-                  painter: _IntroFlagDropMapPainter(
-                    t: _ctrl.value,
-                    accent: widget.accent,
-                    dropPt: _dropPt,
-                    routeA: _routeA,
-                    routeB: _routeB,
-                    routeC: _routeC,
-                  ),
-                  child: const SizedBox.expand(),
-                ),
+                builder: (_, __) {
+                  final zoom = mapCtrl.camera.zoom;
+                  final lat = mapCtrl.camera.center.latitudeInRad;
+                  const earthCircumference = 2 * math.pi * 6378137.0;
+                  final metersPerPx = (earthCircumference * math.cos(lat)) /
+                      (256.0 * math.pow(2.0, zoom));
+                  final tailPx = kCometTailMeters / metersPerPx;
+                  return CustomPaint(
+                    painter: _IntroFlagDropMapPainter(
+                      t: _ctrl.value,
+                      accent: widget.accent,
+                      dropPt: _dropPt,
+                      routeA: _routeA,
+                      routeB: _routeB,
+                      routeC: _routeC,
+                      tailLengthPx: tailPx,
+                    ),
+                    child: const SizedBox.expand(),
+                  );
+                },
               ),
             ),
         ],
@@ -149,6 +158,7 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
   final List<Offset> routeA;
   final List<Offset> routeB;
   final List<Offset> routeC;
+  final double tailLengthPx;
 
   _IntroFlagDropMapPainter({
     required this.t,
@@ -157,6 +167,7 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.routeA,
     required this.routeB,
     required this.routeC,
+    required this.tailLengthPx,
   });
 
   // ── Timeline constants ─────────────────────────────────────────────────────
@@ -214,28 +225,6 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
     canvas.drawCircle(pos, 4.5, Paint()..color = color.withValues(alpha: fade));
     canvas.drawCircle(
         pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.85 * fade));
-  }
-
-  void _drawRouteTrace(Canvas canvas, List<Offset> pts, double progress,
-      Color color, double fade) {
-    if (pts.isEmpty || fade <= 0) return;
-    final segs = pts.length - 1;
-    final totalLen = progress.clamp(0.0, 1.0) * segs;
-    final p = Paint()
-      ..color = color.withValues(alpha: 0.65 * fade)
-      ..strokeWidth = 1.8
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final path = Path()..moveTo(pts[0].dx, pts[0].dy);
-    for (int i = 0; i < segs; i++) {
-      if (totalLen > i) {
-        final segT = (totalLen - i).clamp(0.0, 1.0);
-        final pt = Offset.lerp(pts[i], pts[i + 1], segT)!;
-        path.lineTo(pt.dx, pt.dy);
-      }
-    }
-    canvas.drawPath(path, p);
   }
 
   // Start-position pulse: visible in t=0.00–0.30.
@@ -335,9 +324,12 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
     final progressB = _runnerProgress(_arrivalB);
     final progressC = _runnerProgress(_arrivalC);
 
-    _drawRouteTrace(canvas, routeA, progressA, kAccent, fade);
-    _drawRouteTrace(canvas, routeB, progressB, kSea, fade);
-    _drawRouteTrace(canvas, routeC, progressC, kRunnerCPink, fade);
+    drawComet(canvas, routeA, progressA,
+        tailLengthPx: tailLengthPx, color: kAccent, decayMul: fade);
+    drawComet(canvas, routeB, progressB,
+        tailLengthPx: tailLengthPx, color: kSea, decayMul: fade);
+    drawComet(canvas, routeC, progressC,
+        tailLengthPx: tailLengthPx, color: kRunnerCPink, decayMul: fade);
 
     // ── 3. Runner dots ───────────────────────────────────────────────────────
     // Show dot while en route; once arrived hold at drop point until fade.
@@ -389,6 +381,7 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
   @override
   bool shouldRepaint(_IntroFlagDropMapPainter old) =>
       old.t != t ||
+      old.tailLengthPx != tailLengthPx ||
       old.dropPt != dropPt ||
       old.routeA != routeA ||
       old.routeB != routeB ||

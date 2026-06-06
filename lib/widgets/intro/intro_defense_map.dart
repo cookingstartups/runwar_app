@@ -120,18 +120,27 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
           if (mapReady)
             AnimatedBuilder(
               animation: _ctrl,
-              builder: (_, __) => CustomPaint(
-                painter: _IntroDefenseMapAPainter(
-                  t: _ctrl.value,
-                  accent: widget.accent,
-                  inheritedPts: _inheritedPts,
-                  p3Route: _p3Route,
-                  disputedArea: _disputedArea,
-                  sharedTransferVertices: _sharedTransferVertices,
-                  p3Color: _kP3Color,
-                ),
-                child: const SizedBox.expand(),
-              ),
+              builder: (_, __) {
+                final zoom = mapCtrl.camera.zoom;
+                final lat = mapCtrl.camera.center.latitudeInRad;
+                const earthCircumference = 2 * math.pi * 6378137.0;
+                final metersPerPx = (earthCircumference * math.cos(lat)) /
+                    (256.0 * math.pow(2.0, zoom));
+                final tailPx = kCometTailMeters / metersPerPx;
+                return CustomPaint(
+                  painter: _IntroDefenseMapAPainter(
+                    t: _ctrl.value,
+                    accent: widget.accent,
+                    inheritedPts: _inheritedPts,
+                    p3Route: _p3Route,
+                    disputedArea: _disputedArea,
+                    sharedTransferVertices: _sharedTransferVertices,
+                    p3Color: _kP3Color,
+                    tailLengthPx: tailPx,
+                  ),
+                  child: const SizedBox.expand(),
+                );
+              },
             ),
         ],
       ),
@@ -148,6 +157,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
   final List<Offset> disputedArea;
   final List<Offset> sharedTransferVertices;
   final Color p3Color;
+  final double tailLengthPx;
 
   _IntroDefenseMapAPainter({
     required this.t,
@@ -157,6 +167,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
     required this.disputedArea,
     required this.sharedTransferVertices,
     required this.p3Color,
+    required this.tailLengthPx,
   });
 
   // Phase boundaries.
@@ -236,11 +247,13 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
             .clamp(0.0, 1.0);
 
     if (lassoFade > 0 && routeProgress > 0) {
-      drawTraceColor(
+      drawComet(
         canvas,
         p3Route,
         routeProgress,
-        p3Color.withValues(alpha: 0.7 * lassoFade),
+        tailLengthPx: tailLengthPx,
+        color: p3Color,
+        decayMul: lassoFade,
       );
     }
 
@@ -433,6 +446,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
   @override
   bool shouldRepaint(_IntroDefenseMapAPainter old) =>
       old.t != t ||
+      old.tailLengthPx != tailLengthPx ||
       old.p3Route != p3Route ||
       old.disputedArea != disputedArea ||
       old.sharedTransferVertices != sharedTransferVertices ||
