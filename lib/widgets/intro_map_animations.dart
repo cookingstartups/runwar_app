@@ -189,7 +189,11 @@ mixin _IntroPainterHelpers {
 
   void drawPings(Canvas canvas, List<Offset> pts, double pingT) {
     if (pts.length < 3) return;
-    final corners = [pts[0], pts[pts.length ~/ 2], pts[pts.length - 2]];
+    // For small lists (≤4 pts) ping every vertex so none are skipped.
+    // For larger lists sample 3 representative corners to avoid clutter.
+    final corners = pts.length <= 4
+        ? pts
+        : [pts[0], pts[pts.length ~/ 2], pts[pts.length - 2]];
     for (final corner in corners) {
       canvas.drawCircle(
           corner,
