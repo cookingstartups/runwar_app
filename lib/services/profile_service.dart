@@ -55,11 +55,17 @@ class ProfileService {
     String? username,
     String? city,
     String? color,
+    String? avatarUrl,
+    String? bio,
+    Map<String, dynamic>? avatarMetadata,
   }) async {
     final patch = <String, Object?>{};
     if (username != null) patch['username'] = username;
     if (city != null) patch['city'] = city;
     if (color != null) patch['color'] = color;
+    if (avatarUrl != null) patch['avatar_url'] = avatarUrl;
+    if (bio != null) patch['bio'] = bio;
+    if (avatarMetadata != null) patch['avatar_metadata'] = avatarMetadata;
     if (patch.isEmpty) return; // AC-13 unwanted behaviour: all-null no-op
 
     await DatabaseService.instance.updateProfile(userId, patch);

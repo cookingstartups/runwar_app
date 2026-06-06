@@ -1,5 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../providers/onboarding_provider.dart';
 import '../../providers/profile_provider.dart';
@@ -7,27 +11,8 @@ import '../../services/auth_service.dart';
 import '../../theme.dart';
 import '../../utils/username_validator.dart';
 
-// 12 predefined vivid palette colors for the BlockPicker (step 3).
-// Order matches the brief: orange, pink, teal, yellow, red, purple,
-// green, blue, orange2, magenta, cyan, lime.
-const List<Color> _kPaletteColors = [
-  Color(0xFFFF7A00),
-  Color(0xFFFF2D7A),
-  Color(0xFF00F5E1),
-  Color(0xFFFFD700),
-  Color(0xFFFF4500),
-  Color(0xFF7B2FBE),
-  Color(0xFF00C853),
-  Color(0xFF2979FF),
-  Color(0xFFFF6D00),
-  Color(0xFFE91E63),
-  Color(0xFF00BCD4),
-  Color(0xFF8BC34A),
-];
-
 /// Converts a Flutter [Color] to a `#RRGGBB` hex string.
 String _colorToHex(Color c) {
-  // Use the ARGB int value; mask off the alpha channel (top byte).
   final hex = (c.toARGB32() & 0x00FFFFFF).toRadixString(16).padLeft(6, '0');
   return '#$hex'.toUpperCase();
 }
@@ -38,12 +23,11 @@ Color _hexToColor(String hex) {
   return Color(int.parse('FF$cleaned', radix: 16));
 }
 
-/// 3-step sign-up flow: username → city → color.
+/// Single-screen sign-up flow that collects username, bio, account colour, and
+/// profile photo in one scrollable view.
 ///
-/// Controlled by [onboardingProvider]. The [PageView] advances on each
-/// "Continue" / "Start playing" action. Route re-evaluation after submit()
-/// is owned by POC-013 (_RouteGuard in main.dart): once profiles.username
-/// is non-empty, the guard will route to MapScreen on its next watch cycle.
+/// Route re-evaluation after submit() is owned by _RouteGuard (main.dart):
+/// once players.username is non-empty the guard navigates to MapScreen.
 class SignUpFlow extends ConsumerStatefulWidget {
   const SignUpFlow({super.key});
 
@@ -52,211 +36,88 @@ class SignUpFlow extends ConsumerStatefulWidget {
 }
 
 class _SignUpFlowState extends ConsumerState<SignUpFlow> {
-  late final PageController _pageController;
-
-  @override
-  void initState() {
-    super.initState();
-    _pageController = PageController(
-      initialPage: ref.read(onboardingProvider).step,
-    );
-  }
+  final _usernameCtrl = TextEditingController();
+  final _bioCtrl = TextEditingController();
+  String? _usernameError;
 
   @override
   void dispose() {
-    _pageController.dispose();
+    _usernameCtrl.dispose();
+    _bioCtrl.dispose();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // Drive the PageView whenever the provider's step changes.
-    ref.listen<int>(
-      onboardingProvider.select((s) => s.step),
-      (_, next) {
-        if (_pageController.hasClients) {
-          _pageController.jumpToPage(next);
-        }
-      },
-    );
+  // ── Avatar helpers ──────────────────────────────────────────────────────────
 
-    return Scaffold(
-      backgroundColor: kBg,
-      body: SafeArea(
-        child: PageView(
-          controller: _pageController,
-          // Disable swipe — navigation is controlled by buttons only.
-          physics: const NeverScrollableScrollPhysics(),
-          children: const [
-            _Step1Username(),
-            _Step3Color(),
+  Future<void> _pickImage(ImageSource source) async {
+    final picker = ImagePicker();
+    final file = await picker.pickImage(
+      source: source,
+      imageQuality: 85,
+      maxWidth: 1024,
+    );
+    if (file != null) {
+      ref.read(onboardingProvider.notifier).setAvatarPath(file.path);
+    }
+  }
+
+  void _showAvatarSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: kSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: kFgFaint,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined, color: kFg),
+              title: Text('Take photo', style: bodyStyle(size: 15, color: kFg)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined, color: kFg),
+              title: Text('Choose from gallery', style: bodyStyle(size: 15, color: kFg)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickImage(ImageSource.gallery);
+              },
+            ),
+            const SizedBox(height: 8),
           ],
         ),
       ),
     );
   }
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 1 — Username
-// ─────────────────────────────────────────────────────────────────────────────
+  // ── Submit ──────────────────────────────────────────────────────────────────
 
-class _Step1Username extends ConsumerStatefulWidget {
-  const _Step1Username();
-
-  @override
-  ConsumerState<_Step1Username> createState() => _Step1UsernameState();
-}
-
-class _Step1UsernameState extends ConsumerState<_Step1Username> {
-  final _ctrl = TextEditingController();
-  String? _localError;
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  void _onContinue() {
-    final value = _ctrl.text;
-    final error = validateUsername(value);
-    if (error != null) {
-      setState(() => _localError = error);
+  Future<void> _submit() async {
+    final username = _usernameCtrl.text;
+    final usernameErr = validateUsername(username);
+    if (usernameErr != null) {
+      setState(() => _usernameError = usernameErr);
       return;
     }
-    setState(() => _localError = null);
-    ref.read(onboardingProvider.notifier).setUsername(value.trim());
-  }
+    setState(() => _usernameError = null);
 
-  @override
-  Widget build(BuildContext context) {
-    final isLoading =
-        ref.watch(onboardingProvider.select((s) => s.isLoading));
-    final providerError =
-        ref.watch(onboardingProvider.select((s) => s.error));
-    final errorText = _localError ?? providerError;
+    ref.read(onboardingProvider.notifier).setUsername(username.trim());
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 48),
-          const Text(
-            'STEP 3 / 3 · IDENTITY',
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 10,
-              letterSpacing: 3.0,
-              color: kAccent,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text('PICK A USERNAME', style: displayStyle(size: 36)),
-          const SizedBox(height: 8),
-          Text(
-            'This is how other runners will see you on the map.',
-            style: bodyStyle(size: 14, color: kFgMuted),
-          ),
-          const SizedBox(height: 32),
-          TextField(
-            controller: _ctrl,
-            autocorrect: false,
-            textInputAction: TextInputAction.done,
-            onSubmitted: (_) => isLoading ? null : _onContinue(),
-            onChanged: (_) {
-              if (_localError != null) setState(() => _localError = null);
-              ref.read(onboardingProvider.notifier).clearError();
-            },
-            decoration: const InputDecoration(
-              labelText: 'USERNAME',
-              hintText: 'e.g. runner42',
-            ),
-          ),
-          if (errorText != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              errorText,
-              style: bodyStyle(size: 13, color: kDanger),
-            ),
-          ],
-          const SizedBox(height: 24),
-          ElevatedButton(
-            onPressed: isLoading ? null : _onContinue,
-            child: const Text('CONTINUE'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 2 — Color (palette swatches + custom hex input)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Returns true if [hex] is a valid #RRGGBB string.
-bool _isValidHex(String hex) =>
-    RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(hex);
-
-class _Step3Color extends ConsumerStatefulWidget {
-  const _Step3Color();
-
-  @override
-  ConsumerState<_Step3Color> createState() => _Step3ColorState();
-}
-
-class _Step3ColorState extends ConsumerState<_Step3Color> {
-  late final TextEditingController _hexCtrl;
-  String? _hexError;
-
-  @override
-  void initState() {
-    super.initState();
-    _hexCtrl = TextEditingController(
-      text: ref.read(onboardingProvider).color,
-    );
-  }
-
-  @override
-  void dispose() {
-    _hexCtrl.dispose();
-    super.dispose();
-  }
-
-  void _onSwatchTap(Color color) {
-    final hex = _colorToHex(color);
-    ref.read(onboardingProvider.notifier).setColor(hex);
-    _hexCtrl.text = hex;
-    setState(() => _hexError = null);
-  }
-
-  void _onHexChanged(String value) {
-    final trimmed = value.trim().toUpperCase();
-    if (trimmed.length == 6 && !trimmed.startsWith('#')) {
-      // auto-prefix if user omitted #
-      final prefixed = '#$trimmed';
-      if (_isValidHex(prefixed)) {
-        _hexCtrl.value = _hexCtrl.value.copyWith(
-          text: prefixed,
-          selection: TextSelection.collapsed(offset: prefixed.length),
-        );
-        ref.read(onboardingProvider.notifier).setColor(prefixed);
-        setState(() => _hexError = null);
-        return;
-      }
-    }
-    if (_isValidHex(trimmed)) {
-      ref.read(onboardingProvider.notifier).setColor(trimmed);
-      setState(() => _hexError = null);
-    } else {
-      setState(() => _hexError = trimmed.isEmpty ? null : 'Enter a valid hex e.g. #FF7A00');
-    }
-  }
-
-  Future<void> _startPlaying() async {
     final user = AuthService.instance.getCurrentUser();
     if (user == null) return;
     final userId = user['id'] as String;
@@ -264,104 +125,212 @@ class _Step3ColorState extends ConsumerState<_Step3Color> {
     ref.invalidate(profileGateProvider(userId));
   }
 
+  // ── Build ───────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(onboardingProvider);
-    final selectedColor = _hexToColor(state.color);
+    // Error snackbar — fires on the live instance after guard re-render.
+    ref.listen<OnboardingState>(onboardingProvider, (prev, next) {
+      if (next.error != null && prev?.error != next.error) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(next.error!, style: bodyStyle(size: 14, color: kFg)),
+            backgroundColor: kDanger,
+          ),
+        );
+      }
+    });
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 32),
-          Text('PICK A COLOR', style: displayStyle(size: 36)),
-          const SizedBox(height: 8),
-          Text(
-            'Your color is how you appear on the territory map.',
-            style: bodyStyle(size: 14, color: kFgMuted),
-          ),
-          const SizedBox(height: 24),
-          Center(
-            child: Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 12,
-              runSpacing: 12,
-              children: _kPaletteColors.map((color) {
-                final isSelected = color.toARGB32() == selectedColor.toARGB32();
-                return GestureDetector(
-                  onTap: () => _onSwatchTap(color),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: isSelected ? Colors.white : Colors.transparent,
-                        width: 3,
-                      ),
-                      boxShadow: isSelected
-                          ? [BoxShadow(color: color.withValues(alpha: 0.6), blurRadius: 8)]
-                          : [],
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-          const SizedBox(height: 28),
-          // Custom hex input row with live preview swatch.
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+    final state = ref.watch(onboardingProvider);
+    final pickedColor = _hexToColor(state.color);
+    final isLoading = state.isLoading;
+    final usernameValid = validateUsername(_usernameCtrl.text) == null &&
+        _usernameCtrl.text.isNotEmpty;
+
+    return Scaffold(
+      backgroundColor: kBg,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Live preview dot.
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: _hexError == null ? selectedColor : kFgMuted,
-                  shape: BoxShape.circle,
-                  boxShadow: _hexError == null
-                      ? [BoxShadow(color: selectedColor.withValues(alpha: 0.5), blurRadius: 8)]
-                      : [],
+              const SizedBox(height: 16),
+
+              // ── Header ────────────────────────────────────────────────────
+              Text(
+                'CREATE YOUR\nIDENTITY',
+                style: displayStyle(size: 40),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'This is how other runners see you on the map.',
+                style: bodyStyle(size: 14, color: kFgMuted),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 32),
+
+              // ── Profile photo ─────────────────────────────────────────────
+              Center(
+                child: Column(
+                  children: [
+                    GestureDetector(
+                      onTap: _showAvatarSheet,
+                      child: _AvatarCircle(path: state.avatarPath),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _showAvatarSheet,
+                      style: TextButton.styleFrom(
+                        foregroundColor: kAccent,
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size(0, 0),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      child: Text(
+                        state.avatarPath != null ? 'CHANGE PHOTO' : 'ADD PHOTO',
+                        style: monoStyle(size: 10, color: kAccent),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _hexCtrl,
-                  autocorrect: false,
-                  textCapitalization: TextCapitalization.characters,
-                  onChanged: _onHexChanged,
-                  decoration: InputDecoration(
-                    labelText: 'CUSTOM HEX',
-                    hintText: '#FF7A00',
-                    errorText: _hexError,
+              const SizedBox(height: 32),
+
+              // ── Username ──────────────────────────────────────────────────
+              Text('USERNAME', style: monoStyle(size: 10, color: kFgMuted)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _usernameCtrl,
+                autocorrect: false,
+                textInputAction: TextInputAction.next,
+                onChanged: (v) {
+                  if (_usernameError != null) setState(() => _usernameError = null);
+                  ref.read(onboardingProvider.notifier).clearError();
+                  // Rebuild to update button enabled state.
+                  setState(() {});
+                },
+                decoration: InputDecoration(
+                  hintText: 'e.g. runner42',
+                  errorText: _usernameError,
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // ── Bio ───────────────────────────────────────────────────────
+              Text('BIO', style: monoStyle(size: 10, color: kFgMuted)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _bioCtrl,
+                maxLines: 3,
+                maxLength: 160,
+                textInputAction: TextInputAction.done,
+                onChanged: (v) =>
+                    ref.read(onboardingProvider.notifier).setBio(v),
+                decoration: const InputDecoration(
+                  hintText: 'Tell the city who you are...',
+                  counterStyle: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 10,
+                    color: kFgFaint,
                   ),
                 ),
               ),
+              const SizedBox(height: 24),
+
+              // ── Account colour ────────────────────────────────────────────
+              Text('YOUR COLOUR', style: monoStyle(size: 10, color: kFgMuted)),
+              const SizedBox(height: 12),
+
+              // Live preview swatch.
+              Center(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: pickedColor,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: pickedColor.withValues(alpha: 0.55),
+                        blurRadius: 14,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // HSV colour wheel.
+              ColorPicker(
+                pickerColor: pickedColor,
+                onColorChanged: (c) {
+                  ref.read(onboardingProvider.notifier).setColor(_colorToHex(c));
+                },
+                pickerAreaHeightPercent: 0.7,
+                enableAlpha: false,
+                labelTypes: const [],
+                displayThumbColor: true,
+                hexInputBar: false,
+              ),
+              const SizedBox(height: 32),
+
+              // ── CTA ───────────────────────────────────────────────────────
+              ElevatedButton(
+                onPressed: (isLoading || !usernameValid) ? null : _submit,
+                child: isLoading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: kBg,
+                        ),
+                      )
+                    : const Text('JOIN THE WAR'),
+              ),
+              const SizedBox(height: 24),
             ],
           ),
-          if (state.error != null) ...[
-            const SizedBox(height: 12),
-            Text(state.error!, style: bodyStyle(size: 13, color: kDanger)),
-          ],
-          const SizedBox(height: 24),
-          ElevatedButton(
-            onPressed: state.isLoading || _hexError != null ? null : _startPlaying,
-            child: state.isLoading
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: kBg),
-                  )
-                : const Text('START PLAYING'),
-          ),
-        ],
+        ),
       ),
+    );
+  }
+}
+
+// ── Avatar circle widget ────────────────────────────────────────────────────
+
+class _AvatarCircle extends StatelessWidget {
+  const _AvatarCircle({this.path});
+  final String? path;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 96,
+      height: 96,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: kSurface,
+        border: Border.all(color: kBorder, width: 2),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: path != null
+          ? Image.file(
+              File(path!),
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _placeholder(),
+            )
+          : _placeholder(),
+    );
+  }
+
+  Widget _placeholder() {
+    return const Center(
+      child: Icon(Icons.person_outline, size: 40, color: kFgFaint),
     );
   }
 }
