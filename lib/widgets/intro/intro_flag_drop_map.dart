@@ -5,14 +5,14 @@ import '../../theme.dart';
 import 'intro_helpers.dart';
 
 // ---------------------------------------------------------------------------
-// 4. IntroFlagDropMap — 3 runners race to L'Hemisfèric drop point (slide 4)
+// 4. IntroFlagDropMap — 3 runners race to Alameda Metro south exit (slide 4)
 //
-// Drop point: LatLng(39.4553, -0.3510) — L'Hemisfèric, Ciutat de les Arts
-// Map center: LatLng(39.4540, -0.3520), zoom 14
+// Drop point: LatLng(39.47140, -0.36490) — Estació de l'Alameda south exit
+// Map center: LatLng(39.47140, -0.36490), zoom 16
 //
-// Runner A (kAccent orange)  — north start, runs south along Av. de França
-// Runner B (kSea blue)       — northwest start near Ruzafa, runs east
-// Runner C (pink 0xFFFF3B7A) — east start near port, runs west
+// Runner A (kAccent orange)  — north start, via Pont de l'Exposició / Av d'Aragó
+// Runner B (kSea blue)       — west start, via Jardí del Túria riverbed corridor
+// Runner C (kRunnerCPink)    — south start, via Carrer de Menorca heading north
 // ---------------------------------------------------------------------------
 
 class IntroFlagDropMap extends StatefulWidget {
@@ -25,40 +25,48 @@ class IntroFlagDropMap extends StatefulWidget {
 class _IntroFlagDropMapState extends State<IntroFlagDropMap>
     with TickerProviderStateMixin, IntroMapMixin<IntroFlagDropMap> {
   // ── Fixed coordinates ──────────────────────────────────────────────────────
-  static const _kDropCoord = LatLng(39.4710, -0.3712);
+  static const _kDropCoord = LatLng(39.47140, -0.36490);
 
-  // Routes: 3 runners converge on Plaça de la Porta de la Mar roundabout
-  // from south (Comte d'Altea), east (Colom/Port), and north (Navarro Reverter).
-  // All waypoints lie on real street centerlines ~150–200m from the roundabout.
+  // Routes: 3 runners converge on Alameda Metro south exit.
+  // All waypoints lie on real Valencia street centrelines confirmed against OSM.
 
-  // Runner A (kAccent orange) — from south via Carrer del Comte d'Altea
-  // Starts ~200m south, runs north along Comte d'Altea toward the roundabout.
+  // Runner A (kAccent orange) — north approach via Pont de l'Exposició / Av d'Aragó
+  // Starts ~1.6 km north (off-screen at zoom 16), crosses Pont de l'Exposició,
+  // descends Avinguda d'Aragó south to the Alameda south exit.
   static const _kRouteA = [
-    LatLng(39.4689, -0.3712), // 0: off-screen south start
-    LatLng(39.4695, -0.3712), // 1: Comte d'Altea heading north
-    LatLng(39.4701, -0.3713), // 2: approaching roundabout
-    LatLng(39.4706, -0.3712), // 3: roundabout south entry
-    LatLng(39.4710, -0.3712), // 4: DROP POINT — roundabout center
+    LatLng(39.48600, -0.36490), // 0: off-screen north start (~1623 m from drop)
+    LatLng(39.48300, -0.36490), // 1: approaching Pont de l'Exposició from north
+    LatLng(39.47970, -0.36490), // 2: Pont de l'Exposició — bridge over Turia
+    LatLng(39.47750, -0.36490), // 3: Avinguda d'Aragó heading south
+    LatLng(39.47500, -0.36490), // 4: continuing south on Av d'Aragó
+    LatLng(39.47300, -0.36490), // 5: near Alameda metro north approach
+    LatLng(39.47140, -0.36490), // 6: DROP POINT — Alameda south exit
   ];
 
-  // Runner B (kSea blue) — from east via Carrer de Colom / Avinguda del Port
-  // Starts ~200m east, runs west along Colom toward the roundabout.
+  // Runner B (kSea blue) — west approach via Jardí del Túria riverbed corridor
+  // Starts ~1.7 km west (off-screen at zoom 16), runs east along the Turia park
+  // pedestrian path, curves southeast into the Alameda south exit.
   static const _kRouteB = [
-    LatLng(39.4710, -0.3690), // 0: off-screen east start
-    LatLng(39.4710, -0.3697), // 1: Colom heading west
-    LatLng(39.4710, -0.3703), // 2: mid stretch
-    LatLng(39.4710, -0.3708), // 3: roundabout east entry
-    LatLng(39.4710, -0.3712), // 4: DROP POINT
+    LatLng(39.47300, -0.38500), // 0: off-screen west start (~1734 m from drop)
+    LatLng(39.47300, -0.38100), // 1: Jardí del Túria — continuing east
+    LatLng(39.47300, -0.37800), // 2: mid-park near Palau de la Música
+    LatLng(39.47280, -0.37500), // 3: approaching Alameda from west
+    LatLng(39.47260, -0.37200), // 4: near metro west approach
+    LatLng(39.47200, -0.36800), // 5: turning southeast toward south exit
+    LatLng(39.47140, -0.36490), // 6: DROP POINT — Alameda south exit
   ];
 
-  // Runner C (pink-red 0xFFFF3B7A) — from north via Carrer de Navarro Reverter
-  // Starts ~180m north, runs south toward the roundabout.
+  // Runner C (kRunnerCPink) — south approach via Carrer de Menorca heading north
+  // Starts ~1.2 km south (off-screen at zoom 16), runs north along Carrer de
+  // Menorca directly into the Alameda Metro south exit.
   static const _kRouteC = [
-    LatLng(39.4728, -0.3712), // 0: off-screen north start
-    LatLng(39.4723, -0.3712), // 1: Navarro Reverter heading south
-    LatLng(39.4718, -0.3712), // 2: mid stretch
-    LatLng(39.4714, -0.3712), // 3: roundabout north entry
-    LatLng(39.4710, -0.3712), // 4: DROP POINT
+    LatLng(39.46100, -0.36490), // 0: off-screen south start (~1156 m from drop)
+    LatLng(39.46300, -0.36490), // 1: Carrer de Menorca heading north
+    LatLng(39.46500, -0.36490), // 2: continuing north
+    LatLng(39.46700, -0.36490), // 3: approaching metro area from south
+    LatLng(39.46900, -0.36490), // 4: near Alameda south side
+    LatLng(39.47050, -0.36490), // 5: close approach to south exit
+    LatLng(39.47140, -0.36490), // 6: DROP POINT — Alameda south exit
   ];
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -114,8 +122,8 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.46875, -0.3712),
-            zoom: 17.0,
+            center: const LatLng(39.47140, -0.36490),
+            zoom: 16.0,
             onReady: _updatePoints,
           ),
           if (mapReady)
@@ -175,7 +183,7 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
   // t 0.00–0.75 : all 3 runners move along routes (staggered arrivals)
   //   A arrives t=0.65, B arrives t=0.70, C arrives t=0.75
   // t 0.50      : beacon starts pulsing at drop (kAccent2 rings)
-  // t 0.65      : Runner A arrives — "LOOT DROPPED" label flashes
+  // t 0.65      : Runner A arrives — "FLAG DROPPED" label flashes
   // t 0.70      : Runner B arrives — white burst ring
   // t 0.75      : Runner C arrives — "SPRINT!" tag briefly
   // t 0.80–1.00 : all runners at drop, rings decay, global fade-out
@@ -345,7 +353,7 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
     // ── 4. Beacon at drop point (t=0.50+) ────────────────────────────────────
     _drawBeacon(canvas, fade);
 
-    // ── 5. Runner A arrives (t=0.65) — arrival burst + "LOOT DROPPED" ────────
+    // ── 5. Runner A arrives (t=0.65) — arrival burst + "FLAG DROPPED" ────────
     _drawArrivalBurst(canvas, _arrivalA, fade);
     if (t > _arrivalA && t < 0.80) {
       final lootOpacity = t < 0.725
@@ -353,7 +361,7 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
           : ((1.0 - (t - 0.725) / 0.075)).clamp(0.0, 1.0);
       _drawLabel(
         canvas,
-        'LOOT DROPPED',
+        'FLAG DROPPED',
         dropPt.translate(0, -28),
         kAccent2,
         lootOpacity * fade,
