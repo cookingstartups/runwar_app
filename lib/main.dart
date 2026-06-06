@@ -21,7 +21,7 @@ import 'screens/auth/phone_link_screen.dart';
 import 'screens/auth/cities_selection_screen.dart';
 import 'screens/auth/join_war_confirmation_screen.dart';
 // import 'screens/waitlist_gate_screen.dart'; // kept for named route fallback
-import 'screens/onboarding/onboarding_flow.dart';
+import 'screens/onboarding/sign_up_flow.dart';
 import 'screens/main_shell.dart';
 import 'screens/paywall_screen.dart';
 import 'screens/first_mission_briefing_screen.dart';
@@ -127,7 +127,7 @@ class RunWarApp extends StatelessWidget {
 ///   no phone linked       → PhoneLinkScreen
 ///   no cities joined      → CitiesSelectionScreen
 ///   invited_at == null    → JoinWarConfirmationScreen (waitlisted)
-///   username == ''        → OnboardingFlow
+///   username == ''        → SignUpFlow
 ///   trial expired         → PaywallScreen
 ///   otherwise             → MainShell
 class _RouteGuard extends ConsumerStatefulWidget {
@@ -220,7 +220,7 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
       return const JoinWarConfirmationScreen();
     }
     final username = (profile['username'] as String?) ?? '';
-    if (username.isEmpty) return const OnboardingFlow();
+    if (username.isEmpty) return const SignUpFlow();
 
     // Gate 5a: first-mission onboarding
     final missionAsync = ref.watch(missionStatusProvider(userId));

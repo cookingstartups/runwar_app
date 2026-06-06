@@ -38,20 +38,20 @@ Color _hexToColor(String hex) {
   return Color(int.parse('FF$cleaned', radix: 16));
 }
 
-/// 3-step onboarding flow: username → city → color.
+/// 3-step sign-up flow: username → city → color.
 ///
 /// Controlled by [onboardingProvider]. The [PageView] advances on each
 /// "Continue" / "Start playing" action. Route re-evaluation after submit()
 /// is owned by POC-013 (_RouteGuard in main.dart): once profiles.username
 /// is non-empty, the guard will route to MapScreen on its next watch cycle.
-class OnboardingFlow extends ConsumerStatefulWidget {
-  const OnboardingFlow({super.key});
+class SignUpFlow extends ConsumerStatefulWidget {
+  const SignUpFlow({super.key});
 
   @override
-  ConsumerState<OnboardingFlow> createState() => _OnboardingFlowState();
+  ConsumerState<SignUpFlow> createState() => _SignUpFlowState();
 }
 
-class _OnboardingFlowState extends ConsumerState<OnboardingFlow> {
+class _SignUpFlowState extends ConsumerState<SignUpFlow> {
   late final PageController _pageController;
 
   @override
@@ -143,7 +143,7 @@ class _Step1UsernameState extends ConsumerState<_Step1Username> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SizedBox(height: 48),
-          Text(
+          const Text(
             'STEP 3 / 3 · IDENTITY',
             style: TextStyle(
               fontFamily: 'monospace',
