@@ -77,24 +77,7 @@ const _slides = [
     anim: _Anim.hexCapture,
     layout: _Layout.textTopVisualBottom,
   ),
-  // 3 — Mastery / Fortify
-  _Slide(
-    tag: 'FORTIFY',
-    tagColor: kAccent,
-    headline: 'RUN IT. OWN IT.\nFORTIFY IT.',
-    body: 'Lap your zone again and it levels up — all the way to level 15. The higher the level, the more it costs to take it back. The streets remember who trained hardest.',
-    anim: _Anim.fortify,
-    layout: _Layout.visualTopTextBottom,
-  ),
-  // 4 — Superpowers
-  _Slide(
-    tag: 'EARN YOUR EDGE',
-    tagColor: kSea,
-    headline: 'EARNED IN STREETS.\nDEPLOYED FROM HOME.',
-    body: 'Superpowers can\'t be bought. You earn them by running — then unleash them anywhere in the city without leaving your couch. Pay with kilometres, not cash.',
-    anim: _Anim.defense,
-    layout: _Layout.textTopVisualBottom,
-  ),
+  // 3 — Shield (Variant A)
   // SHIELD Variant A — winner. B and C archived (classes kept in intro_map_animations.dart).
   _Slide(
     tag: 'SHIELD · VARIANT A',
@@ -104,7 +87,25 @@ const _slides = [
     anim: _Anim.defenseA,
     layout: _Layout.textTopVisualBottom,
   ),
-  // 5 — Loot drops
+  // 4 — Mastery / Fortify
+  _Slide(
+    tag: 'FORTIFY',
+    tagColor: kAccent,
+    headline: 'RUN IT. OWN IT.\nFORTIFY IT.',
+    body: 'Lap your zone again and it levels up — all the way to level 15. The higher the level, the more it costs to take it back. The streets remember who trained hardest.',
+    anim: _Anim.fortify,
+    layout: _Layout.visualTopTextBottom,
+  ),
+  // 5 — Superpowers
+  _Slide(
+    tag: 'EARN YOUR EDGE',
+    tagColor: kSea,
+    headline: 'EARNED IN STREETS.\nDEPLOYED FROM HOME.',
+    body: 'Superpowers can\'t be bought. You earn them by running — then unleash them anywhere in the city without leaving your couch. Pay with kilometres, not cash.',
+    anim: _Anim.defense,
+    layout: _Layout.textTopVisualBottom,
+  ),
+  // 6 — Loot drops
   _Slide(
     tag: 'LOOT DROPS',
     tagColor: kAccent2,
