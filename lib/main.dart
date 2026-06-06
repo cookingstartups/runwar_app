@@ -126,8 +126,8 @@ class RunWarApp extends StatelessWidget {
 ///   user == null          → LoginScreen / IntroScreen
 ///   no phone linked       → PhoneLinkScreen
 ///   no cities joined      → CitiesSelectionScreen
-///   invited_at == null    → JoinWarConfirmationScreen (waitlisted)
 ///   username == ''        → SignUpFlow
+///   invited_at == null    → JoinWarConfirmationScreen (waitlisted)
 ///   trial expired         → PaywallScreen
 ///   otherwise             → MainShell
 class _RouteGuard extends ConsumerStatefulWidget {
@@ -216,11 +216,11 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
               child: Text('Error loading profile: ${profileAsync.error}')));
     }
     final profile = profileAsync.value;
-    if (profile == null || profile['invited_at'] == null) {
+    final username = (profile?['username'] as String?) ?? '';
+    if (profile == null || username.isEmpty) return const SignUpFlow();
+    if (profile['invited_at'] == null) {
       return const JoinWarConfirmationScreen();
     }
-    final username = (profile['username'] as String?) ?? '';
-    if (username.isEmpty) return const SignUpFlow();
 
     // Gate 5a: first-mission onboarding
     final missionAsync = ref.watch(missionStatusProvider(userId));
