@@ -66,9 +66,12 @@ Future<void> main() async {
     } catch (e) {
       debugPrint('[main] seedDemoData skipped: $e');
     }
-    debugPrint('[main] isConnected=${SupabaseService.instance.isConnected} session=${SupabaseService.instance.supabase.auth.currentSession?.user.id}');
+    final sessionUserId = SupabaseService.instance.supabase.auth.currentSession?.user.id;
+    debugPrint('[main] isConnected=${SupabaseService.instance.isConnected} session=$sessionUserId');
     // Presence + CTF init deferred to MainShell (after login provides profile data).
-    await TerritoryService.instance.runDailyDecayIfDue('Valencia');
+    if (sessionUserId != null) {
+      await TerritoryService.instance.runDailyDecayIfDue('Valencia', sessionUserId);
+    }
   } catch (e) {
     runApp(_InitErrorApp(error: e.toString()));
     return;

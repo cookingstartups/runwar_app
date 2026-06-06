@@ -280,12 +280,10 @@ class TerritoryService {
   // ── Daily decay ───────────────────────────────────────────────────────────
 
   /// Call once on app open. Reads `prefs.last_decay_at` and skips if not due.
-  /// Uses 'device' as userId for device-global prefs.
-  Future<void> runDailyDecayIfDue(String city) async {
+  Future<void> runDailyDecayIfDue(String city, String userId) async {
     final ds = DatabaseService.instance;
-    const prefUserId = 'device';
 
-    final lastDecayStr = await ds.getPref(prefUserId, 'last_decay_at');
+    final lastDecayStr = await ds.getPref(userId, 'last_decay_at');
     final lastDecay =
         lastDecayStr != null ? DateTime.tryParse(lastDecayStr) : null;
     final now = DateTime.now().toUtc();
@@ -296,7 +294,7 @@ class TerritoryService {
 
     await _applyDecay(city, now);
 
-    await ds.setPref(prefUserId, 'last_decay_at', now.toIso8601String());
+    await ds.setPref(userId, 'last_decay_at', now.toIso8601String());
   }
 
   Future<void> _applyDecay(String city, DateTime now) async {
