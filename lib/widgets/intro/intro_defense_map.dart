@@ -113,7 +113,7 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4621, -0.3762),
+            center: const LatLng(39.464796, -0.3762),
             zoom: 16.0,
             onReady: _onMapReady,
           ),
