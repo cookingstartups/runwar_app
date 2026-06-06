@@ -93,16 +93,28 @@ class _IntroDefenseMapState extends State<IntroDefenseMap>
           if (mapReady)
             AnimatedBuilder(
               animation: _ctrl,
-              builder: (_, __) => CustomPaint(
-                painter: _IntroDefenseMapPainter(
-                  t: _ctrl.value,
-                  accent: widget.accent,
-                  inheritedPts: _inheritedPts,
-                  attackerRoute: _attackerRoute,
-                  disputedArea: _disputedArea,
-                ),
-                child: const SizedBox.expand(),
-              ),
+              builder: (_, __) {
+                final tailPx = () {
+                  final zoom = mapCtrl.camera.zoom;
+                  final lat = mapCtrl.camera.center.latitudeInRad;
+                  const earthCircumference = 2 * math.pi * 6378137.0;
+                  final metersPerPx =
+                      (earthCircumference * math.cos(lat)) /
+                      (256.0 * math.pow(2.0, zoom));
+                  return kCometTailMeters / metersPerPx;
+                }();
+                return CustomPaint(
+                  painter: _IntroDefenseMapPainter(
+                    t: _ctrl.value,
+                    accent: widget.accent,
+                    inheritedPts: _inheritedPts,
+                    attackerRoute: _attackerRoute,
+                    disputedArea: _disputedArea,
+                    tailLengthPx: tailPx,
+                  ),
+                  child: const SizedBox.expand(),
+                );
+              },
             ),
         ],
       ),
@@ -117,6 +129,7 @@ class _IntroDefenseMapPainter extends CustomPainter with IntroPainterHelpers {
   final List<List<Offset>> inheritedPts;
   final List<Offset> attackerRoute;
   final List<Offset> disputedArea;
+  final double tailLengthPx;
 
   _IntroDefenseMapPainter({
     required this.t,
@@ -124,6 +137,7 @@ class _IntroDefenseMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.inheritedPts,
     required this.attackerRoute,
     required this.disputedArea,
+    required this.tailLengthPx,
   });
 
   // Timeline:
@@ -181,7 +195,8 @@ class _IntroDefenseMapPainter extends CustomPainter with IntroPainterHelpers {
     final routeFade = t < 0.65 ? 1.0 : (1.0 - (t - 0.65) / 0.20).clamp(0.0, 1.0);
 
     if (routeFade > 0) {
-      drawTraceColor(canvas, attackerRoute, routeProgress, kSea.withValues(alpha: routeFade));
+      drawComet(canvas, attackerRoute, routeProgress,
+          tailLengthPx: tailLengthPx, color: kSea, decayMul: routeFade);
     }
 
     // Attacker runner dot: moves along route until lasso close, then lerps back south.
@@ -318,5 +333,6 @@ class _IntroDefenseMapPainter extends CustomPainter with IntroPainterHelpers {
       old.t != t ||
       old.attackerRoute != attackerRoute ||
       old.disputedArea != disputedArea ||
-      old.inheritedPts != inheritedPts;
+      old.inheritedPts != inheritedPts ||
+      old.tailLengthPx != tailLengthPx;
 }

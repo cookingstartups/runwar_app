@@ -101,18 +101,30 @@ class _IntroRivalsMapState extends State<IntroRivalsMap>
           if (mapReady)
             AnimatedBuilder(
               animation: _ctrl,
-              builder: (_, __) => CustomPaint(
-                painter: _IntroRivalsMapPainter(
-                  t: _ctrl.value,
-                  accent: widget.accent,
-                  inheritedPts: _inheritedPts,
-                  ownedBlock1: _ownedBlock1,
-                  ownedBlock2: _ownedBlock2,
-                  attackerRoute: _attackerRoute,
-                  partialDisputed: _partialDisputed,
-                ),
-                child: const SizedBox.expand(),
-              ),
+              builder: (_, __) {
+                final tailPx = () {
+                  final zoom = mapCtrl.camera.zoom;
+                  final lat = mapCtrl.camera.center.latitudeInRad;
+                  const earthCircumference = 2 * math.pi * 6378137.0;
+                  final metersPerPx =
+                      (earthCircumference * math.cos(lat)) /
+                      (256.0 * math.pow(2.0, zoom));
+                  return kCometTailMeters / metersPerPx;
+                }();
+                return CustomPaint(
+                  painter: _IntroRivalsMapPainter(
+                    t: _ctrl.value,
+                    accent: widget.accent,
+                    inheritedPts: _inheritedPts,
+                    ownedBlock1: _ownedBlock1,
+                    ownedBlock2: _ownedBlock2,
+                    attackerRoute: _attackerRoute,
+                    partialDisputed: _partialDisputed,
+                    tailLengthPx: tailPx,
+                  ),
+                  child: const SizedBox.expand(),
+                );
+              },
             ),
         ],
       ),
@@ -129,6 +141,7 @@ class _IntroRivalsMapPainter extends CustomPainter with IntroPainterHelpers {
   final List<Offset> ownedBlock2;
   final List<Offset> attackerRoute;
   final List<Offset> partialDisputed;
+  final double tailLengthPx;
 
   _IntroRivalsMapPainter({
     required this.t,
@@ -138,6 +151,7 @@ class _IntroRivalsMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.ownedBlock2,
     required this.attackerRoute,
     required this.partialDisputed,
+    required this.tailLengthPx,
   });
 
   // Phase boundaries
@@ -199,7 +213,8 @@ class _IntroRivalsMapPainter extends CustomPainter with IntroPainterHelpers {
     // 2. Attacker trace + runner dot (t=0.0–0.45).
     if (t < _attackerEndT && attackerRoute.isNotEmpty) {
       final routeProgress = (t / _attackerEndT).clamp(0.0, 1.0);
-      drawTraceColor(canvas, attackerRoute, routeProgress, kSea);
+      drawComet(canvas, attackerRoute, routeProgress,
+          tailLengthPx: tailLengthPx, color: kSea, decayMul: 1.0);
       // Runner dot
       final segs = attackerRoute.length - 1;
       final totalLen = routeProgress * segs;
@@ -332,5 +347,6 @@ class _IntroRivalsMapPainter extends CustomPainter with IntroPainterHelpers {
       old.ownedBlock2 != ownedBlock2 ||
       old.attackerRoute != attackerRoute ||
       old.partialDisputed != partialDisputed ||
-      old.inheritedPts != inheritedPts;
+      old.inheritedPts != inheritedPts ||
+      old.tailLengthPx != tailLengthPx;
 }
