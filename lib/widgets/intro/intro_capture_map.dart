@@ -129,7 +129,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4632, -0.3773),
+            center: const LatLng(39.4659, -0.3738),
             zoom: 16.0,
             onReady: _updatePoints,
           ),
