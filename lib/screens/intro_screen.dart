@@ -1,23 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme.dart';
+import '../providers/showcase_provider.dart';
 import '../widgets/intro_map_animations.dart';
 import '../widgets/pulse_ring.dart';
 import '../widgets/tag_chip.dart';
-
-const _kShowcaseKey = 'showcase_seen';
-
-Future<void> markShowcaseSeen() async {
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setBool(_kShowcaseKey, true);
-}
-
-Future<bool> isShowcaseSeen() async {
-  final prefs = await SharedPreferences.getInstance();
-  return prefs.getBool(_kShowcaseKey) ?? false;
-}
 
 // ---------------------------------------------------------------------------
 // Animation type per slide
@@ -206,14 +196,14 @@ LinearGradient _splitBleedGradient({required bool visualOnTop}) {
 // ---------------------------------------------------------------------------
 // IntroScreen
 // ---------------------------------------------------------------------------
-class IntroScreen extends StatefulWidget {
+class IntroScreen extends ConsumerStatefulWidget {
   const IntroScreen({super.key});
 
   @override
-  State<IntroScreen> createState() => _IntroScreenState();
+  ConsumerState<IntroScreen> createState() => _IntroScreenState();
 }
 
-class _IntroScreenState extends State<IntroScreen>
+class _IntroScreenState extends ConsumerState<IntroScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
   int _page = 0;
@@ -244,7 +234,7 @@ class _IntroScreenState extends State<IntroScreen>
   Future<void> _done() async {
     await markShowcaseSeen();
     if (!mounted) return;
-    Navigator.pushReplacementNamed(context, '/login');
+    ref.invalidate(showcaseSeenProvider);
   }
 
   void _navigate(int delta, {Axis axis = Axis.vertical}) {
@@ -379,7 +369,7 @@ class _IntroScreenState extends State<IntroScreen>
                     // Long-press resets showcase_seen without wiping SQLite data.
                     onLongPress: () async {
                       final prefs = await SharedPreferences.getInstance();
-                      await prefs.remove(_kShowcaseKey);
+                      await prefs.remove('showcase_seen');
                     },
                     onPressed: _page < _slides.length - 1 ? _done : null,
                     child: Text('SKIP', style: monoStyle(size: 10, color: kFgFaint)),
