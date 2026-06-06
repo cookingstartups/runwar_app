@@ -696,12 +696,22 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
     LatLng(39.460439999999998, -0.375966000000000),   // F — kS1Block2 vertex (inside lasso)
   ];
 
+  // Vertices of _kDisputedArea that lie on the defender's block boundary.
+  // Ping rings fire here (not across the full disputed polygon) to highlight
+  // only the territory being transferred from defender to attacker.
+  static const _kSharedTransferVertices = [
+    LatLng(39.461568, -0.375167), // E — kS1Block2 vertex inside attacker lasso
+    LatLng(39.460440, -0.375966), // F — kS1Block2 vertex inside attacker lasso
+    LatLng(39.461050, -0.376394), // G — shared kS1Block2/kS1Block3 vertex
+  ];
+
   List<List<Offset>> _inheritedPts = [];
   List<Offset> _ownedBlock1 = [];
   List<Offset> _ownedBlock2 = [];
   List<Offset> _attackerRoute = [];
   List<Offset> _attackerLasso = [];
   List<Offset> _disputedArea = [];
+  List<Offset> _sharedTransferVertices = [];
 
   @override
   void initState() {
@@ -738,6 +748,8 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
       _attackerRoute = _kAttackerRoute.map(toScreen).toList();
       _attackerLasso = _kAttackerLasso.map(toScreen).toList();
       _disputedArea = _kDisputedArea.map(toScreen).toList();
+      _sharedTransferVertices =
+          _kSharedTransferVertices.map(toScreen).toList();
     });
   }
 
@@ -767,6 +779,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
                   attackerRoute: _attackerRoute,
                   attackerLasso: _attackerLasso,
                   disputedArea: _disputedArea,
+                  sharedTransferVertices: _sharedTransferVertices,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -787,6 +800,7 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
   final List<Offset> attackerRoute;
   final List<Offset> attackerLasso;
   final List<Offset> disputedArea;
+  final List<Offset> sharedTransferVertices;
 
   _IntroCaptureMapPainter({
     required this.t,
@@ -797,6 +811,7 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
     required this.attackerRoute,
     required this.attackerLasso,
     required this.disputedArea,
+    required this.sharedTransferVertices,
   });
 
   // Timeline (route has 5 segments; close is at traveled == _kLassoCloseSegIdx == 4):
@@ -895,8 +910,44 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
     final lassoIsClosed = traveled >= _kLassoCloseSegIdx;
     final fade = _globalFade(t);
 
-    // 0. Inherited blocks from slide 1 — pre-filled, no animation.
-    drawInheritedBlocks(canvas, inheritedPts);
+    // Dispute detection — computed early so inherited blocks can subtract
+    // the disputed area once the attacker has claimed it (t >= _kUnifyT).
+    // A "genuine" dispute requires the clipped polygon to have ≥3 vertices
+    // and a non-zero screen-space area. Touching at a single vertex or
+    // along an edge yields a degenerate polygon (area ≈ 0) and is NOT a
+    // dispute — the attacker simply claims their full lasso area in kSea.
+    final hasGenuineDispute = disputedArea.length >= 3 &&
+        _polygonArea(disputedArea) > 1.0; // > 1 px² in screen space
+
+    // 0. Inherited blocks from slide 1 — pre-filled, no animation. After the
+    //    dispute resolves (t >= _kUnifyT) we cut the disputed polygon out of
+    //    the defender's combined territory so the orange visibly shrinks to
+    //    match the attacker's gain.
+    if (lassoIsClosed && t >= _kUnifyT && hasGenuineDispute &&
+        inheritedPts.isNotEmpty) {
+      Path inheritedUnion = _makePoly(inheritedPts.first);
+      for (int i = 1; i < inheritedPts.length; i++) {
+        inheritedUnion = Path.combine(
+          PathOperation.union,
+          inheritedUnion,
+          _makePoly(inheritedPts[i]),
+        );
+      }
+      final disputedCut = _makePoly(disputedArea);
+      final shrunk = Path.combine(
+        PathOperation.difference,
+        inheritedUnion,
+        disputedCut,
+      );
+      canvas.drawPath(
+        shrunk,
+        Paint()
+          ..color = kAccent.withValues(alpha: 0.28 * fade)
+          ..style = PaintingStyle.fill,
+      );
+    } else {
+      drawInheritedBlocks(canvas, inheritedPts);
+    }
 
     // 1. Static orange owned territory fills for this slide — always visible.
     drawFillColor(canvas, ownedBlock1, kAccent, 0.22 * fade);
@@ -952,14 +1003,6 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
         }
       }
     }
-
-    // ── Dispute detection ────────────────────────────────────────────────
-    // A "genuine" dispute requires the clipped polygon to have ≥3 vertices
-    // and a non-zero screen-space area. Touching at a single vertex or
-    // along an edge yields a degenerate polygon (area ≈ 0) and is NOT a
-    // dispute — the attacker simply claims their full lasso area in kSea.
-    final hasGenuineDispute = disputedArea.length >= 3 &&
-        _polygonArea(disputedArea) > 1.0; // > 1 px² in screen space
 
     // Build screen-space paths for the lasso and the disputed clip. The
     // attacker-only path = lasso \ disputed (set difference); if there is
@@ -1057,10 +1100,12 @@ class _IntroCaptureMapPainter extends CustomPainter with _IntroPainterHelpers {
     }
 
     // Ping burst when lasso closes — only on a genuine dispute (no flash
-    // on a clean attacker claim).
+    // on a clean attacker claim). Fires only on the shared-edge vertices
+    // (E, F, G) where defender territory transfers to attacker, not across
+    // the full disputed polygon boundary.
     final pingT = traveled - _kLassoCloseSegIdx;
     if (pingT > 0 && pingT < 1.5 && hasGenuineDispute) {
-      drawPings(canvas, disputedArea, (pingT / 1.5).clamp(0.0, 1.0));
+      drawPings(canvas, sharedTransferVertices, (pingT / 1.5).clamp(0.0, 1.0));
     }
 
     // 4. Centroid of disputed area — used for labels. Only meaningful when
