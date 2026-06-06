@@ -22,7 +22,7 @@ Future<bool> isShowcaseSeen() async {
 // ---------------------------------------------------------------------------
 // Animation type per slide
 // ---------------------------------------------------------------------------
-enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, physicalEvents, none }
+enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, defenseB, physicalEvents, none }
 
 // ---------------------------------------------------------------------------
 // Layout modes
@@ -95,6 +95,15 @@ const _slides = [
     anim: _Anim.defense,
     layout: _Layout.textTopVisualBottom,
   ),
+  // 4b — Superpowers (Variant B)
+  _Slide(
+    tag: 'SHIELD · VARIANT B',
+    tagColor: kSea,
+    headline: 'HUD CONFIRMS.\nHEX RINGS HOLD.',
+    body: 'The superpower activates with a HUD notification. Hex rings radiate across the territory. The shield glows as long as it holds.',
+    anim: _Anim.defenseB,
+    layout: _Layout.textTopVisualBottom,
+  ),
   // 5 — Loot drops
   _Slide(
     tag: 'LOOT DROPS',
@@ -165,6 +174,7 @@ Widget _buildAnimWidget(_Anim anim, Color accent) => switch (anim) {
       _Anim.ctfDrop        => IntroFlagDropMap(accent: accent),
       _Anim.fortify        => IntroFortifyMap(accent: accent),
       _Anim.defense        => IntroDefenseMap(accent: accent),
+      _Anim.defenseB       => IntroDefenseMapB(accent: accent),
       _Anim.physicalEvents => IntroPhysicalEventsMap(accent: accent),
       _Anim.none           => const SizedBox.shrink(),
     };
