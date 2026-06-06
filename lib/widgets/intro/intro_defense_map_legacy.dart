@@ -101,7 +101,7 @@ class _IntroDefenseMapState extends State<IntroDefenseMap>
                   final metersPerPx =
                       (earthCircumference * math.cos(lat)) /
                       (256.0 * math.pow(2.0, zoom));
-                  return kCometTailMeters / metersPerPx;
+                  return (_ctrl.value * kIntroRouteEstimatedMeters).clamp(0.0, kCometTailMaxMeters) / metersPerPx;
                 }();
                 return CustomPaint(
                   painter: _IntroDefenseMapPainter(

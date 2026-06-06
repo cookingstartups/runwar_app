@@ -133,7 +133,7 @@ class _IntroPulseMapState extends State<IntroPulseMap>
                 final mpp =
                     (2 * math.pi * earthR * math.cos(latRad)) /
                     (256 * math.pow(2, cam.zoom));
-                final tailPx = kCometTailMeters / mpp;
+                final tailPx = (_ctrl.value * kIntroRouteEstimatedMeters).clamp(0.0, kCometTailMaxMeters) / mpp;
                 return CustomPaint(
                   painter: _IntroPulseMapPainter(
                     t: _ctrl.value,

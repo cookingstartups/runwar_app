@@ -28,7 +28,9 @@ const double kEUSharedVertexEpsPx = 1.5;
 const Color kRunnerCPink = Color(0xFFFF3B7A);
 
 // ── Comet tail constants ──────────────────────────────────────────────────────
-const double kCometTailMeters = 100.0;
+const double kCometTailTimeWindowSec = 600.0;
+const double kCometTailMaxMeters = 1500.0;
+const double kIntroRouteEstimatedMeters = 500.0;
 const int kCometBandCount = 16;
 
 // ── Loop helper ───────────────────────────────────────────────────────────────
@@ -193,8 +195,9 @@ mixin IntroPainterHelpers {
   /// [pts] up to [routeT], with a linear alpha gradient — 0 at the tail end
   /// rising to [headAlpha]*[decayMul] at the runner's current position.
   ///
-  /// [tailLengthPx] — screen pixels for kCometTailMeters at current zoom.
-  ///   Caller computes: kCometTailMeters / mapCtrl.camera.metersPerPixel.
+  /// [tailLengthPx] — screen pixels of the visible tail at current zoom.
+  ///   Intro proxy: (_ctrl.value * kIntroRouteEstimatedMeters).clamp(0, kCometTailMaxMeters) / metersPerPixel.
+  ///   Production: gpsDistanceLast10MinMeters / metersPerPixel.
   /// [decayMul] — 0..1 envelope for idle-decay (1.0 = runner active).
   void drawComet(
     Canvas canvas,

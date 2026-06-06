@@ -156,14 +156,14 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
             AnimatedBuilder(
               animation: _ctrl,
               builder: (_, __) {
-                double tailPx = 200.0;
+                double tailPx = 0.0;
                 if (mapReady) {
                   final zoom = mapCtrl.camera.zoom;
                   final lat = mapCtrl.camera.center.latitudeInRad;
                   const earthCircumference = 2 * math.pi * 6378137.0;
                   final metersPerPx = (earthCircumference * math.cos(lat)) /
                       (256.0 * math.pow(2.0, zoom));
-                  tailPx = kCometTailMeters / metersPerPx;
+                  tailPx = (_ctrl.value * kIntroRouteEstimatedMeters).clamp(0.0, kCometTailMaxMeters) / metersPerPx;
                 }
                 return CustomPaint(
                   painter: _IntroCaptureMapPainter(
