@@ -86,30 +86,49 @@ Widget buildIntroMap({
   required VoidCallback onReady,
   double? maxZoom,
 }) =>
-    FlutterMap(
-      mapController: mapController,
-      options: MapOptions(
-        initialCenter: center,
-        initialZoom: zoom,
-        interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
-        onMapReady: onReady,
-      ),
-      children: [
-        if (maxZoom != null)
-          TileLayer(
-            urlTemplate:
-                'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
-            subdomains: const ['a', 'b', 'c', 'd'],
-            maxZoom: maxZoom,
-            retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
-            userAgentPackageName: 'app.runwar.runwar_app',
-            keepBuffer: 4,
-            panBuffer: 2,
-            tileDisplay: const TileDisplay.instantaneous(),
-          )
-        else
-          cartoDbDarkNoLabels(context),
-      ],
+    LayoutBuilder(
+      builder: (ctx, constraints) {
+        // Guard against degenerate constraints (e.g. in widget tests or during
+        // early layout). FlutterMap throws Infinity/NaN toInt or isFinite
+        // assertions when constraints or MediaQuery size are not ready.
+        final mqs = MediaQuery.maybeSizeOf(ctx);
+        if (constraints.maxWidth <= 0 ||
+            constraints.maxHeight <= 0 ||
+            !constraints.maxWidth.isFinite ||
+            !constraints.maxHeight.isFinite ||
+            mqs == null ||
+            mqs == Size.zero ||
+            !mqs.width.isFinite ||
+            !mqs.height.isFinite) {
+          return const SizedBox.expand();
+        }
+        return FlutterMap(
+          mapController: mapController,
+          options: MapOptions(
+            initialCenter: center,
+            initialZoom: zoom,
+            interactionOptions:
+                const InteractionOptions(flags: InteractiveFlag.none),
+            onMapReady: onReady,
+          ),
+          children: [
+            if (maxZoom != null)
+              TileLayer(
+                urlTemplate:
+                    'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
+                subdomains: const ['a', 'b', 'c', 'd'],
+                maxZoom: maxZoom,
+                retinaMode: MediaQuery.of(ctx).devicePixelRatio > 1.5,
+                userAgentPackageName: 'app.runwar.runwar_app',
+                keepBuffer: 4,
+                panBuffer: 2,
+                tileDisplay: const TileDisplay.instantaneous(),
+              )
+            else
+              cartoDbDarkNoLabels(ctx),
+          ],
+        );
+      },
     );
 
 mixin IntroPainterHelpers {
