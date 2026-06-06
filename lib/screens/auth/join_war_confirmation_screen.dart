@@ -42,7 +42,7 @@ class JoinWarConfirmationScreen extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Hero block
-                  const MilestoneProgressBar(currentStep: 2, labels: ['PHONE', 'TERRITORY', 'WAITLIST']),
+                  const MilestoneProgressBar(currentStep: 2),
                   const SizedBox(height: 14),
                   ShaderMask(
                     shaderCallback: (b) => const LinearGradient(
