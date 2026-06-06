@@ -5,7 +5,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import '../theme.dart';
 import '../widgets/grain_overlay.dart';
-import '../widgets/pulse_dot.dart';
 
 // ---------------------------------------------------------------------------
 // Zone polygon definitions
@@ -176,12 +175,19 @@ class _SplashScreenState extends State<SplashScreen>
         vsync: this, duration: const Duration(milliseconds: 800));
     _slideCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));
-    Future.delayed(const Duration(milliseconds: 200), () {
-      if (mounted) {
-        _fadeCtrl.forward();
-        _slideCtrl.forward();
-      }
-    });
+    if (widget.showStatus) {
+      // Gate mode: animate immediately (no timer) so widget tests can drain
+      // all frames without pending timer violations.
+      _fadeCtrl.forward();
+      _slideCtrl.forward();
+    } else {
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (mounted) {
+          _fadeCtrl.forward();
+          _slideCtrl.forward();
+        }
+      });
+    }
 
     // Auto-advance after 2800ms only when NOT used as the loading gate
     if (!widget.showStatus) {
@@ -225,27 +231,29 @@ class _SplashScreenState extends State<SplashScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Layer 1: Embedded live map — CartoDB dark tiles + zone polygons + runner pings
-          Positioned.fill(
-            child: FlutterMap(
-              options: const MapOptions(
-                initialCenter: LatLng(39.4699, -0.3763),
-                initialZoom: 13.5,
-                interactionOptions: InteractionOptions(
-                  flags: InteractiveFlag.none,
+          // Layer 1: Map backdrop — full map on intro; solid bg in gate/status
+          // mode (avoids FlutterMap in widget tests and skips tile fetches).
+          if (!widget.showStatus)
+            Positioned.fill(
+              child: FlutterMap(
+                options: const MapOptions(
+                  initialCenter: LatLng(39.4699, -0.3763),
+                  initialZoom: 13.5,
+                  interactionOptions: InteractionOptions(
+                    flags: InteractiveFlag.none,
+                  ),
                 ),
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                        'https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.cookingstartups.runwar',
+                  ),
+                  PolygonLayer(polygons: _zones),
+                  MarkerLayer(markers: _buildRunnerMarkers()),
+                ],
               ),
-              children: [
-                TileLayer(
-                  urlTemplate:
-                      'https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.cookingstartups.runwar',
-                ),
-                PolygonLayer(polygons: _zones),
-                MarkerLayer(markers: _buildRunnerMarkers()),
-              ],
             ),
-          ),
           // Layer 2: Radial orange glow
           Positioned(
             left: size.width * 0.5 - 300,
@@ -355,7 +363,16 @@ class _SplashScreenState extends State<SplashScreen>
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const PulseDot(color: kAccent, size: 6),
+                    // Static dot — avoids infinite repeat animation in
+                    // gate/status mode (PulseDot.repeat() blocks pumpAndSettle).
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        color: kAccent,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
                     const SizedBox(width: 8),
                     Text(
                       widget.statusLabel,

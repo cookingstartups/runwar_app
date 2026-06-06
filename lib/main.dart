@@ -8,6 +8,7 @@ import 'theme.dart';
 import 'services/database_service.dart';
 import 'services/supabase_service.dart';
 import 'services/territory_service.dart';
+import 'services/error_log_service.dart';
 import 'providers/auth_provider.dart';
 import 'services/auth_service.dart';
 import 'providers/profile_provider.dart';
@@ -120,14 +121,27 @@ class RunWarApp extends StatelessWidget {
 }
 
 /// Route guard — watches auth + profile state reactively.
-/// Screens rendered here must use ref.listen (not if(mounted)) for snackbars —
-/// isLoading=true replaces the screen, making the old instance's mounted flag false.
+///
+/// Boot sequence:
+///   Phase A (unconditional): authProvider, showcaseSeenProvider
+///   Phase B (when userId != null): hasPhoneProvider, joinedCitySlugsProvider,
+///     profileGateProvider, missionStatusProvider, trialStatusProvider
+///
+/// All applicable providers are watched in parallel within the same build()
+/// call so their async fetches initiate concurrently.
+///
+/// A single SplashScreen(showStatus: true, statusLabel: 'SYNCING TERRITORY')
+/// is held until ALL applicable providers have resolved. Once _bootComplete is
+/// set to true, the splash never re-appears even on mid-session invalidation.
+///
 /// Gate order:
 ///   user == null          → LoginScreen / IntroScreen
 ///   no phone linked       → PhoneLinkScreen
 ///   no cities joined      → CitiesSelectionScreen
 ///   username == ''        → SignUpFlow
 ///   invited_at == null    → JoinWarConfirmationScreen (waitlisted)
+///   mission 1 pending     → FirstMissionBriefingScreen
+///   mission 2 pending     → FirstAttackBriefingScreen
 ///   trial expired         → PaywallScreen
 ///   otherwise             → MainShell
 class _RouteGuard extends ConsumerStatefulWidget {
@@ -139,6 +153,19 @@ class _RouteGuard extends ConsumerStatefulWidget {
 
 class _RouteGuardState extends ConsumerState<_RouteGuard>
     with WidgetsBindingObserver {
+  // Set to true on the first frame all applicable providers have resolved.
+  // Never reset — prevents splash re-appearing on mid-session invalidation.
+  bool _bootComplete = false;
+
+  // Retry state keyed by provider machine name.
+  final Map<String, int> _retryCount = {};
+  final Map<String, DateTime> _firstFailureAt = {};
+  final Map<String, Object> _lastError = {};
+  final Map<String, StackTrace> _lastStackTrace = {};
+
+  // Tracks which provider's overlay is currently visible (first-failure wins).
+  String? _activeOverlayProvider;
+
   @override
   void initState() {
     super.initState();
@@ -172,45 +199,164 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
     }
   }
 
+  // ── Retry / lockout helpers ──────────────────────────────────────────────
+
+  bool _isLocked(String providerName) {
+    final count = _retryCount[providerName] ?? 0;
+    final first = _firstFailureAt[providerName];
+    if (count < 3 || first == null) return false;
+    return DateTime.now().difference(first) <
+        const Duration(seconds: 60);
+  }
+
+  void _recordError(
+    String providerName,
+    Object error,
+    StackTrace stackTrace,
+    String? userId,
+  ) {
+    _lastError[providerName] = error;
+    _lastStackTrace[providerName] = stackTrace;
+
+    if (_activeOverlayProvider == null) {
+      // First failure — show this one.
+      _activeOverlayProvider = providerName;
+      ErrorLogService.logClientError(
+        provider: providerName,
+        error: error,
+        stackTrace: stackTrace,
+        retryCount: _retryCount[providerName] ?? 0,
+        userId: userId,
+      );
+    } else if (_activeOverlayProvider != providerName) {
+      // Subsequent failure from a different provider — log silently only.
+      ErrorLogService.logClientError(
+        provider: providerName,
+        error: error,
+        stackTrace: stackTrace,
+        retryCount: _retryCount[providerName] ?? 0,
+        userId: userId,
+      );
+    }
+  }
+
+  void _onRetry(String providerName, void Function() invalidateFn) {
+    if (_isLocked(providerName)) return;
+    _retryCount[providerName] = (_retryCount[providerName] ?? 0) + 1;
+    _firstFailureAt.putIfAbsent(providerName, () => DateTime.now());
+    // Clear active overlay so a fresh error on re-fetch can re-set it.
+    _activeOverlayProvider = null;
+    // Invalidate first so the provider's new state is visible in the build
+    // triggered by setState below.
+    invalidateFn();
+    // Force a rebuild to pick up the updated retry count even when the
+    // provider re-emits an identical const state (Riverpod skips notification
+    // for unchanged state — e.g. const AuthState(error: '...')).
+    setState(() {});
+
+    // Log the retry attempt.
+    if (_lastError.containsKey(providerName)) {
+      ErrorLogService.logClientError(
+        provider: providerName,
+        error: _lastError[providerName]!,
+        stackTrace: _lastStackTrace[providerName]!,
+        retryCount: _retryCount[providerName]!,
+        userId: ref.read(authProvider).user?['id'] as String?,
+      );
+    }
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
+    // ── Phase A: unconditional providers ──────────────────────────────────
     final authState = ref.watch(authProvider);
+    final showcaseAsync = ref.watch(showcaseSeenProvider);
 
-    if (authState.isLoading) return const _GateLoading();
+    // Extract userId without await — null when auth is loading or unauthenticated.
+    final userId = authState.user?['id'] as String?;
 
-    if (authState.user == null) {
-      final showcaseSeen = ref.watch(showcaseSeenProvider);
-      return showcaseSeen.when(
-        loading: () => const _GateLoading(),
-        error: (_, __) => const LoginScreen(),
-        data: (seen) => seen ? const LoginScreen() : const IntroScreen(),
+    // ── Phase B: userId-scoped providers (only when userId is known) ───────
+    final hasPhoneAsync = userId != null
+        ? ref.watch(hasPhoneProvider(userId))
+        : null;
+    final joinedAsync = userId != null
+        ? ref.watch(joinedCitySlugsProvider(userId))
+        : null;
+    final profileAsync = userId != null
+        ? ref.watch(profileGateProvider(userId))
+        : null;
+    final missionAsync = userId != null
+        ? ref.watch(missionStatusProvider(userId))
+        : null;
+    final trialAsync = userId != null
+        ? ref.watch(trialStatusProvider(userId))
+        : null;
+
+    // ── Aggregate loading state ───────────────────────────────────────────
+    final authLoading = authState.isLoading;
+    final anyLoading = authLoading ||
+        showcaseAsync.isLoading ||
+        (userId != null &&
+            (hasPhoneAsync!.isLoading ||
+                joinedAsync!.isLoading ||
+                profileAsync!.isLoading ||
+                missionAsync!.isLoading ||
+                trialAsync!.isLoading));
+
+    // ── Error detection — collect the first error during boot ─────────────
+    if (!_bootComplete) {
+      _detectErrors(
+        authState: authState,
+        showcaseAsync: showcaseAsync,
+        userId: userId,
+        hasPhoneAsync: hasPhoneAsync,
+        joinedAsync: joinedAsync,
+        profileAsync: profileAsync,
+        missionAsync: missionAsync,
+        trialAsync: trialAsync,
       );
     }
 
-    final userId = authState.user!['id'] as String;
+    final anyError = !_bootComplete && _activeOverlayProvider != null;
+
+    // ── Boot-complete flag: set on first full resolution ──────────────────
+    if (!anyLoading && !anyError && !_bootComplete) {
+      _bootComplete = true;
+    }
+
+    // ── Splash guard ──────────────────────────────────────────────────────
+    // Hold splash while booting AND any provider is still loading or errored.
+    // Once _bootComplete is true, this block is never entered again.
+    if (!_bootComplete && (anyLoading || anyError)) {
+      const splash = SplashScreen(
+          showStatus: true, statusLabel: 'SYNCING TERRITORY');
+
+      if (anyError && _activeOverlayProvider != null) {
+        return _buildSplashWithOverlay(splash, userId);
+      }
+      return splash;
+    }
+
+    // ── Gate routing order ────────────────────────────────────────────────
+
+    // Gate 0: auth
+    if (authState.user == null) {
+      final seen = showcaseAsync.valueOrNull ?? false;
+      return seen ? const LoginScreen() : const IntroScreen();
+    }
+
+    final uid = authState.user!['id'] as String;
 
     // Gate 1: phone linked?
-    final hasPhoneAsync = ref.watch(hasPhoneProvider(userId));
-    if (hasPhoneAsync.isLoading) return const _GateLoading();
-    if (!(hasPhoneAsync.value ?? true)) return const PhoneLinkScreen();
+    if (!(hasPhoneAsync?.value ?? true)) return const PhoneLinkScreen();
 
     // Gate 2: any cities joined?
-    final joinedAsync = ref.watch(joinedCitySlugsProvider(userId));
-    if (joinedAsync.isLoading) return const _GateLoading();
-    if ((joinedAsync.value ?? []).isEmpty) return const CitiesSelectionScreen();
+    if ((joinedAsync?.value ?? []).isEmpty) return const CitiesSelectionScreen();
 
     // Gate 3: profile + invited_at + username
-    final profileAsync = ref.watch(profileGateProvider(userId));
-    if (profileAsync.isLoading) {
-      return const SplashScreen(
-          showStatus: true, statusLabel: 'SYNCING TERRITORY');
-    }
-    if (profileAsync.hasError) {
-      return Scaffold(
-          body: Center(
-              child: Text('Error loading profile: ${profileAsync.error}')));
-    }
-    final profile = profileAsync.value;
+    final profile = profileAsync?.value;
     final username = (profile?['username'] as String?) ?? '';
     if (profile == null || username.isEmpty) return const SignUpFlow();
     if (profile['invited_at'] == null) {
@@ -218,9 +364,7 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
     }
 
     // Gate 5a: first-mission onboarding
-    final missionAsync = ref.watch(missionStatusProvider(userId));
-    if (missionAsync.isLoading) return const _GateLoading();
-    final mission = missionAsync.value;
+    final mission = missionAsync?.value;
     if (mission != null && mission.needsMission1) {
       return const FirstMissionBriefingScreen();
     }
@@ -229,35 +373,239 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
     }
 
     // Gate 4: trial expired?
-    final trialAsync = ref.watch(trialStatusProvider(userId));
-    if (trialAsync.isLoading) return const _GateLoading();
-    final trial = trialAsync.value;
+    final trial = trialAsync?.value;
     if (trial != null && trial.isExpired) {
       return PaywallScreen(streak: trial.streak);
     }
 
-    return RecoveryGate(userId: userId, child: const MainShell());
+    return RecoveryGate(userId: uid, child: const MainShell());
+  }
+
+  // ── Error detection helper ───────────────────────────────────────────────
+
+  void _detectErrors({
+    required AuthState authState,
+    required AsyncValue<bool> showcaseAsync,
+    required String? userId,
+    required AsyncValue<bool>? hasPhoneAsync,
+    required AsyncValue<List<String>>? joinedAsync,
+    required AsyncValue<Map<String, dynamic>?>? profileAsync,
+    required AsyncValue<MissionStatus?>? missionAsync,
+    required AsyncValue<TrialStatus>? trialAsync,
+  }) {
+    final currentUserId = userId;
+
+    // authProvider error (AuthState.error is a String, not AsyncValue).
+    if (authState.error != null) {
+      _recordError(
+        'authProvider',
+        Exception(authState.error),
+        StackTrace.empty,
+        currentUserId,
+      );
+    }
+
+    // showcaseSeenProvider error.
+    if (showcaseAsync.hasError) {
+      _recordError(
+        'showcaseSeenProvider',
+        showcaseAsync.error!,
+        showcaseAsync.stackTrace ?? StackTrace.empty,
+        currentUserId,
+      );
+    }
+
+    if (userId == null) return;
+
+    if (hasPhoneAsync != null && hasPhoneAsync.hasError) {
+      _recordError(
+        'hasPhoneProvider',
+        hasPhoneAsync.error!,
+        hasPhoneAsync.stackTrace ?? StackTrace.empty,
+        currentUserId,
+      );
+    }
+
+    if (joinedAsync != null && joinedAsync.hasError) {
+      _recordError(
+        'joinedCitySlugsProvider',
+        joinedAsync.error!,
+        joinedAsync.stackTrace ?? StackTrace.empty,
+        currentUserId,
+      );
+    }
+
+    if (profileAsync != null && profileAsync.hasError) {
+      _recordError(
+        'profileGateProvider',
+        profileAsync.error!,
+        profileAsync.stackTrace ?? StackTrace.empty,
+        currentUserId,
+      );
+    }
+
+    if (missionAsync != null && missionAsync.hasError) {
+      _recordError(
+        'missionStatusProvider',
+        missionAsync.error!,
+        missionAsync.stackTrace ?? StackTrace.empty,
+        currentUserId,
+      );
+    }
+
+    if (trialAsync != null && trialAsync.hasError) {
+      _recordError(
+        'trialStatusProvider',
+        trialAsync.error!,
+        trialAsync.stackTrace ?? StackTrace.empty,
+        currentUserId,
+      );
+    }
+  }
+
+  // ── Overlay builder ──────────────────────────────────────────────────────
+
+  Widget _buildSplashWithOverlay(Widget splash, String? userId) {
+    final providerName = _activeOverlayProvider!;
+    final locked = _isLocked(providerName);
+
+    // Build display label from machine name.
+    final label = _providerLabel(providerName);
+
+    final errorObj = _lastError[providerName] ?? Exception('unknown error');
+    final rawMsg = errorObj.toString();
+    final message = rawMsg.length > 120 ? rawMsg.substring(0, 120) : rawMsg;
+
+    return Stack(
+      children: [
+        splash,
+        _ErrorOverlay(
+          label: label,
+          message: message,
+          isLocked: locked,
+          onRetry: locked
+              ? null
+              : () => _onRetry(
+                    providerName,
+                    () => _invalidateProvider(providerName, userId),
+                  ),
+        ),
+      ],
+    );
+  }
+
+  void _invalidateProvider(String providerName, String? userId) {
+    switch (providerName) {
+      case 'authProvider':
+        ref.invalidate(authProvider);
+      case 'showcaseSeenProvider':
+        ref.invalidate(showcaseSeenProvider);
+      case 'hasPhoneProvider':
+        if (userId != null) ref.invalidate(hasPhoneProvider(userId));
+      case 'joinedCitySlugsProvider':
+        if (userId != null) ref.invalidate(joinedCitySlugsProvider(userId));
+      case 'profileGateProvider':
+        if (userId != null) ref.invalidate(profileGateProvider(userId));
+      case 'missionStatusProvider':
+        if (userId != null) ref.invalidate(missionStatusProvider(userId));
+      case 'trialStatusProvider':
+        if (userId != null) ref.invalidate(trialStatusProvider(userId));
+    }
+  }
+
+  static String _providerLabel(String providerName) {
+    switch (providerName) {
+      case 'authProvider':
+        return 'AUTH FAILED';
+      case 'showcaseSeenProvider':
+        return 'SHOWCASE SEEN FAILED';
+      case 'hasPhoneProvider':
+        return 'PHONE CHECK FAILED';
+      case 'joinedCitySlugsProvider':
+        return 'CITIES FAILED';
+      case 'profileGateProvider':
+        return 'PROFILE FAILED';
+      case 'missionStatusProvider':
+        return 'MISSION STATUS FAILED';
+      case 'trialStatusProvider':
+        return 'TRIAL STATUS FAILED';
+      default:
+        return '${providerName.toUpperCase()} FAILED';
+    }
   }
 }
 
-/// Minimal dark loading screen shown during route gate state checks.
-/// Replaces the full SplashScreen to avoid jarring re-renders mid-auth.
-class _GateLoading extends StatelessWidget {
-  const _GateLoading();
+// ── _ErrorOverlay ────────────────────────────────────────────────────────────
+
+/// Inline three-line error overlay composed on top of SplashScreen.
+///
+/// Line 1: `<PROVIDER_LABEL> FAILED` — white, 13pt (locked: PERSISTENT ERROR)
+/// Line 2: error message truncated to 120 chars — white 60% alpha, 11pt
+/// Line 3: `TAP TO RETRY` — accent, 12pt (hidden when locked)
+class _ErrorOverlay extends StatelessWidget {
+  const _ErrorOverlay({
+    required this.label,
+    required this.message,
+    required this.isLocked,
+    required this.onRetry,
+  });
+
+  final String label;
+  final String message;
+  final bool isLocked;
+  final VoidCallback? onRetry;
+
   @override
-  Widget build(BuildContext context) => const Scaffold(
-        backgroundColor: kBg,
-        body: Center(
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              color: kAccent,
-              strokeWidth: 1.5,
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 120),
+        child: GestureDetector(
+          onTap: isLocked ? null : onRetry,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  isLocked ? 'PERSISTENT ERROR — RELAUNCH APP' : label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  message,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6),
+                    fontSize: 11,
+                  ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                ),
+                if (!isLocked) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'TAP TO RETRY',
+                    style: TextStyle(
+                      color: kAccent,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ),
-      );
+      ),
+    );
+  }
 }
 
 class _InitErrorApp extends StatelessWidget {

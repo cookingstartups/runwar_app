@@ -11,14 +11,35 @@ class SupabaseService {
 
   bool _initialized = false;
 
-  SupabaseClient get supabase => Supabase.instance.client;
+  SupabaseClient get supabase {
+    if (!_initialized) {
+      throw StateError(
+        '[SupabaseService] Supabase is not initialized. '
+        'Call SupabaseService.instance.init() before accessing supabase.',
+      );
+    }
+    return Supabase.instance.client;
+  }
 
   /// True once init + anon auth completed successfully.
-  bool get isConnected =>
-      _initialized && supabase.auth.currentSession != null;
+  bool get isConnected {
+    if (!_initialized) return false;
+    try {
+      return Supabase.instance.client.auth.currentSession != null;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// Current Supabase user ID, or null if not yet authed.
-  String? get currentUserId => supabase.auth.currentUser?.id;
+  String? get currentUserId {
+    if (!_initialized) return null;
+    try {
+      return Supabase.instance.client.auth.currentUser?.id;
+    } catch (_) {
+      return null;
+    }
+  }
 
   Future<void> init() async {
     await Supabase.initialize(

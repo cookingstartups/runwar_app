@@ -87,6 +87,10 @@ dependencies:
   # EXIF metadata extraction (GPS, datetime, device info)
   exif: ^3.3.0
 
+  # App version + device info (used by ErrorLogService for client error logging)
+  package_info_plus: ^8.0.0
+  device_info_plus: ^11.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

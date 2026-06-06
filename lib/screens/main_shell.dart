@@ -7,6 +7,7 @@ import '../providers/trust/challenge_providers.dart';
 import '../providers/daily_missions_provider.dart';
 import '../services/database/challenges_repository.dart';
 import '../services/database_service.dart';
+import '../services/supabase_service.dart';
 import '../services/realtime_presence_service.dart';
 import '../services/ctf_service.dart';
 import '../services/fcm_service.dart';
@@ -139,6 +140,7 @@ class _MainShellState extends ConsumerState<MainShell>
   }
 
   Future<void> _initServices() async {
+    if (!SupabaseService.instance.isConnected) return;
     final userId = ref.read(authProvider).user?['id'] as String?;
     if (userId == null) return;
     final profile = await DatabaseService.instance.getProfile(userId);
@@ -157,7 +159,7 @@ class _MainShellState extends ConsumerState<MainShell>
     final userId = ref.watch(authProvider).user?['id'] as String?;
 
     // P3: Challenge listener — show dialog when a new open challenge arrives.
-    if (userId != null) {
+    if (userId != null && SupabaseService.instance.isConnected) {
       ref.listen<AsyncValue<Challenge?>>(
         openChallengeProvider(userId),
         (prev, next) {
