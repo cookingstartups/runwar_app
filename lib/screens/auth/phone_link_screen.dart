@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
 import '../../config/supabase_config.dart';
+import '../../services/database/account_uniqueness_error.dart';
 import '../../theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/profile_provider.dart';
@@ -59,13 +60,14 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
       }
       ref.invalidate(hasPhoneProvider(userId));
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Failed to save phone: $e'),
-              backgroundColor: kDanger),
-        );
-      }
+      if (!mounted) return;
+      final dupMsg = accountUniquenessMessage(e);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(dupMsg ?? 'Failed to save phone: $e'),
+          backgroundColor: kDanger,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }

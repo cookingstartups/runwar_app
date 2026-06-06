@@ -28,7 +28,7 @@ class ProfileService {
     try {
       final result = await SupabaseService.instance.supabase
           .from('players')
-          .select('id, display_name, username')
+          .select('id, username')
           .eq('id', userId)
           .limit(1);
       final list = result as List<dynamic>;
@@ -36,9 +36,8 @@ class ProfileService {
       final p = list.first as Map<String, dynamic>;
       return {
         'id': p['id'],
-        'username': p['username'] ?? p['display_name'] ?? '',
+        'username': p['username'] ?? '',
         'color': _colorForId(userId),
-        'city': '',
         'score': 0,
         'invited_at': null,
         'is_tester': 0,
@@ -53,7 +52,6 @@ class ProfileService {
   Future<void> updateProfile(
     String userId, {
     String? username,
-    String? city,
     String? color,
     String? avatarUrl,
     String? bio,
@@ -61,7 +59,6 @@ class ProfileService {
   }) async {
     final patch = <String, Object?>{};
     if (username != null) patch['username'] = username;
-    if (city != null) patch['city'] = city;
     if (color != null) patch['color'] = color;
     if (avatarUrl != null) patch['avatar_url'] = avatarUrl;
     if (bio != null) patch['bio'] = bio;

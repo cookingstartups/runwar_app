@@ -26,7 +26,6 @@ class AuthService {
       await DatabaseService.instance.insertProfile(
         id,
         '',
-        '',
         '#FF7A00',
         influence: 1,
         invitedAt: null,
@@ -65,7 +64,6 @@ class AuthService {
     await DatabaseService.instance.upsertProfileIgnore(
       id,
       username,
-      'Valencia',
       '#FF7A00',
       influence: 1,
       invitedAt: null, // must redeem invitation code
