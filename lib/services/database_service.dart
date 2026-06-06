@@ -418,6 +418,14 @@ class DatabaseService {
     );
   }
 
+  Future<void> leaveCityWaitlist(String userId, String citySlug) async {
+    final client = Supabase.instance.client;
+    await client.from('city_waitlists')
+        .delete()
+        .eq('user_id', userId)
+        .eq('city_slug', citySlug);
+  }
+
   // ── Daily mission progress ──────────────────────────────────────────────────
 
   Future<List<Map<String, dynamic>>> getDailyMissions(

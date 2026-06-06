@@ -6,7 +6,6 @@ import '../../data/cities_catalog.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/cities_provider.dart';
 import '../../providers/profile_provider.dart';
-import '../../services/database/waitlist_repository.dart';
 import '../../services/database_service.dart';
 import '../../widgets/city_card.dart';
 import '../../widgets/milestone_progress_bar.dart';
@@ -137,7 +136,6 @@ class _CitiesSelectionScreenState
       if (other != null && other.isNotEmpty) {
         await DatabaseService.instance.setPref(userId, 'city_interest', other);
       }
-      await WaitlistRepository.instance.joinCities(userId, _selected.toList());
       ref.invalidate(joinedCitySlugsProvider(userId));
       ref.invalidate(citiesProvider);
       ref.invalidate(profileGateProvider(userId));
@@ -404,29 +402,34 @@ class _CitiesSelectionScreenState
           city: city,
           selected: _selected.contains(city.slug),
           onTap: () {
+            final userId = ref.read(authProvider).user?['id'] as String?;
             if (_selected.contains(city.slug)) {
               setState(() => _selected.remove(city.slug));
+              if (userId != null) {
+                DatabaseService.instance.leaveCityWaitlist(userId, city.slug);
+              }
             } else if (_selected.length >= 3) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
+              showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: kSurface,
                   content: Text(
                     'Run & conquer to unlock more cities.',
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 11,
-                      letterSpacing: 1,
-                      color: kFg,
-                    ),
+                    style: TextStyle(color: kFg, fontFamily: 'SpaceGrotesk'),
                   ),
-                  backgroundColor: kSurface,
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  duration: const Duration(seconds: 3),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text('GOT IT', style: TextStyle(color: kAccent, fontWeight: FontWeight.w700)),
+                    ),
+                  ],
                 ),
               );
             } else {
               setState(() => _selected.add(city.slug));
+              if (userId != null) {
+                DatabaseService.instance.joinCityWaitlist(userId, city.slug);
+              }
             }
           },
         );
