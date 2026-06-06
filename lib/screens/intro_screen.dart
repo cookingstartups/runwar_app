@@ -22,7 +22,7 @@ Future<bool> isShowcaseSeen() async {
 // ---------------------------------------------------------------------------
 // Animation type per slide
 // ---------------------------------------------------------------------------
-enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, physicalEvents, none }
+enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, defenseA, physicalEvents, none }
 
 // ---------------------------------------------------------------------------
 // Layout modes
@@ -95,6 +95,15 @@ const _slides = [
     anim: _Anim.defense,
     layout: _Layout.textTopVisualBottom,
   ),
+  // 4A — SHIELD variant A (Inventory Drop)
+  _Slide(
+    tag: 'SHIELD · VARIANT A',
+    tagColor: kAccent,
+    headline: 'ACTIVATE.\nDROP THE SHIELD.',
+    body: 'Earned on the streets — deployed from your couch. The inventory drop sends your shield flying to any territory you own.',
+    anim: _Anim.defenseA,
+    layout: _Layout.textTopVisualBottom,
+  ),
   // 5 — Loot drops
   _Slide(
     tag: 'LOOT DROPS',
@@ -165,6 +174,7 @@ Widget _buildAnimWidget(_Anim anim, Color accent) => switch (anim) {
       _Anim.ctfDrop        => IntroFlagDropMap(accent: accent),
       _Anim.fortify        => IntroFortifyMap(accent: accent),
       _Anim.defense        => IntroDefenseMap(accent: accent),
+      _Anim.defenseA       => IntroDefenseMapA(accent: accent),
       _Anim.physicalEvents => IntroPhysicalEventsMap(accent: accent),
       _Anim.none           => const SizedBox.shrink(),
     };
