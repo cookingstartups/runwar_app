@@ -22,7 +22,7 @@ Future<bool> isShowcaseSeen() async {
 // ---------------------------------------------------------------------------
 // Animation type per slide
 // ---------------------------------------------------------------------------
-enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, physicalEvents, none }
+enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, defenseC, physicalEvents, none }
 
 // ---------------------------------------------------------------------------
 // Layout modes
@@ -95,6 +95,15 @@ const _slides = [
     anim: _Anim.defense,
     layout: _Layout.textTopVisualBottom,
   ),
+  // 4C — SHIELD Variant C: Cinematic Flash + Shatter
+  _Slide(
+    tag: 'SHIELD · VARIANT C',
+    tagColor: kAccent,
+    headline: 'WHITE FLASH.\nATTACK SHATTERED.',
+    body: 'The shield fires with cinematic force. One flash. The attacker\'s lasso shatters outward. Territory sealed.',
+    anim: _Anim.defenseC,
+    layout: _Layout.textTopVisualBottom,
+  ),
   // 5 — Loot drops
   _Slide(
     tag: 'LOOT DROPS',
@@ -165,6 +174,7 @@ Widget _buildAnimWidget(_Anim anim, Color accent) => switch (anim) {
       _Anim.ctfDrop        => IntroFlagDropMap(accent: accent),
       _Anim.fortify        => IntroFortifyMap(accent: accent),
       _Anim.defense        => IntroDefenseMap(accent: accent),
+      _Anim.defenseC       => IntroDefenseMapC(accent: accent),
       _Anim.physicalEvents => IntroPhysicalEventsMap(accent: accent),
       _Anim.none           => const SizedBox.shrink(),
     };
