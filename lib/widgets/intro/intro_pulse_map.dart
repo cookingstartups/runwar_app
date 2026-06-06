@@ -107,17 +107,30 @@ class _IntroPulseMapState extends State<IntroPulseMap>
           if (mapReady)
             AnimatedBuilder(
               animation: _ctrl,
-              builder: (_, __) => CustomPaint(
-                painter: _IntroPulseMapPainter(
-                  t: _ctrl.value,
-                  accent: widget.accent,
-                  route: _route,
-                  block1: _block1,
-                  block2: _block2,
-                  block3: _block3,
-                ),
-                child: const SizedBox.expand(),
-              ),
+              builder: (_, __) {
+                // meters per pixel at current zoom & center latitude.
+                // Standard Web Mercator formula:
+                //   mpp = (2π · R · cos(lat)) / (256 · 2^zoom)
+                const earthR = 6378137.0;
+                final cam = mapCtrl.camera;
+                final latRad = cam.center.latitude * math.pi / 180.0;
+                final mpp =
+                    (2 * math.pi * earthR * math.cos(latRad)) /
+                    (256 * math.pow(2, cam.zoom));
+                final tailPx = kCometTailMeters / mpp;
+                return CustomPaint(
+                  painter: _IntroPulseMapPainter(
+                    t: _ctrl.value,
+                    accent: widget.accent,
+                    route: _route,
+                    block1: _block1,
+                    block2: _block2,
+                    block3: _block3,
+                    tailLengthPx: tailPx,
+                  ),
+                  child: const SizedBox.expand(),
+                );
+              },
             ),
           Positioned(
             top: 64,
@@ -184,6 +197,7 @@ class _IntroPulseMapPainter extends CustomPainter with IntroPainterHelpers {
   final List<Offset> block1;
   final List<Offset> block2;
   final List<Offset> block3;
+  final double tailLengthPx;
 
   _IntroPulseMapPainter({
     required this.t,
@@ -192,6 +206,7 @@ class _IntroPulseMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.block1,
     required this.block2,
     required this.block3,
+    required this.tailLengthPx,
   });
 
   // Segment indices where each block loop closes.
@@ -288,8 +303,18 @@ class _IntroPulseMapPainter extends CustomPainter with IntroPainterHelpers {
       );
     }
 
-    // Single trace covering all 3 blocks.
-    drawTrace(canvas, route, routeProgress);
+    // Single comet-tail trace covering all 3 blocks.
+    final decayMul = t < 0.94
+        ? 1.0
+        : (1.0 - ((t - 0.94) / 0.06)).clamp(0.0, 1.0);
+    drawComet(
+      canvas,
+      route,
+      routeProgress,
+      tailLengthPx: tailLengthPx,
+      color: accent,
+      decayMul: decayMul,
+    );
 
     // Runner dot:
     //   t < 0.82  — traces route normally
@@ -353,5 +378,6 @@ class _IntroPulseMapPainter extends CustomPainter with IntroPainterHelpers {
       old.route != route ||
       old.block1 != block1 ||
       old.block2 != block2 ||
-      old.block3 != block3;
+      old.block3 != block3 ||
+      old.tailLengthPx != tailLengthPx;
 }
