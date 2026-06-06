@@ -201,6 +201,55 @@ mixin _IntroPainterHelpers {
     }
   }
 
+  /// Draw a circular level badge at the top-left corner of a polygon.
+  /// [polygon] — screen-space vertices of the polygon.
+  /// [level] — integer level number to display (shown as numeral inside circle).
+  /// [color] — fill color of the circle (typically the owner's accent color).
+  /// [radiusScale] — 0.0→1.0 fraction; animate from 0 to full on level-up.
+  void drawLevelBadge(
+    Canvas canvas,
+    List<Offset> polygon,
+    int level,
+    Color color, {
+    double radiusScale = 1.0,
+  }) {
+    if (polygon.isEmpty || level <= 0 || radiusScale <= 0) return;
+
+    // Top-left corner = min(x) then min(y) among those.
+    Offset topLeft = polygon[0];
+    for (final pt in polygon) {
+      if (pt.dx < topLeft.dx || (pt.dx == topLeft.dx && pt.dy < topLeft.dy)) {
+        topLeft = pt;
+      }
+    }
+    final center = topLeft + const Offset(16, 16); // inset 16px from corner
+    final radius = 14.0 * radiusScale;
+
+    // Filled circle.
+    canvas.drawCircle(center, radius, Paint()..color = color);
+    // White stroke.
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.9)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+    // Level numeral — white Bebas Neue centred in circle.
+    final tp = TextPainter(
+      text: TextSpan(
+        text: '$level',
+        style: GoogleFonts.bebasNeue(
+          fontSize: 14,
+          color: Colors.white,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy - tp.height / 2));
+  }
+
   void drawRunnerAt(Canvas canvas, Offset pos, Color color) {
     canvas.drawCircle(
         pos,
@@ -2050,7 +2099,7 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
           _buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4595, -0.3756),
+            center: const LatLng(39.4595, -0.3768),
             zoom: 16.0,
             onReady: _onMapReady,
           ),
@@ -2071,26 +2120,6 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
                 child: const SizedBox.expand(),
               ),
             ),
-          Positioned(
-            top: 64,
-            right: 16,
-            child: AnimatedBuilder(
-              animation: _ctrl,
-              builder: (_, __) {
-                // Hide during approach (level 0) and exit phase (t ≥ 0.75).
-                if (_level < 1 || _ctrl.value >= _kLoopEndT) {
-                  return const SizedBox.shrink();
-                }
-                return Text(
-                  'LVL $_level',
-                  style: GoogleFonts.bebasNeue(
-                    fontSize: 28,
-                    color: kSea,
-                  ),
-                );
-              },
-            ),
-          ),
         ],
       ),
     );
@@ -2268,6 +2297,11 @@ class _IntroFortifyMapPainter extends CustomPainter with _IntroPainterHelpers {
           ..strokeWidth = haloStroke
           ..strokeJoin = StrokeJoin.round,
       );
+    }
+
+    // Level badge at top-left corner of claimed chunk.
+    if (level > 0) {
+      drawLevelBadge(canvas, claimedChunk, level, kAccent);
     }
 
     // 3. Runner dot — phase 1: approach polyline; phase 2: 4-lap loop circuit;
