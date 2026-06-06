@@ -88,6 +88,10 @@ class RunWarApp extends StatelessWidget {
       title: 'RunWar',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
+      // INVARIANT: _RouteGuard is the MaterialApp home and must never be replaced or
+      // popped via Navigator.pushReplacement* or Navigator.pop. It manages all navigation
+      // reactively by returning different widgets. To "navigate" to a new screen, change
+      // provider state (e.g. ref.invalidate(showcaseSeenProvider)) — do NOT push a named route.
       home: const _RouteGuard(),
       onGenerateRoute: (settings) {
         switch (settings.name) {
@@ -116,6 +120,8 @@ class RunWarApp extends StatelessWidget {
 }
 
 /// Route guard — watches auth + profile state reactively.
+/// Screens rendered here must use ref.listen (not if(mounted)) for snackbars —
+/// isLoading=true replaces the screen, making the old instance's mounted flag false.
 /// Gate order:
 ///   user == null          → LoginScreen / IntroScreen
 ///   no phone linked       → PhoneLinkScreen

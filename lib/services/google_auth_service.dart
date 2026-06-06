@@ -38,7 +38,10 @@ class GoogleAuthService {
       account = null;
     }
 
-    // Fall back to interactive picker.
+    // Never call signInSilently() here — Google Play Services caches the account
+    // system-wide even after clearing app data. The stale ID token is rejected by
+    // Supabase with AuthApiException(400 Bad ID token). Always use signIn() for
+    // user-triggered flows. See docs/AUTH.md.
     if (account == null) {
       try {
         account = await _googleSignIn.signIn();
