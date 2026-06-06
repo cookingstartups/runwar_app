@@ -21,72 +21,59 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  // Attacker route — blue rival (kSea) follows the same 4-waypoint loop circuit
-  // used by IntroFortifyMap (slide 3) so the attacker's traversal matches the
-  // defender's repeating fortify loop. The attacker enters from off-screen
-  // south, arrives at the top of the loop, runs one full circuit, then closes
-  // the lasso back at the loop start.
-  // pt0 → pt1: straight north (entry from off-screen south)
-  // pt1 → pt2: west (top → west of loop)
-  // pt2 → pt3: south (west → south-west of loop)
-  // pt3 → pt4: east (south-west → east of loop)
-  // pt4 → pt5: lasso close (east → back to top, pt5 ≈ pt1)
+  // Attacker route — blue rival (kSea) runs S→N along Carrer de Cuba (real
+  // Ruzafa street, sourced via /gps-streets from Overpass on 2026-06-06), enters
+  // kS1Block1 from the south, then traces a closed lasso wrapping the block on
+  // three sides before returning to the inside-block start point.
+  //   pt0 → pt1: north along Cuba, off-screen south → inside kS1Block1
+  //   pt1 → pt2: SE exit (cross block edge A–B southward)
+  //   pt2 → pt3: north along east side (outside block)
+  //   pt3 → pt4: west across the top (outside block)
+  //   pt4 → pt5: south back into block (cross block edge C–D into interior); pt5 ≈ pt1
   static const _kAttackerRoute = [
-    LatLng(39.45876687267654,   -0.3714029660927564),    // 0: off-screen south — entry
-    LatLng(39.46217783167975,   -0.37378187786513245),   // 1: loop[0] — top (loop start)
-    LatLng(39.460341182218244,  -0.37809528932053965),   // 2: loop[1] — west
-    LatLng(39.45912365004915,   -0.3772626255741333),    // 3: loop[2] — south-west
-    LatLng(39.460939442465346,  -0.37295328466461247),   // 4: loop[3] — east
-    LatLng(39.46217783167975,   -0.37378187786513245),   // 5: lasso close = loop[0]
+    LatLng(39.4585831, -0.3746524), // 0: Carrer de Cuba — off-screen south (entry)
+    LatLng(39.4619,    -0.376650),  // 1: inside kS1Block1 (south interior) — lasso start
+    LatLng(39.4605,    -0.374800),  // 2: SE of block (outside)
+    LatLng(39.4633,    -0.375000),  // 3: NE of block (outside)
+    LatLng(39.4633,    -0.378000),  // 4: NW of block (outside)
+    LatLng(39.4619,    -0.376650),  // 5: lasso close = pt1 (inside kS1Block1)
   ];
 
-  // Lasso polygon — closed loop pt1 → pt2 → pt3 → pt4 → pt5 (≈ pt1).
-  // Matches IntroFortifyMap's _kFortifyLoop circuit exactly.
+  // Lasso polygon — closed loop pt1 → pt2 → pt3 → pt4 → pt5 (≈ pt1). Encloses
+  // ~79% of kS1Block1 (overlap area ~7100 m² out of 8941 m²).
   static const _kAttackerLasso = [
-    LatLng(39.46217783167975,   -0.37378187786513245),   // pt1 — loop[0] top
-    LatLng(39.460341182218244,  -0.37809528932053965),   // pt2 — loop[1] west
-    LatLng(39.45912365004915,   -0.3772626255741333),    // pt3 — loop[2] south-west
-    LatLng(39.460939442465346,  -0.37295328466461247),   // pt4 — loop[3] east
-    LatLng(39.46217783167975,   -0.37378187786513245),   // pt5 — close = loop[0]
+    LatLng(39.4619, -0.376650),    // pt1 — inside kS1Block1 (lasso start)
+    LatLng(39.4605, -0.374800),    // pt2 — outside SE
+    LatLng(39.4633, -0.375000),    // pt3 — outside NE
+    LatLng(39.4633, -0.378000),    // pt4 — outside NW
+    LatLng(39.4619, -0.376650),    // pt5 — close = pt1
   ];
 
   // Disputed area — exact Sutherland-Hodgman intersection of _kAttackerLasso
-  // with the union of defender blocks (kS1Block2 ∪ kS1Block3). kS1Block1 does
-  // not overlap the lasso. The intersections (lasso ∩ B2, 5 verts) and
-  // (lasso ∩ B3, 3 verts) share the edge G ↔ lasso-crossing-of-B-G; merging
-  // along that shared edge fuses them into a single 6-vertex CCW polygon.
-  // simplified: 6 → 5 points (≥25m spacing)
+  // with kS1Block1 (sole clip target, computed offline 2026-06-06).
+  // 5 vertices, ~7100 m² (79.4% of kS1Block1 area). Vertices:
+  //   D — block vertex (lasso encloses)
+  //   crossing of lasso edge pt3→pt4 with block edge C–D
+  //   pt1 — lasso vertex inside block
+  //   crossing of lasso edge pt5→pt1 (≡ pt4→pt1 in closed lasso) with block edge A–B
+  //   A — block vertex (lasso encloses)
   static const _kDisputedArea = [
-    LatLng(39.461568000000000, -0.375167000000000),   // E — kS1Block2 vertex (inside lasso)
-    LatLng(39.461062095301116, -0.376402209168246),   // lasso edge (pt3→pt4) crossing B–G
-    LatLng(39.460375379397249, -0.378014976497241),   // lasso edge (pt1→pt2) crossing I–G
-    LatLng(39.461050000000000, -0.376394000000000),   // G — shared B2/B3 vertex
-    LatLng(39.460439999999998, -0.375966000000000),   // F — kS1Block2 vertex (inside lasso)
+    LatLng(39.4626710000, -0.3759370000), // D — kS1Block1 vertex inside lasso
+    LatLng(39.4622369806, -0.3769749456), // lasso edge ∩ block edge C–D
+    LatLng(39.4619000000, -0.3766500000), // pt1 — lasso vertex inside block
+    LatLng(39.4617161880, -0.3764071056), // lasso edge ∩ block edge A–B
+    LatLng(39.4620770000, -0.3755220000), // A — kS1Block1 vertex inside lasso
   ];
 
-  // Edge-crossing vertices of _kDisputedArea — points where the attacker's
-  // lasso boundary cuts through the defender's block boundary. These are the
-  // true "transfer edge" points where territory changes hands, so ping rings
-  // fire here rather than at the pure interior defender vertices (E, F, G).
+  // Shared transfer vertices — points where territory changes hands. Includes
+  // the two real edge-crossings of the lasso boundary against kS1Block1, plus
+  // one captured block vertex (A) for narrative weight. ≥3 entries are required
+  // by drawPings guard (intro_helpers.dart:274); if fewer than 3 are listed,
+  // ping rings silently suppress.
   static const _kSharedTransferVertices = [
-    LatLng(39.461583456798429, -0.375177780281812), // lasso (pt4→pt5) ∩ block edge A–E
-    LatLng(39.461062095301116, -0.376402209168246), // lasso (pt3→pt4) ∩ block edge B–G
-    LatLng(39.460375379397249, -0.378014976497241), // lasso (pt1→pt2) ∩ block edge I–G
-  ];
-
-  static const _kPreRollRoute = [
-    LatLng(39.462077, -0.375522), // A
-    LatLng(39.461576, -0.376751), // B
-    LatLng(39.462155, -0.377171), // C
-    LatLng(39.462671, -0.375937), // D
-    LatLng(39.462077, -0.375522), // A — BLOCK 1 CLOSES
-    LatLng(39.461568, -0.375167), // E
-    LatLng(39.460440, -0.375966), // F
-    LatLng(39.461050, -0.376394), // G
-    LatLng(39.461576, -0.376751), // B — BLOCK 2 CLOSES
-    LatLng(39.460846, -0.378471), // H
-    LatLng(39.460335, -0.378112), // I
-    LatLng(39.461050, -0.376394), // G — BLOCK 3 CLOSES
+    LatLng(39.4617161880, -0.3764071056), // lasso edge ∩ block edge A–B
+    LatLng(39.4622369806, -0.3769749456), // lasso edge ∩ block edge C–D
+    LatLng(39.4620770000, -0.3755220000), // A — captured block vertex
   ];
 
   List<List<Offset>> _inheritedPts = [];
@@ -96,7 +83,6 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   List<Offset> _attackerLasso = [];
   List<Offset> _disputedArea = [];
   List<Offset> _sharedTransferVertices = [];
-  List<Offset> _preRollRoute = [];
 
   @override
   void initState() {
@@ -135,7 +121,6 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
       _disputedArea = _kDisputedArea.map(toScreen).toList();
       _sharedTransferVertices =
           _kSharedTransferVertices.map(toScreen).toList();
-      _preRollRoute = _kPreRollRoute.map(toScreen).toList();
     });
   }
 
@@ -148,7 +133,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4659, -0.3738),
+            center: const LatLng(39.4650, -0.3750),
             zoom: 16.0,
             onReady: _updatePoints,
           ),
@@ -177,7 +162,6 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
                     disputedArea: _disputedArea,
                     sharedTransferVertices: _sharedTransferVertices,
                     tailLengthPx: tailPx,
-                    preRollRoute: _preRollRoute,
                   ),
                   child: const SizedBox.expand(),
                 );
@@ -201,7 +185,6 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
   final List<Offset> disputedArea;
   final List<Offset> sharedTransferVertices;
   final double tailLengthPx;
-  final List<Offset> preRollRoute;
 
   _IntroCaptureMapPainter({
     required this.t,
@@ -214,7 +197,6 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.disputedArea,
     required this.sharedTransferVertices,
     required this.tailLengthPx,
-    required this.preRollRoute,
   });
 
   // Timeline (route has 5 segments; close is at traveled == _kLassoCloseSegIdx == 4):
@@ -228,7 +210,8 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
   static const double _kRouteCompleteT = 0.70;
 
   // Segment index in _kAttackerRoute where the path closes the loop.
-  // Segment 4 = pt4→pt5, with pt5 ≈ pt1.
+  // Formula: _kAttackerRoute.length - 2 (last segment closes back to pt1).
+  // For a 6-point route → 5 segments → close at segment 4 (pt4→pt5, pt5 ≈ pt1).
   static const int _kLassoCloseSegIdx = 4;
 
   double _disputedOpacity(double traveled) {
@@ -307,62 +290,7 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
   void paint(Canvas canvas, Size size) {
     if (attackerRoute.isEmpty) return;
 
-    // Pre-roll: replay slide-1 capture animation before the attacker appears.
-    if (preRollRoute.isNotEmpty && t < 0.25) {
-      final preT = (t / 0.25).clamp(0.0, 1.0);
-      final preSegs = preRollRoute.length - 1; // 11
-      final preTraveled = preT * preSegs;
-
-      // Per-block fill opacity ramps (same formula as slide 1).
-      double preFill(double closeIdx) =>
-          ((preTraveled - closeIdx) / 0.5).clamp(0.0, 1.0) * 0.28;
-      final f1 = preFill(4.0);
-      final f2 = preFill(8.0);
-      final f3 = preT >= 0.82
-          ? ((preT - 0.82) / 0.04).clamp(0.0, 1.0) * 0.28
-          : 0.0;
-
-      // Draw inherited blocks as they are captured.
-      if (inheritedPts.isNotEmpty && f1 > 0) {
-        drawFillColor(canvas, inheritedPts[0], kAccent, f1);
-      }
-      if (inheritedPts.length >= 2 && f2 > 0) {
-        drawFillColor(canvas, inheritedPts[1], kAccent, f2);
-      }
-      if (inheritedPts.length >= 3 && f3 > 0) {
-        drawFillColor(canvas, inheritedPts[2], kAccent, f3);
-      }
-
-      // Comet tail trace.
-      final preRouteProgress = (preT / 0.82).clamp(0.0, 1.0);
-      final preDecay = preT < 0.94
-          ? 1.0
-          : (1.0 - ((preT - 0.94) / 0.06)).clamp(0.0, 1.0);
-      drawComet(canvas, preRollRoute, preRouteProgress,
-          tailLengthPx: tailLengthPx, color: accent, decayMul: preDecay);
-
-      // Runner dot.
-      if (preT < 0.82) {
-        drawRunner(canvas, preRollRoute, preRouteProgress);
-      }
-
-      // Ping bursts.
-      final ping1 = preTraveled - 4.0;
-      if (ping1 > 0 && ping1 < 1.5 && inheritedPts.isNotEmpty) {
-        drawPings(canvas, inheritedPts[0], (ping1 / 1.5).clamp(0.0, 1.0));
-      }
-      final ping2 = preTraveled - 8.0;
-      if (ping2 > 0 && ping2 < 1.5 && inheritedPts.length >= 2) {
-        drawPings(canvas, inheritedPts[1], (ping2 / 1.5).clamp(0.0, 1.0));
-      }
-      if (preT >= 0.82 && preT < 0.932 && inheritedPts.length >= 3) {
-        drawPings(canvas, inheritedPts[2], ((preT - 0.82) / 0.112).clamp(0.0, 1.0));
-      }
-
-      return; // Skip attacker logic during pre-roll.
-    }
-
-    final segs = attackerRoute.length - 1; // 4 segments for 5-point route
+    final segs = attackerRoute.length - 1; // 5 segments for 6-point route
     final routeProgress = (t / _kRouteCompleteT).clamp(0.0, 1.0);
     final traveled = routeProgress * segs;
     final lassoIsClosed = traveled >= _kLassoCloseSegIdx;
@@ -380,7 +308,9 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
     // 0. Inherited blocks from slide 1 — pre-filled, no animation. After the
     //    dispute resolves (t >= _kUnifyT) we cut the disputed polygon out of
     //    the defender's combined territory so the orange visibly shrinks to
-    //    match the attacker's gain.
+    //    match the attacker's gain. Note: drawInheritedBlocks executes at t=0
+    //    (no pre-roll branch) so the three Ruzafa blocks are visible from
+    //    the very first frame at alpha 0.28 (AC-1).
     if (lassoIsClosed && t >= _kUnifyT && hasGenuineDispute &&
         inheritedPts.isNotEmpty) {
       Path inheritedUnion = _makePoly(inheritedPts.first);
@@ -647,6 +577,5 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
       old.ownedBlock1 != ownedBlock1 ||
       old.ownedBlock2 != ownedBlock2 ||
       old.inheritedPts != inheritedPts ||
-      old.tailLengthPx != tailLengthPx ||
-      old.preRollRoute != preRollRoute;
+      old.tailLengthPx != tailLengthPx;
 }
