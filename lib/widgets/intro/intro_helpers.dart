@@ -13,6 +13,10 @@ const kIntroLoopPause = Duration(seconds: 2);
 // ── Runner color used across multiple slides ──────────────────────────────────
 const Color kRunnerCPink = Color(0xFFFF3B7A);
 
+// ── Comet tail constants ──────────────────────────────────────────────────────
+const double kCometTailMeters = 100.0;
+const int kCometBandCount = 16;
+
 // ── Loop helper ───────────────────────────────────────────────────────────────
 void loopController(
   AnimationController ctrl, {
@@ -169,6 +173,65 @@ mixin IntroPainterHelpers {
       }
     }
     canvas.drawPath(rp, routeP);
+  }
+
+  /// Renders a comet tail: the last [tailLengthPx] screen-pixels of the route
+  /// [pts] up to [routeT], with a linear alpha gradient — 0 at the tail end
+  /// rising to [headAlpha]*[decayMul] at the runner's current position.
+  ///
+  /// [tailLengthPx] — screen pixels for kCometTailMeters at current zoom.
+  ///   Caller computes: kCometTailMeters / mapCtrl.camera.metersPerPixel.
+  /// [decayMul] — 0..1 envelope for idle-decay (1.0 = runner active).
+  void drawComet(
+    Canvas canvas,
+    List<Offset> pts,
+    double routeT, {
+    required double tailLengthPx,
+    required Color color,
+    double headAlpha = 0.85,
+    double decayMul = 1.0,
+  }) {
+    if (pts.isEmpty || decayMul <= 0 || tailLengthPx <= 0) return;
+    final segs = pts.length - 1;
+    if (segs <= 0) return;
+    final totalRouteT = routeT.clamp(0.0, 1.0);
+    final totalLen = totalRouteT * segs;
+
+    // Build the partial route path up to routeT.
+    final path = Path()..moveTo(pts[0].dx, pts[0].dy);
+    for (int i = 0; i < segs; i++) {
+      if (totalLen > i) {
+        final segT = (totalLen - i).clamp(0.0, 1.0);
+        path.lineTo(
+          Offset.lerp(pts[i], pts[i + 1], segT)!.dx,
+          Offset.lerp(pts[i], pts[i + 1], segT)!.dy,
+        );
+      }
+    }
+
+    // Draw gradient tail using path metrics.
+    for (final metric in path.computeMetrics()) {
+      final fullLen = metric.length;
+      if (fullLen <= 0) continue;
+      final tailStart = math.max(0.0, fullLen - tailLengthPx);
+      final visibleLen = fullLen - tailStart;
+      if (visibleLen <= 0) continue;
+      final bandLen = visibleLen / kCometBandCount;
+      for (int i = 0; i < kCometBandCount; i++) {
+        final bandStart = tailStart + i * bandLen;
+        final bandEnd = bandStart + bandLen;
+        final alpha = headAlpha * decayMul * (i + 1) / kCometBandCount;
+        canvas.drawPath(
+          metric.extractPath(bandStart, bandEnd),
+          Paint()
+            ..color = color.withValues(alpha: alpha.clamp(0.0, 1.0))
+            ..strokeWidth = 2.0
+            ..style = PaintingStyle.stroke
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round,
+        );
+      }
+    }
   }
 
   void drawRunner(Canvas canvas, List<Offset> pts, double routeT) {
