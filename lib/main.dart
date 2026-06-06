@@ -377,6 +377,8 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
     if (mission != null && mission.needsMission2) {
       final accepted = ref.watch(mission2BriefingAcceptedProvider);
       if (!accepted) {
+        // TODO(mission2-polish): pendingBotZoneIdProvider — see design.md §5.
+        //                        Empty string is acceptable per AC-7 edge case.
         return const FirstAttackBriefingScreen(botZoneId: '');
       }
       // TODO(mission2-polish): pendingBotZoneIdProvider — see design.md §5.
