@@ -1,4 +1,23 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+// ── Patch normalisation (AC-2, AC-4) ─────────────────────────────────────────
+
+/// Normalises a [DatabaseService.updateProfile] patch map before it is sent
+/// to Supabase:
+///   - AC-2: strips non-`+`/digit characters from any `phone` value.
+///   - AC-4: trims leading/trailing whitespace from any `username` value.
+///
+/// Returns a new map; the original [patch] is never mutated.
+///
+/// Exposed as a top-level function so it can be unit-tested without
+/// initialising the Supabase singleton.
+@visibleForTesting
+Map<String, dynamic> normaliseProfilePatch(Map<String, dynamic> patch) {
+  // STUB — returns the patch unchanged so assertion tests FAIL (RED phase).
+  // Real implementation strips non-+digit chars from phone and trims username.
+  return Map<String, dynamic>.from(patch);
+}
 
 class DatabaseService {
   DatabaseService._();
