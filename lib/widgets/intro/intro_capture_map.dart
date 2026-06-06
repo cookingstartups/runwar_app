@@ -55,9 +55,9 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   // not overlap the lasso. The intersections (lasso ∩ B2, 5 verts) and
   // (lasso ∩ B3, 3 verts) share the edge G ↔ lasso-crossing-of-B-G; merging
   // along that shared edge fuses them into a single 6-vertex CCW polygon.
+  // simplified: 6 → 5 points (≥25m spacing)
   static const _kDisputedArea = [
     LatLng(39.461568000000000, -0.375167000000000),   // E — kS1Block2 vertex (inside lasso)
-    LatLng(39.461583456798429, -0.375177780281812),   // lasso edge (pt4→pt5) crossing A–E
     LatLng(39.461062095301116, -0.376402209168246),   // lasso edge (pt3→pt4) crossing B–G
     LatLng(39.460375379397249, -0.378014976497241),   // lasso edge (pt1→pt2) crossing I–G
     LatLng(39.461050000000000, -0.376394000000000),   // G — shared B2/B3 vertex
