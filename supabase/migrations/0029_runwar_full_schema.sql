@@ -45,8 +45,8 @@ CREATE TABLE IF NOT EXISTS zones (
   parent_id        TEXT        REFERENCES zones(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_zones_city_status ON zones(city, status);
-CREATE INDEX IF NOT EXISTS idx_zones_owner       ON zones(owner_id);
+-- Indexes for zones are in 0030_zones_fixup.sql (applied after ALTER TABLE
+-- adds the status column to the pre-existing remote zones table).
 
 -- ---------------------------------------------------------------------------
 -- 3. runs
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS runs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_runs_user ON runs(user_id);
+-- Index for runs is in 0030_zones_fixup.sql after ALTER TABLE adds user_id.
 
 -- ---------------------------------------------------------------------------
 -- 4. prefs  (per-user key-value; device-global SQLite prefs are scoped here)
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_events_user_name ON events(user_id, name);
+-- Index in 0030_zones_fixup.sql after ALTER TABLE guards.
 
 -- ---------------------------------------------------------------------------
 -- 6. feedback  (insert-only for authenticated users)
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS daily_mission_progress (
   UNIQUE (user_id, date, slug)
 );
 
-CREATE INDEX IF NOT EXISTS idx_dmp_user_date ON daily_mission_progress(user_id, date);
+-- Index in 0030_zones_fixup.sql after ALTER TABLE guards.
 
 -- ---------------------------------------------------------------------------
 -- 8. Enable RLS on all new tables + city_waitlists
@@ -128,65 +128,5 @@ ALTER TABLE feedback               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE daily_mission_progress ENABLE ROW LEVEL SECURITY;
 ALTER TABLE city_waitlists         ENABLE ROW LEVEL SECURITY;
 
--- ---------------------------------------------------------------------------
--- 9. RLS policies
--- ---------------------------------------------------------------------------
-
--- zones: owner reads/writes own zones; all authenticated users can read any
---        zone in the same city as their own player.city
-DROP POLICY IF EXISTS zones_owner_all        ON zones;
-DROP POLICY IF EXISTS zones_city_read        ON zones;
-
-CREATE POLICY zones_owner_all ON zones
-  FOR ALL
-  USING  (auth.uid() = owner_id)
-  WITH CHECK (auth.uid() = owner_id);
-
-CREATE POLICY zones_city_read ON zones
-  FOR SELECT
-  USING (
-    auth.role() = 'authenticated'
-    AND city IN (
-      SELECT p.city FROM players p WHERE p.id = auth.uid()
-    )
-  );
-
--- runs: user reads/writes own rows only
-DROP POLICY IF EXISTS runs_own_all ON runs;
-CREATE POLICY runs_own_all ON runs
-  FOR ALL
-  USING  (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
-
--- prefs: user reads/writes own rows only
-DROP POLICY IF EXISTS prefs_own_all ON prefs;
-CREATE POLICY prefs_own_all ON prefs
-  FOR ALL
-  USING  (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
-
--- events: insert-only for authenticated users; no SELECT for non-service role
-DROP POLICY IF EXISTS events_insert_auth ON events;
-CREATE POLICY events_insert_auth ON events
-  FOR INSERT
-  WITH CHECK (auth.role() = 'authenticated');
-
--- feedback: insert-only for authenticated users
-DROP POLICY IF EXISTS feedback_insert_auth ON feedback;
-CREATE POLICY feedback_insert_auth ON feedback
-  FOR INSERT
-  WITH CHECK (auth.role() = 'authenticated');
-
--- daily_mission_progress: user reads/writes own rows only
-DROP POLICY IF EXISTS dmp_own_all ON daily_mission_progress;
-CREATE POLICY dmp_own_all ON daily_mission_progress
-  FOR ALL
-  USING  (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
-
--- city_waitlists: user reads/writes own rows only
-DROP POLICY IF EXISTS city_waitlists_own_all ON city_waitlists;
-CREATE POLICY city_waitlists_own_all ON city_waitlists
-  FOR ALL
-  USING  (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
+-- RLS policies moved to 0030_zones_fixup.sql (applied after ALTER TABLE
+-- adds the columns they reference to pre-existing remote tables).
