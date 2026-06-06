@@ -363,7 +363,7 @@ class DatabaseService {
         'id': id,
         'user_id': userId,
         'name': name,
-        'props_json': props != null ? props.toString() : null,
+        'props_json': props?.toString(),
         'created_at': DateTime.now().toUtc().toIso8601String(),
       });
     } catch (_) {
@@ -411,7 +411,7 @@ class DatabaseService {
       {
         'user_id': userId,
         'city_slug': citySlug,
-        'created_at': DateTime.now().toUtc().toIso8601String(),
+        'joined_at': DateTime.now().toUtc().toIso8601String(),
       },
       onConflict: 'user_id,city_slug',
       ignoreDuplicates: true,
