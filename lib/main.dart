@@ -176,8 +176,6 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
 
-    debugPrint('[RouteGuard] user=${authState.user?["id"]}, isLoading=${authState.isLoading}, error=${authState.error}');
-
     if (authState.isLoading) return const _GateLoading();
 
     if (authState.user == null) {
@@ -193,19 +191,16 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
 
     // Gate 1: phone linked?
     final hasPhoneAsync = ref.watch(hasPhoneProvider(userId));
-    debugPrint('[RouteGuard] Gate1(hasPhone) loading=${hasPhoneAsync.isLoading} value=${hasPhoneAsync.value} error=${hasPhoneAsync.error}');
     if (hasPhoneAsync.isLoading) return const _GateLoading();
     if (!(hasPhoneAsync.value ?? true)) return const PhoneLinkScreen();
 
     // Gate 2: any cities joined?
     final joinedAsync = ref.watch(joinedCitySlugsProvider(userId));
-    debugPrint('[RouteGuard] Gate2(joinedSlugs) loading=${joinedAsync.isLoading} value=${joinedAsync.value} error=${joinedAsync.error}');
     if (joinedAsync.isLoading) return const _GateLoading();
     if ((joinedAsync.value ?? []).isEmpty) return const CitiesSelectionScreen();
 
     // Gate 3: profile + invited_at + username
     final profileAsync = ref.watch(profileGateProvider(userId));
-    debugPrint('[RouteGuard] Gate3(profile) loading=${profileAsync.isLoading} hasError=${profileAsync.hasError} error=${profileAsync.error}');
     if (profileAsync.isLoading) {
       return const SplashScreen(
           showStatus: true, statusLabel: 'SYNCING TERRITORY');
