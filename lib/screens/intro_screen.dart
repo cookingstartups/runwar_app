@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme.dart';
 import '../providers/showcase_provider.dart';
+import '../widgets/intro/intro_loot_drop_map.dart';
+import '../widgets/intro/intro_survival_cut.dart';
 import '../widgets/intro_map_animations.dart';
 import '../widgets/pulse_ring.dart';
 import '../widgets/tag_chip.dart';
@@ -12,7 +14,7 @@ import '../widgets/tag_chip.dart';
 // ---------------------------------------------------------------------------
 // Animation type per slide
 // ---------------------------------------------------------------------------
-enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, defenseA, defenseB, defenseC, physicalEvents, none }
+enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, defenseA, physicalEvents, lootDrop, survivalCut, none }
 
 // ---------------------------------------------------------------------------
 // Layout modes
@@ -101,27 +103,27 @@ const _slides = [
     tagColor: kAccent2,
     headline: 'FIRST FEET\nTAKE IT ALL.',
     body: 'GPS drops hit the map without warning. Cash, crates, killer gear — pinned to a spot somewhere in your city. One winner: whoever\'s lungs get there first.',
-    anim: _Anim.ctfDrop,
+    anim: _Anim.lootDrop,
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
   ),
-  // 6 — Special events / CTF
+  // 7 — Special events / CTF
   _Slide(
     tag: 'SPECIAL EVENT',
     tagColor: kAccent,
     headline: 'A FLAG DROPS.\nONE RUNNER WINS.',
     body: 'A daily flag drops somewhere in the city. First feet claim the territory — and the glory.',
-    anim: _Anim.rivals,
+    anim: _Anim.ctfDrop,
     layout: _Layout.textTopVisualBottom,
     bodyMaxLines: 4,
   ),
-  // 7 — Competitive elimination (spec: earn your seat)
+  // 8 — Competitive elimination (spec: earn your seat)
   _Slide(
     tag: 'THE BOTTOM DROPS',
     tagColor: kAccent2,
     headline: 'RUN OR LOSE\nYOUR SEAT.',
     body: 'Every week, the bottom runners get cut. Their zones gone. Their rank gone. The city has no room for passengers. Earn your place or someone else will.',
-    anim: _Anim.none,
+    anim: _Anim.survivalCut,
     layout: _Layout.textTopVisualBottom,
     bodyMaxLines: 4,
   ),
@@ -166,9 +168,9 @@ Widget _buildAnimWidget(_Anim anim, Color accent) => switch (anim) {
       _Anim.fortify        => IntroFortifyMap(accent: accent),
       _Anim.defense        => IntroDefenseMap(accent: accent),
       _Anim.defenseA       => IntroDefenseMapA(accent: accent),
-      _Anim.defenseB       => IntroDefenseMapB(accent: accent),
-      _Anim.defenseC       => IntroDefenseMapC(accent: accent),
       _Anim.physicalEvents => IntroPhysicalEventsMap(accent: accent),
+      _Anim.lootDrop       => const IntroLootDropMap(),
+      _Anim.survivalCut    => const IntroSurvivalCut(),
       _Anim.none           => const SizedBox.shrink(),
     };
 
@@ -291,6 +293,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
                 IntroCaptureMap(accent: kSea),
                 IntroRivalsMap(accent: kAccent),
                 IntroFlagDropMap(accent: kAccent2),
+                IntroLootDropMap(),
               ]),
             ),
             // Stack-based slide transition — no AnimatedSwitcher flicker
