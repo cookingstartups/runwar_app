@@ -511,8 +511,9 @@ class TerritoryService {
   // ── Polygon area (Shoelace → km²) ────────────────────────────────────────
 
   static double polygonAreaKm2(List<LatLng> pts) {
-    double area = 0;
     final n = pts.length;
+    if (n < 2) return 0.0;
+    double area = 0;
     for (var i = 0; i < n; i++) {
       final j = (i + 1) % n;
       area += pts[i].longitude * pts[j].latitude;

@@ -182,15 +182,15 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
                     style: monoStyle(size: 10, color: kFgMuted),
                   ),
                   const SizedBox(height: 8),
-                  if (usernameUnlocked)
-                    TextField(
-                      controller: _usernameCtrl,
-                      style: bodyStyle(size: 14, color: kFg),
-                      decoration: const InputDecoration(
-                        hintText: 'Enter username',
-                      ),
-                    )
-                  else
+                  TextField(
+                    controller: _usernameCtrl,
+                    enabled: usernameUnlocked,
+                    style: bodyStyle(size: 14, color: kFg),
+                    decoration: const InputDecoration(
+                      hintText: 'Enter username',
+                    ),
+                  ),
+                  if (!usernameUnlocked)
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 14),

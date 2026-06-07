@@ -5,6 +5,10 @@ import 'google_auth_service.dart';
 import 'supabase_service.dart';
 import '../config/constants.dart';
 
+@visibleForTesting
+String deriveEmailUsername(String id) =>
+    'Runner_${id.replaceAll('-', '').substring(0, 6).toLowerCase()}';
+
 class AuthService {
   AuthService._();
   static final AuthService instance = AuthService._();
