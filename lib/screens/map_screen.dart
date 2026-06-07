@@ -567,24 +567,22 @@ class _MapScreenState extends ConsumerState<MapScreen>
 
     if (!context.mounted) return;
 
-    // 4. Spawn bot zone (server-idempotent; falls back to any existing rival).
-    // The spawned zone ID is not passed to _RouteGuard in this hotfix
-    // (see design.md §5 — pendingBotZoneIdProvider follow-up).
+    // 4. Spawn bot zone and store result for Gate 5b.
     try {
       final pos = _currentPosition;
-      await BotSpawnerService.instance.checkOrSpawn(
+      final botZoneId = await BotSpawnerService.instance.checkOrSpawn(
         userId: userId,
         lat: pos?.latitude ?? 39.4699,
         lng: pos?.longitude ?? -0.3763,
         city: city.isEmpty ? 'Valencia' : city,
       );
+      ref.read(pendingBotZoneIdProvider.notifier).state = botZoneId;
     } catch (e) {
       debugPrint('[MapScreen] BotSpawnerService failed: $e');
+      // pendingBotZoneIdProvider stays null; Gate 5b falls back to ''.
     }
 
     // Invalidate mission status — _RouteGuard rebuilds and shows Gate 5b (FirstAttackBriefingScreen).
-    // mission2BriefingAcceptedProvider is still false (default) →
-    // _RouteGuard returns FirstAttackBriefingScreen(botZoneId: '').
     ref.invalidate(missionStatusProvider(userId));
   }
 

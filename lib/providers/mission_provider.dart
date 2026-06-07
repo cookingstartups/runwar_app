@@ -34,6 +34,11 @@ final mission1BriefingAcceptedProvider = StateProvider<bool>((_) => false);
 /// Read by _RouteGuard Gate 5b to switch from briefing to MapScreen.
 final mission2BriefingAcceptedProvider = StateProvider<bool>((_) => false);
 
+/// Stores the rival zone ID returned by BotSpawnerService.checkOrSpawn
+/// after Mission 1 completes. Read by _RouteGuard Gate 5b.
+/// Null means spawner has not yet run (or failed). Gate 5b falls back to ''.
+final pendingBotZoneIdProvider = StateProvider<String?>((_) => null);
+
 /// Reads mission completion state from Supabase — no local round-trip.
 /// Fast enough to be used as a synchronous gate in _RouteGuard.
 final missionStatusProvider =
