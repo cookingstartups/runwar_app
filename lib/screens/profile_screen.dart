@@ -11,6 +11,7 @@ import '../services/zones_service.dart';
 import '../theme.dart';
 import '../widgets/reputation_badge.dart';
 import '../widgets/valencia_button.dart';
+import 'profile_edit_screen.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -30,6 +31,20 @@ class ProfileScreen extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: kBg,
+      appBar: AppBar(
+        title: Text('PROFILE', style: displayStyle(size: 20)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const ProfileEditScreen(),
+              ),
+            ),
+            child: Text('Edit', style: bodyStyle(size: 14, color: kAccent)),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: profileAsync.when(
           loading: () =>
@@ -82,6 +97,17 @@ class ProfileScreen extends ConsumerWidget {
                     ],
                   ),
                   const SizedBox(height: 24),
+                  Builder(builder: (_) {
+                    final bio = (p['bio'] as String?) ?? '';
+                    if (bio.isEmpty) return const SizedBox.shrink();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(bio, style: bodyStyle(size: 14)),
+                        const SizedBox(height: 8),
+                      ],
+                    );
+                  }),
                   reputationAsync.maybeWhen(
                     data: (rep) => Row(
                       children: [
