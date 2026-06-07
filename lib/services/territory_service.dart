@@ -351,7 +351,7 @@ class TerritoryService {
       final influence = (z['influence'] as num).toDouble();
       final pts = _parseRing(z['geom_json'] as String);
       if (pts == null) continue;
-      final areaKm2 = _polygonAreaKm2(pts);
+      final areaKm2 = polygonAreaKm2(pts);
       final earned = influence * areaKm2 * elapsedHours;
       final current = (z['credits_earned'] as num?)?.toDouble() ?? 0.0;
 
@@ -510,7 +510,7 @@ class TerritoryService {
 
   // ── Polygon area (Shoelace → km²) ────────────────────────────────────────
 
-  static double _polygonAreaKm2(List<LatLng> pts) {
+  static double polygonAreaKm2(List<LatLng> pts) {
     double area = 0;
     final n = pts.length;
     for (var i = 0; i < n; i++) {
