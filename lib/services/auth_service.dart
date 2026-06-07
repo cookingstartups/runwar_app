@@ -27,9 +27,8 @@ class AuthService {
     // Fall back to a local UUID when offline / Supabase unavailable.
     final id = supabaseId ?? _uuidV4();
 
-    // Auto-assign a deterministic username and a randomly-picked palette color.
-    final shortId = id.replaceAll('-', '').substring(0, 6).toLowerCase();
-    final username = 'Runner_$shortId';
+    // Auto-assign username and a deterministic palette color.
+    final username = deriveEmailUsername(id);
     final color = kPlayerColors[id.hashCode.abs() % kPlayerColors.length];
 
     try {
@@ -51,12 +50,6 @@ class AuthService {
     _currentUser = {'id': id, 'email': email, 'created_at': nowIso};
     return _currentUser;
   }
-
-  /// Derives the auto-assigned username for a given UUID.
-  /// Exposed for unit tests via @visibleForTesting — not part of the public API.
-  @visibleForTesting
-  static String deriveEmailUsername(String id) =>
-      'Runner_${id.replaceAll('-', '').substring(0, 6).toLowerCase()}';
 
   /// Signs in with Google via [GoogleAuthService], upserts the player into
   /// Supabase, and returns the user map. Returns null if the user cancelled.
