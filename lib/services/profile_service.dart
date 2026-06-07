@@ -1,16 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'database_service.dart';
 import 'supabase_service.dart';
+import '../config/constants.dart';
 
-// Deterministic zone-polygon colors for Supabase-only players (no local profile).
-const _kColorPalette = [
-  '#FF6B35', '#00A8CC', '#5CB85C', '#9B59B6',
-  '#E74C3C', '#3498DB', '#27AE60', '#F39C12',
-];
-
+// Deterministic color fallback for Supabase-only players (no local profile).
 String _colorForId(String id) {
   final sum = id.codeUnits.fold(0, (a, b) => a + b);
-  return _kColorPalette[sum % _kColorPalette.length];
+  return kPlayerColors[sum % kPlayerColors.length];
 }
 
 class ProfileService {
