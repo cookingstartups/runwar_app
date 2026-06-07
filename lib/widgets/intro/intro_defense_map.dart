@@ -33,18 +33,15 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  // Runner C (pink-red) — 9-point real-street Valencia GPS lasso.
-  // pt9 == pt1 (lasso closure).
+  // Runner C (pink-red) — 6-point user-supplied GPS lasso.
+  // pt6 is near pt1 — natural lasso loop (polygon closed implicitly).
   static const _kP3RouteA = [
-    LatLng(39.46314567232372,  -0.37789166434492444), // pt1
-    LatLng(39.46106660289374,  -0.37641108503092524), // pt2
-    LatLng(39.46218483520633,  -0.37378252030679626), // pt3
-    LatLng(39.463448035941596, -0.372097621546374),   // pt4
-    LatLng(39.46364710896024,  -0.37250909525302534), // pt5
-    LatLng(39.46483306401015,  -0.3736557353361204),  // pt6
-    LatLng(39.46333791021514,  -0.37794603459439946), // pt7
-    LatLng(39.46295670439205,  -0.3777320682631042),  // pt8
-    LatLng(39.46314567232372,  -0.37789166434492444), // pt9 = copy of pt1
+    LatLng(39.45707966941316,  -0.3754599919598242),  // pt1
+    LatLng(39.46089008704585,  -0.3784640659302574),  // pt2
+    LatLng(39.46161901273688,  -0.37852843894390953), // pt3
+    LatLng(39.46216570199534,  -0.37717660565721467), // pt4
+    LatLng(39.457740759441556, -0.3740613727413237),  // pt5
+    LatLng(39.4571367122464,   -0.3754323416117378),  // pt6 ≈ pt1
   ];
 
   // Pink-red attacker color for player 3.
@@ -175,7 +172,7 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.463, -0.376),
+            center: const LatLng(39.460, -0.377),
             zoom: 16.0,
             onReady: _onMapReady,
           ),
