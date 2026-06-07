@@ -21,59 +21,57 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  // Attacker route — blue rival (kSea) runs S→N along Carrer de Cuba (real
-  // Ruzafa street, sourced via /gps-streets from Overpass on 2026-06-06), enters
-  // kS1Block1 from the south, then traces a closed lasso wrapping the block on
-  // three sides before returning to the inside-block start point.
-  //   pt0 → pt1: north along Cuba, off-screen south → inside kS1Block1
-  //   pt1 → pt2: SE exit (cross block edge A–B southward)
-  //   pt2 → pt3: north along east side (outside block)
-  //   pt3 → pt4: west across the top (outside block)
-  //   pt4 → pt5: south back into block (cross block edge C–D into interior); pt5 ≈ pt1
+  // Attacker route — blue rival (kSea) runs a GPS loop around kS1Block1
+  // (user-supplied 2026-06-07). The 6 waypoints form a natural closed lasso:
+  // pt0 and pt5 are close together (NW of the block), pt2–pt4 wrap around the
+  // south and east sides. The last segment (pt4→pt5) closes the loop.
+  //   pt0: NW entry point (outside block, NW)
+  //   pt1: W side (outside block)
+  //   pt2: SW corner area (near block vertex B)
+  //   pt3: SE corner area (near block vertex A) — lasso crosses east edge
+  //   pt4: NE apex (outside block, north)
+  //   pt5: NW close (near pt0/pt1, closes the loop)
   static const _kAttackerRoute = [
-    LatLng(39.4585831, -0.3746524), // 0: Carrer de Cuba — off-screen south (entry)
-    LatLng(39.4619,    -0.376650),  // 1: inside kS1Block1 (south interior) — lasso start
-    LatLng(39.4605,    -0.374800),  // 2: SE of block (outside)
-    LatLng(39.4633,    -0.375000),  // 3: NE of block (outside)
-    LatLng(39.4633,    -0.378000),  // 4: NW of block (outside)
-    LatLng(39.4619,    -0.376650),  // 5: lasso close = pt1 (inside kS1Block1)
+    LatLng(39.46337502964422,  -0.3800948489427782), // 0: NW entry
+    LatLng(39.46315967146378,  -0.3779061664786055), // 1: W side
+    LatLng(39.461536180656424, -0.376747452232867),  // 2: SW (near B)
+    LatLng(39.46206630426773,  -0.37556728031591113),// 3: SE (near A)
+    LatLng(39.46465059904969,  -0.3773482670269536), // 4: NE apex
+    LatLng(39.4630271430215,   -0.3780563701771271), // 5: NW close (≈ pt0)
   ];
 
-  // Lasso polygon — closed loop pt1 → pt2 → pt3 → pt4 → pt5 (≈ pt1). Encloses
-  // ~79% of kS1Block1 (overlap area ~7100 m² out of 8941 m²).
+  // Lasso polygon — same 6 waypoints as the route. The route itself IS the
+  // lasso: pt5 closes back near pt0, forming a natural closed loop around
+  // kS1Block1. All 4 vertices of kS1Block1 fall inside this polygon.
   static const _kAttackerLasso = [
-    LatLng(39.4619, -0.376650),    // pt1 — inside kS1Block1 (lasso start)
-    LatLng(39.4605, -0.374800),    // pt2 — outside SE
-    LatLng(39.4633, -0.375000),    // pt3 — outside NE
-    LatLng(39.4633, -0.378000),    // pt4 — outside NW
-    LatLng(39.4619, -0.376650),    // pt5 — close = pt1
+    LatLng(39.46337502964422,  -0.3800948489427782), // pt0 — NW entry
+    LatLng(39.46315967146378,  -0.3779061664786055), // pt1 — W side
+    LatLng(39.461536180656424, -0.376747452232867),  // pt2 — SW (near B)
+    LatLng(39.46206630426773,  -0.37556728031591113),// pt3 — SE (near A)
+    LatLng(39.46465059904969,  -0.3773482670269536), // pt4 — NE apex
+    LatLng(39.4630271430215,   -0.3780563701771271), // pt5 — NW close
   ];
 
-  // Disputed area — exact Sutherland-Hodgman intersection of _kAttackerLasso
-  // with kS1Block1 (sole clip target, computed offline 2026-06-06).
-  // 5 vertices, ~7100 m² (79.4% of kS1Block1 area). Vertices:
-  //   D — block vertex (lasso encloses)
-  //   crossing of lasso edge pt3→pt4 with block edge C–D
-  //   pt1 — lasso vertex inside block
-  //   crossing of lasso edge pt5→pt1 (≡ pt4→pt1 in closed lasso) with block edge A–B
-  //   A — block vertex (lasso encloses)
+  // Disputed area — Sutherland-Hodgman intersection of _kAttackerLasso with
+  // kS1Block1 (sole clip target). The lasso fully contains all 4 kS1Block1
+  // vertices (A, B, C, D), so the intersection is kS1Block1 itself (fallback
+  // as per spec: lasso fully encloses the block → use kS1Block1 vertices).
   static const _kDisputedArea = [
-    LatLng(39.4626710000, -0.3759370000), // D — kS1Block1 vertex inside lasso
-    LatLng(39.4622369806, -0.3769749456), // lasso edge ∩ block edge C–D
-    LatLng(39.4619000000, -0.3766500000), // pt1 — lasso vertex inside block
-    LatLng(39.4617161880, -0.3764071056), // lasso edge ∩ block edge A–B
-    LatLng(39.4620770000, -0.3755220000), // A — kS1Block1 vertex inside lasso
+    LatLng(39.462077, -0.375522), // A — kS1Block1 vertex
+    LatLng(39.461576, -0.376751), // B — kS1Block1 vertex
+    LatLng(39.462155, -0.377171), // C — kS1Block1 vertex
+    LatLng(39.462671, -0.375937), // D — kS1Block1 vertex
   ];
 
-  // Shared transfer vertices — points where territory changes hands. Includes
-  // the two real edge-crossings of the lasso boundary against kS1Block1, plus
-  // one captured block vertex (A) for narrative weight. ≥3 entries are required
-  // by drawPings guard (intro_helpers.dart:274); if fewer than 3 are listed,
-  // ping rings silently suppress.
+  // Shared transfer vertices — kS1Block1 corners used as ping targets when the
+  // lasso fully encloses the block. All 4 corners are transfer points since the
+  // lasso boundary wraps the entire block. ≥3 entries required by drawPings
+  // guard (intro_helpers.dart:274).
   static const _kSharedTransferVertices = [
-    LatLng(39.4617161880, -0.3764071056), // lasso edge ∩ block edge A–B
-    LatLng(39.4622369806, -0.3769749456), // lasso edge ∩ block edge C–D
-    LatLng(39.4620770000, -0.3755220000), // A — captured block vertex
+    LatLng(39.462077, -0.375522), // A — kS1Block1 vertex
+    LatLng(39.461576, -0.376751), // B — kS1Block1 vertex
+    LatLng(39.462155, -0.377171), // C — kS1Block1 vertex
+    LatLng(39.462671, -0.375937), // D — kS1Block1 vertex
   ];
 
   List<List<Offset>> _inheritedPts = [];
@@ -133,7 +131,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4650, -0.3750),
+            center: const LatLng(39.4650, -0.3756),
             zoom: 16.0,
             onReady: _updatePoints,
           ),

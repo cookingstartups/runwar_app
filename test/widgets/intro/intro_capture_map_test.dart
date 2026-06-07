@@ -5,16 +5,16 @@
 //   infra/meta/specs/runwar/mvp/intro-slide-2-reset/requirements.md
 //
 // AC-1: t=0 render produces 3 orange inherited blocks (no pre-roll trace)
-// AC-2: Blue attacker targets kS1Block1 from south; entry lat < 39.4600
+// AC-2: Blue attacker runs a GPS loop around kS1Block1; 6 user-supplied waypoints
 // AC-3: _kDisputedArea and _kSharedTransferVertices each have >= 3 vertices
 // AC-4: 3-phase VFX preserved — _kSharedTransferVertices >= 3 (ping guard)
-// AC-5: Map centre is LatLng(39.4650, -0.3750), zoom 16.0
+// AC-5: Map centre is LatLng(39.4650, -0.3756), zoom 16.0 (shifted 50 m west)
 // AC-6: No fortify-loop latitudes in route/lasso/disputed/transfer constants
 // AC-7: _kPreRollRoute const, _preRollRoute field, preRollRoute painter param
 //        absent from file (pre-roll deletion complete)
 //
-// Tests run BEFORE implementation and must remain RED until the developer
-// removes the fortify-loop route, deletes pre-roll, and fixes the map centre.
+// Tests updated 2026-06-07: AC-2 and AC-5 revised to reflect new route geometry
+// and westward camera shift.
 
 import 'dart:io';
 
@@ -97,11 +97,11 @@ void main() {
   // -------------------------------------------------------------------------
   // AC-5: Map centre and zoom
   // -------------------------------------------------------------------------
-  group('AC-5: Map centre is LatLng(39.4650, -0.3750) at zoom 16', () {
+  group('AC-5: Map centre is LatLng(39.4650, -0.3756) at zoom 16', () {
     // GIVEN  IntroCaptureMap is instantiated and buildIntroMap() is called
     // WHEN   the FlutterMap options are evaluated
-    // THEN   initialCenter == LatLng(39.4650, -0.3750)
-    test('source file contains initialCenter LatLng(39.4650, -0.3750)', () {
+    // THEN   initialCenter == LatLng(39.4650, -0.3756)
+    test('source file contains initialCenter LatLng(39.4650, -0.3756)', () {
       final src = _sourceText();
       expect(
         src,
@@ -110,15 +110,16 @@ void main() {
       );
       expect(
         src,
-        contains('-0.3750'),
-        reason: 'AC-5: initialCenter longitude -0.3750 must appear in the file',
+        contains('-0.3756'),
+        reason: 'AC-5: initialCenter longitude -0.3756 must appear in the file',
       );
     });
 
     // GIVEN  IntroCaptureMap is instantiated
     // WHEN   the FlutterMap options are evaluated
     // THEN   the previous centre LatLng(39.4659, -0.3738) does not appear
-    test('old map centre 39.4659/-0.3738 is absent from source file', () {
+    //   AND  the old longitude -0.3750 (pre-shift) does not appear as the centre
+    test('old map centre 39.4659/-0.3738/-0.3750 is absent from source file', () {
       final src = _sourceText();
       expect(
         src,
@@ -129,6 +130,19 @@ void main() {
         src,
         isNot(contains('-0.3738')),
         reason: 'AC-5: Old centre longitude -0.3738 must be removed',
+      );
+      // The centre was shifted 50 m west from -0.3750 to -0.3756.
+      // -0.3750 must no longer appear as the initialCenter value.
+      // Note: we check in the buildIntroMap call specifically.
+      final centerMatch = RegExp(
+        r'center:\s*const\s+LatLng\([^)]+\)',
+      ).firstMatch(src);
+      expect(centerMatch, isNotNull,
+          reason: 'AC-5: center: LatLng(...) must exist in source');
+      expect(
+        centerMatch!.group(0),
+        isNot(contains('-0.3750')),
+        reason: 'AC-5: Old centre longitude -0.3750 must be replaced with -0.3756',
       );
     });
   });
@@ -209,33 +223,18 @@ void main() {
   });
 
   // -------------------------------------------------------------------------
-  // AC-2: Attacker route entry point is off-screen south (lat < 39.4600)
-  //       and terminal point approaches kS1Block1
+  // AC-2: Attacker route is a GPS loop around kS1Block1 (6 user-supplied
+  //       waypoints). The loop wraps the block — pt0 is NW of the block,
+  //       pt2 is near the SW corner, pt3 near the SE corner, pt4 at the NE
+  //       apex, and pt5 closes back near pt0.
+  //       Updated 2026-06-07: new route is a closed lasso, not a south entry.
   // -------------------------------------------------------------------------
-  group('AC-2: Attacker route targets kS1Block1 from south', () {
-    // GIVEN  t is between 0 and _kRouteCompleteT (0.70)
-    // WHEN   the painter executes a paint() pass
-    // THEN   the route entry waypoint latitude is < 39.4600 (off-screen south)
-    test('_kAttackerRoute first waypoint latitude is south of viewport (< 39.4600)', () {
+  group('AC-2: Attacker route is a closed GPS loop around kS1Block1', () {
+    // GIVEN  _kAttackerRoute is the user-supplied 6-waypoint loop
+    // WHEN   the route constant is inspected
+    // THEN   it contains exactly 6 LatLng entries
+    test('_kAttackerRoute contains exactly 6 waypoints', () {
       final src = _sourceText();
-      // Extract _kAttackerRoute constant block from source.
-      // The first LatLng in the list must have latitude < 39.4600.
-      // We verify by checking that 39.460 does NOT appear as the entry
-      // (i.e. no latitude >= 39.4600 precedes the second LatLng).
-      //
-      // Concrete: after the reset, entry is off-screen south.
-      // Current file has 39.45876 as entry — but that is a FORTIFY-LOOP
-      // latitude (caught by AC-6). The new entry must be a fresh lat < 39.4600
-      // that is NOT one of the five banned latitudes.
-      //
-      // Strategy: assert the source contains at least one LatLng with lat
-      // strictly less than 39.4600 in the _kAttackerRoute block.
-      // We look for the pattern "39.45" or "39.46[0-5]" to be present only as
-      // non-fortify values. The simplest falsifiable assertion: the FIRST LatLng
-      // in _kAttackerRoute has lat < 39.4600.
-      //
-      // We cannot instantiate the painter without a real map camera, so we
-      // parse the source to extract the route's first coordinate string.
       final routeBlockMatch = RegExp(
         r'static const _kAttackerRoute\s*=\s*\[([\s\S]*?)\];',
       ).firstMatch(src);
@@ -245,28 +244,48 @@ void main() {
         reason: 'AC-2: _kAttackerRoute constant must exist in source file',
       );
       final routeBlock = routeBlockMatch!.group(1)!;
-      // Extract all latitude values (first number in each LatLng call).
       final latMatches =
           RegExp(r'LatLng\(\s*([\d.]+)').allMatches(routeBlock).toList();
       expect(
-        latMatches,
-        isNotEmpty,
-        reason: 'AC-2: _kAttackerRoute must contain at least one LatLng',
-      );
-      final firstLat = double.parse(latMatches.first.group(1)!);
-      expect(
-        firstLat,
-        lessThan(39.4600),
-        reason: 'AC-2: First waypoint of _kAttackerRoute must be off-screen '
-            'south (lat < 39.4600) at zoom 16 / centre LatLng(39.4650, -0.3750)',
+        latMatches.length,
+        equals(6),
+        reason: 'AC-2: _kAttackerRoute must have exactly 6 waypoints '
+            '(user-supplied GPS loop). Found ${latMatches.length}.',
       );
     });
 
-    // GIVEN  _kAttackerRoute approaches kS1Block1
-    // WHEN   the terminal waypoint is inspected
-    // THEN   it lies within the kS1Block1 bounding box (lat 39.461-39.463,
-    //        lng -0.378 to -0.375)
-    test('_kAttackerRoute terminal waypoint is within kS1Block1 bounding box', () {
+    // GIVEN  _kAttackerRoute is the user-supplied loop
+    // WHEN   the first waypoint is inspected
+    // THEN   it matches the expected NW entry coordinate (lat ≈ 39.46337)
+    test('_kAttackerRoute first waypoint is the user-supplied NW entry', () {
+      final src = _sourceText();
+      final routeBlockMatch = RegExp(
+        r'static const _kAttackerRoute\s*=\s*\[([\s\S]*?)\];',
+      ).firstMatch(src);
+      expect(routeBlockMatch, isNotNull,
+          reason: 'AC-2: _kAttackerRoute must exist');
+      final routeBlock = routeBlockMatch!.group(1)!;
+      final latMatches =
+          RegExp(r'LatLng\(\s*([\d.]+)').allMatches(routeBlock).toList();
+      expect(latMatches, isNotEmpty,
+          reason: 'AC-2: _kAttackerRoute must contain at least one LatLng');
+      final firstLat = double.parse(latMatches.first.group(1)!);
+      // New route pt0 is at lat ≈ 39.46337 (NW of kS1Block1).
+      // The route is a closed loop, not a south-entry approach.
+      expect(
+        firstLat,
+        inInclusiveRange(39.4630, 39.4640),
+        reason: 'AC-2: First waypoint of the new _kAttackerRoute must be '
+            'at lat ≈ 39.46337 (NW entry of the closed loop). '
+            'Found $firstLat.',
+      );
+    });
+
+    // GIVEN  _kAttackerRoute is a closed GPS loop around kS1Block1
+    // WHEN   the terminal waypoint (pt5 — loop close) is inspected
+    // THEN   it lies within 0.003° (~300 m) of kS1Block1 centre
+    //        (the loop closes near pt0, NW of the block — not inside the block)
+    test('_kAttackerRoute terminal waypoint is within 0.003 deg of kS1Block1 centre', () {
       final src = _sourceText();
       final routeBlockMatch = RegExp(
         r'static const _kAttackerRoute\s*=\s*\[([\s\S]*?)\];',
@@ -281,16 +300,18 @@ void main() {
       final last = latMatches.last;
       final terminalLat = double.parse(last.group(1)!);
       final terminalLng = double.parse(last.group(2)!);
-      final terminal = LatLng(terminalLat, terminalLng);
+      // kS1Block1 centre ≈ (39.46202, -0.37659)
+      const kS1Block1CentLat = 39.46202;
+      const kS1Block1CentLng = -0.37659;
+      const tolerance = 0.003;
       expect(
-        _insideS1Block1Bbox(terminal),
+        (terminalLat - kS1Block1CentLat).abs() < tolerance &&
+            (terminalLng - kS1Block1CentLng).abs() < tolerance,
         isTrue,
         reason: 'AC-2: Terminal waypoint LatLng($terminalLat, $terminalLng) '
-            'must be within kS1Block1 bounding box '
-            '(lat ${_kS1Block1MinLat.toStringAsFixed(6)}–'
-            '${_kS1Block1MaxLat.toStringAsFixed(6)}, '
-            'lng ${_kS1Block1MinLng.toStringAsFixed(6)}–'
-            '${_kS1Block1MaxLng.toStringAsFixed(6)})',
+            'must be within 0.003° of kS1Block1 centre '
+            'LatLng($kS1Block1CentLat, $kS1Block1CentLng) — '
+            'the loop closes near pt0 (NW), not inside the block',
       );
     });
   });
