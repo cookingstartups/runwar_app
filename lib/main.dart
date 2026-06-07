@@ -376,16 +376,13 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
     // Gate 5b: second-mission onboarding
     if (mission != null && mission.needsMission2) {
       final accepted = ref.watch(mission2BriefingAcceptedProvider);
+      final botZoneId = ref.watch(pendingBotZoneIdProvider) ?? '';
       if (!accepted) {
-        // TODO(mission2-polish): pendingBotZoneIdProvider — see design.md §5.
-        //                        Empty string is acceptable per AC-7 edge case.
-        return const FirstAttackBriefingScreen(botZoneId: '');
+        return FirstAttackBriefingScreen(botZoneId: botZoneId);
       }
-      // TODO(mission2-polish): pendingBotZoneIdProvider — see design.md §5.
-      //                        Empty string is acceptable per AC-7 edge case.
-      return const MapScreen(
+      return MapScreen(
         missionStep: MissionStep.mission2Attack,
-        botZoneId: '',
+        botZoneId: botZoneId,
       );
     }
 
