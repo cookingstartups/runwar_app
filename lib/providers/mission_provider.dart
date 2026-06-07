@@ -25,6 +25,15 @@ class MissionStatus {
       (firstMissionCompletedAt == null && zoneCount > 0);
 }
 
+/// True after the player taps "ACCEPT MISSION" on FirstMissionBriefingScreen.
+/// Read by _RouteGuard Gate 5a to switch from briefing to MapScreen.
+/// Lives in module scope — survives _RouteGuard rebuilds; resets on cold start.
+final mission1BriefingAcceptedProvider = StateProvider<bool>((_) => false);
+
+/// True after the player taps "ENTER THE WAR" on FirstAttackBriefingScreen.
+/// Read by _RouteGuard Gate 5b to switch from briefing to MapScreen.
+final mission2BriefingAcceptedProvider = StateProvider<bool>((_) => false);
+
 /// Reads mission completion state from Supabase — no local round-trip.
 /// Fast enough to be used as a synchronous gate in _RouteGuard.
 final missionStatusProvider =

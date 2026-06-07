@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/mission_step.dart';
+import '../providers/mission_provider.dart';
 import '../theme.dart';
-import 'map_screen.dart';
 
 /// Full-screen dark briefing for Mission 2: Attack a Rival Zone.
 ///
 /// [botZoneId] is the zone ID returned by BotSpawnerService.checkOrSpawn —
 /// passed through to MapScreen so the overlay can locate the target.
-class FirstAttackBriefingScreen extends StatelessWidget {
+class FirstAttackBriefingScreen extends ConsumerWidget {
   const FirstAttackBriefingScreen({
     super.key,
     required this.botZoneId,
@@ -17,7 +17,7 @@ class FirstAttackBriefingScreen extends StatelessWidget {
   final String botZoneId;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       backgroundColor: kBg,
       body: SafeArea(
@@ -47,23 +47,15 @@ class FirstAttackBriefingScreen extends StatelessWidget {
               const Spacer(flex: 2),
               // CTA
               ElevatedButton(
-                onPressed: () => _onEnter(context),
-                child: const Text('ENTER THE WAR  →'),
+                onPressed: () {
+                  ref.read(mission2BriefingAcceptedProvider.notifier).state =
+                      true;
+                },
+                child: const Text('ENTER THE WAR'),
               ),
               const SizedBox(height: 24),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  void _onEnter(BuildContext context) {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(
-        builder: (_) => MapScreen(
-          missionStep: MissionStep.mission2Attack,
-          botZoneId: botZoneId,
         ),
       ),
     );
