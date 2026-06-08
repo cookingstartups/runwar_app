@@ -59,7 +59,7 @@ const double _kInitialZoom = 16.0;
 // ── Tile configuration ────────────────────────────────────────────────────────
 
 const String _kTileUrl =
-    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png';
 const List<String> _kTileSubdomains = ['a', 'b', 'c', 'd'];
 
 // ── Zone styling ──────────────────────────────────────────────────────────────
