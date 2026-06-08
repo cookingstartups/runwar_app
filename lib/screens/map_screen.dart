@@ -399,7 +399,8 @@ class _MapScreenState extends ConsumerState<MapScreen>
         final p = cam.latLngToScreenPoint(ll);
         return Offset(p.x.toDouble(), p.y.toDouble());
       }).toList();
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[MapScreen] _projectToScreen failed: $e');
       return const [];
     }
   }
@@ -478,7 +479,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     });
 
     ctrl.forward().then((_) {
-      if (mounted) {
+      if (mounted && _euController == ctrl) {
         setState(() {
           _euAccent = null;
           _lastClaimOutcome = null;
@@ -537,7 +538,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
           cam.zoom,
         );
         tailPx = mpp > 0 ? (100.0 / mpp) : 0.0;
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[MapScreen] mpp lookup failed: $e');
+      }
       // Determine owner color from profile (default to kAccent).
       final ownerProfile =
           ref.read(profileGateProvider(userId)).valueOrNull;

@@ -177,5 +177,7 @@ class TerritoryOverlayPainter extends CustomPainter with IntroPainterHelpers {
       old.routePoints != routePoints ||
       old.tailLengthPx != tailLengthPx ||
       old.capturedSqm != capturedSqm ||
-      old.euWindowFraction != euWindowFraction;
+      old.euWindowFraction != euWindowFraction ||
+      old.newBlock != newBlock ||
+      old.sharedEdgesList != sharedEdgesList;
 }
