@@ -22,12 +22,6 @@ class FirstMissionBriefingScreen extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Spacer(),
-              // Mission label — small-caps, muted
-              Text(
-                'MISSION 1 / 2',
-                style: monoStyle(size: 11, color: kFgMuted),
-              ),
-              const SizedBox(height: 16),
               // Headline — Bebas Neue, large
               Text(
                 'CLAIM YOUR\nFIRST TERRITORY',
@@ -36,7 +30,7 @@ class FirstMissionBriefingScreen extends ConsumerWidget {
               const SizedBox(height: 20),
               // Descriptor
               Text(
-                'Run a loop around any unclaimed area.\nMake it yours.',
+                'Run a loop around any area.\nMake it yours.',
                 style: bodyStyle(size: 16, color: kFgMuted),
               ),
               const Spacer(flex: 2),

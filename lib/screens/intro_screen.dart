@@ -55,7 +55,7 @@ const _slides = [
   _Slide(
     tag: 'YOUR TURF',
     tagColor: kAccent,
-    headline: 'SOMEONE CAPTURED\nYOUR STREET.',
+    headline: 'A RIVAL STOLE\nYOUR BLOCK.',
     body: 'Every block you sweat on belongs to the last runner who looped it. Their name. Your pavement. Take it back — or keep paying rent in shoe rubber.',
     anim: _Anim.pulse,
     layout: _Layout.visualTopTextBottom,
@@ -64,7 +64,7 @@ const _slides = [
   _Slide(
     tag: 'CLAIM IT',
     tagColor: kSea,
-    headline: 'LASSO IT.\nRIP IT BACK.',
+    headline: 'MAKE A LOOP TO TAKE\nBACK WHAT IS YOURS.',
     body: 'Draw a loop while you run. Every meter you close is a meter you steal. Chip away at the giants — one block today, the whole neighbourhood by Sunday.',
     anim: _Anim.hexCapture,
     layout: _Layout.textTopVisualBottom,
@@ -117,23 +117,13 @@ const _slides = [
     layout: _Layout.textTopVisualBottom,
     bodyMaxLines: 4,
   ),
-  // 8 — Competitive elimination (spec: earn your seat)
+  // 8 - Purge/survival cut mechanic
   _Slide(
-    tag: 'THE BOTTOM DROPS',
+    tag: 'THE PURGE',
     tagColor: kAccent2,
-    headline: 'RUN OR LOSE\nYOUR SEAT.',
-    body: 'Every week, the bottom runners get cut. Their zones gone. Their rank gone. The city has no room for passengers. Earn your place or someone else will.',
+    headline: 'THE PURGE\nHAS BEGUN.',
+    body: 'Once a week, the Purge begins. Are you under the water that week? You lose everything - zones, rank, access. Gone. There is no space for the lazy or undisciplined.',
     anim: _Anim.survivalCut,
-    layout: _Layout.textTopVisualBottom,
-    bodyMaxLines: 4,
-  ),
-  // 8 — ICP targeting: survival cut mechanic
-  _Slide(
-    tag: 'SURVIVAL CUT WEEK',
-    tagColor: kAccent2,
-    headline: 'STAY IN THE TOP 90%.\nOR LOSE EVERYTHING.',
-    body: 'From time to time we cut off the bottom 10% of runners — You must earn your seat in this war room.',
-    anim: _Anim.rivals,
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
   ),

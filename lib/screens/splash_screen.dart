@@ -246,7 +246,7 @@ class _SplashScreenState extends State<SplashScreen>
                 children: [
                   TileLayer(
                     urlTemplate:
-                        'https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png',
+                        'https://cartodb-basemaps-a.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
                     userAgentPackageName: 'com.cookingstartups.runwar',
                   ),
                   PolygonLayer(polygons: _zones),
