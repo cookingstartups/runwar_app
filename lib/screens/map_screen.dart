@@ -18,7 +18,8 @@ import '../services/run_recorder_service.dart';
 import '../services/battery_optimization_service.dart';
 import '../widgets/battery_warning_banner.dart';
 import '../widgets/territory_overlay_painter.dart';
-import '../widgets/intro/intro_helpers.dart' show sharedEdgePolylines;
+import '../widgets/intro/intro_helpers.dart' show sharedEdgePolylines, formatSqm;
+import '../geo/lasso.dart' show polygonArea;
 import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
 import '../services/superpower_service.dart';
@@ -98,6 +99,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
   Path _euUnionAfter = Path();
   List<List<Offset>>? _euSharedEdges;
   Color? _euAccent;
+  List<Offset> _euRoutePoints = const [];
+  double _euTailLengthPx = 0.0;
+  int _euCapturedSqm = 0;
+  ClaimOutcome? _lastClaimOutcome;
 
   @override
   void initState() {
@@ -117,7 +122,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       final userId = ref.read(authProvider).user?['id'] as String?;
       if (userId != null) {
         ref.read(profileGateProvider(userId).future).then((profile) {
-          final color = (profile?['color'] as String?) ?? '#FF7A00';
+          final color = profile?['color']?.toString() ?? '#FF7A00';
           RealtimePresenceService.instance.setColorHex(color);
         }).catchError((_) {});
       }
@@ -394,7 +399,8 @@ class _MapScreenState extends ConsumerState<MapScreen>
         final p = cam.latLngToScreenPoint(ll);
         return Offset(p.x.toDouble(), p.y.toDouble());
       }).toList();
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[MapScreen] _projectToScreen failed: $e');
       return const [];
     }
   }
@@ -409,15 +415,23 @@ class _MapScreenState extends ConsumerState<MapScreen>
     return path..close();
   }
 
-  /// Starts the 400 ms E&U overlay animation after a successful claim.
+  /// Starts the 1500 ms E&U overlay animation after a successful claim.
   /// [priorZonePoints] — screen-space vertex lists for all zones owned by the
   ///   player immediately before the claim.
   /// [newBlockPts] — screen-space vertices of the newly-claimed block.
+  /// [routePoints] — last 60 projected GPS trail points for comet + runner.
+  /// [tailLengthPx] — comet tail length in screen pixels (100 m / mpp).
+  /// [capturedSqm] — polygon area in square meters for the HUD chip.
+  /// [outcome] — claim result, used to gate the HUD chip on disputes.
   void _startEUAnimation(
     List<List<Offset>> priorZonePoints,
     List<Offset> newBlockPts,
-    Color ownerColor,
-  ) {
+    Color ownerColor, {
+    List<Offset> routePoints = const [],
+    double tailLengthPx = 0.0,
+    int capturedSqm = 0,
+    ClaimOutcome? outcome,
+  }) {
     if (!mounted) return;
 
     // Build prior union Path from all pre-claim owned zones.
@@ -448,7 +462,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     _euController?.dispose();
     final ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 400),
+      duration: const Duration(milliseconds: 1500),
     );
     _euController = ctrl;
 
@@ -458,12 +472,17 @@ class _MapScreenState extends ConsumerState<MapScreen>
       _euUnionAfter = unionAfter;
       _euSharedEdges = shared.isEmpty ? null : shared;
       _euAccent = ownerColor;
+      _euRoutePoints = routePoints;
+      _euTailLengthPx = tailLengthPx;
+      _euCapturedSqm = capturedSqm;
+      _lastClaimOutcome = outcome;
     });
 
     ctrl.forward().then((_) {
-      if (mounted) {
+      if (mounted && _euController == ctrl) {
         setState(() {
           _euAccent = null;
+          _lastClaimOutcome = null;
         });
       }
     });
@@ -500,12 +519,42 @@ class _MapScreenState extends ConsumerState<MapScreen>
           .where((pts) => pts.isNotEmpty)
           .toList();
       final newBlockScreenPts = _projectToScreen(trackBefore);
+      // Snapshot GPS trail for comet + runner (capped to last 60 points).
+      final routePointsCapped = newBlockScreenPts.length > 60
+          ? newBlockScreenPts.sublist(newBlockScreenPts.length - 60)
+          : newBlockScreenPts;
+      // Compute captured area in square meters.
+      final areaKm2 = polygonArea(trackBefore);
+      final sqm = (areaKm2.isFinite
+              ? (areaKm2 * 1e6).clamp(0.0, 0x7FFFFFFF.toDouble())
+              : 0.0)
+          .round();
+      // Comet tail length: 100 m of trail in screen pixels at current zoom.
+      double tailPx = 0.0;
+      try {
+        final cam = _mapController.camera;
+        final mpp = _FogPainter._metersPerPixel(
+          cam.center.latitude,
+          cam.zoom,
+        );
+        tailPx = mpp > 0 ? (100.0 / mpp) : 0.0;
+      } catch (e) {
+        debugPrint('[MapScreen] mpp lookup failed: $e');
+      }
       // Determine owner color from profile (default to kAccent).
       final ownerProfile =
           ref.read(profileGateProvider(userId)).valueOrNull;
       final ownerColor =
-          _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
-      _startEUAnimation(priorZoneScreenPts, newBlockScreenPts, ownerColor);
+          _hexToColor(ownerProfile?['color']?.toString() ?? '#FF7A00');
+      _startEUAnimation(
+        priorZoneScreenPts,
+        newBlockScreenPts,
+        ownerColor,
+        routePoints: routePointsCapped,
+        tailLengthPx: tailPx,
+        capturedSqm: sqm,
+        outcome: outcome,
+      );
     }
 
     // Mission 1: successful claim triggers celebration overlay + edge fn.
@@ -742,7 +791,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
                 Polyline(
                   points: track,
                   color: _hexToColor(
-                    (ref.watch(profileGateProvider(userId)).valueOrNull?['color'] as String?)
+                    ref.watch(profileGateProvider(userId)).valueOrNull?['color']?.toString()
                       ?? '#FF7A00',
                   ),
                   strokeWidth: 4,
@@ -762,7 +811,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
                   child: Center(
                     child: BeamPulseDot(
                       color: _hexToColor(
-                        (ref.watch(profileGateProvider(userId)).valueOrNull?['color'] as String?)
+                        ref.watch(profileGateProvider(userId)).valueOrNull?['color']?.toString()
                           ?? '#FF7A00',
                       ),
                       size: 11,
@@ -803,24 +852,70 @@ class _MapScreenState extends ConsumerState<MapScreen>
             ),
           ],
         ),
-        // Expand & Unify overlay — rendered above the fog, transitions away in 400 ms.
-        if (_euController != null && _euController!.isAnimating)
+        // HUD chip -- visible for animT in [0.0, 0.12] on clean claims only.
+        if (_euController != null &&
+            _euController!.isAnimating &&
+            _lastClaimOutcome != null &&
+            !_lastClaimOutcome!.disputeResolved)
           AnimatedBuilder(
             animation: _euController!,
-            builder: (_, __) => CustomPaint(
-              painter: TerritoryOverlayPainter(
-                accent: _euAccent ?? _hexToColor(
-                  (ref.watch(profileGateProvider(userId)).valueOrNull?['color'] as String?)
-                    ?? '#FF7A00',
+            builder: (context, _) {
+              final t = _euController!.value;
+              if (t > 0.12) return const SizedBox.shrink();
+              final windowT = t / 0.12;
+              final opacity = windowT < 0.15
+                  ? windowT / 0.15
+                  : windowT > 0.85
+                      ? (1.0 - windowT) / 0.15
+                      : 1.0;
+              final chipColor = _euAccent ?? _hexToColor(
+                ref.watch(profileGateProvider(userId)).valueOrNull?['color']?.toString()
+                  ?? '#FF7A00',
+              );
+              return Positioned(
+                top: 64,
+                left: 16,
+                child: Opacity(
+                  opacity: opacity.clamp(0.0, 1.0),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '+${formatSqm(_euCapturedSqm)} sqm',
+                      style: const TextStyle(
+                        fontFamily: 'RobotoMono',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
+                      ).copyWith(color: chipColor),
+                    ),
+                  ),
                 ),
-                priorUnion: _euPriorUnion,
-                newBlock: _euNewBlock,
-                unionAfter: _euUnionAfter,
-                sharedEdgesList: _euSharedEdges,
-                animT: _euController!.value,
+              );
+            },
+          ),
+        // Expand & Unify overlay -- rendered above the fog, transitions away in 1500 ms.
+        if (_euController != null && _euController!.isAnimating)
+          CustomPaint(
+            painter: TerritoryOverlayPainter(
+              ownerColor: _euAccent ?? _hexToColor(
+                ref.watch(profileGateProvider(userId)).valueOrNull?['color']?.toString()
+                  ?? '#FF7A00',
               ),
-              child: const SizedBox.expand(),
+              priorUnion: _euPriorUnion,
+              newBlock: _euNewBlock,
+              unionAfter: _euUnionAfter,
+              sharedEdgesList: _euSharedEdges,
+              animT: _euController!.value,
+              routePoints: _euRoutePoints,
+              tailLengthPx: _euTailLengthPx,
+              capturedSqm: _euCapturedSqm,
+              repaint: _euController,
             ),
+            child: const SizedBox.expand(),
           ),
         // Runners nearby chip — top-left, only visible when rivals within 1 km.
         StreamBuilder<List<PlayerPresence>>(
@@ -1009,7 +1104,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         final ownerProfile =
             ref.watch(profileCacheProvider(z.ownerId)).valueOrNull;
         final ownerColor =
-            _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
+            _hexToColor(ownerProfile?['color']?.toString() ?? '#FF7A00');
         final glowAlpha = 0.12 + pulse * 0.14; // 12% → 26%
         out.add(Polygon(
           points: z.points,
@@ -1044,7 +1139,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         final ownerProfile =
             ref.watch(profileCacheProvider(z.ownerId)).valueOrNull;
         final ownerColor =
-            _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
+            _hexToColor(ownerProfile?['color']?.toString() ?? '#FF7A00');
         final level = z.influenceLevel.clamp(1, 15);
         // Fill breathes between 75% and 100% of base alpha (intro-slide glow).
         final baseAlpha = 0.0633 * level;
