@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:exif/exif.dart';
 import 'package:flutter/foundation.dart';
@@ -14,7 +15,7 @@ class OnboardingState {
   const OnboardingState({
     this.username = '',
     this.city = 'Valencia',
-    this.color = '#FF7A00',
+    this.color = '',
     this.step = 0,
     this.avatarPath,
     this.bio = '',
@@ -62,7 +63,12 @@ class OnboardingState {
 }
 
 class OnboardingNotifier extends StateNotifier<OnboardingState> {
-  OnboardingNotifier() : super(const OnboardingState());
+  OnboardingNotifier() : super(OnboardingState(color: _randomHexColor()));
+
+  static String _randomHexColor() {
+    final r = math.Random();
+    return '#${r.nextInt(0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
+  }
 
   /// Updates username in-memory. Does NOT advance step (single-screen flow).
   void setUsername(String v) {
