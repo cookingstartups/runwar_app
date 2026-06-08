@@ -117,17 +117,7 @@ const _slides = [
     layout: _Layout.textTopVisualBottom,
     bodyMaxLines: 4,
   ),
-  // 8 — ICP targeting: survival cut mechanic
-  _Slide(
-    tag: 'SURVIVAL CUT WEEK',
-    tagColor: kAccent2,
-    headline: 'WE CUT OFF THE BOTTOM\n10% OF PLAYERS.',
-    body: 'Once a week, the weakest players are removed from the map. Their territory. Their progress. Their name. Gone. If you stop running, someone will take your place. There is no space for the lazy or undisciplined.',
-    anim: _Anim.survivalCut,
-    layout: _Layout.visualTopTextBottom,
-    bodyMaxLines: 4,
-  ),
-  // 9 — Real-world events
+  // 8 — Real-world events
   _Slide(
     tag: 'YEARLY IN-PERSON EVENT',
     tagColor: kAccent2,
@@ -136,7 +126,7 @@ const _slides = [
     anim: _Anim.physicalEvents,
     layout: _Layout.visualTopTextBottom,
   ),
-  // 10 — Invite only
+  // 9 — Invite only
   _Slide(
     tag: 'INVITE ONLY',
     tagColor: kAccent,
