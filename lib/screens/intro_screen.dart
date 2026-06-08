@@ -117,7 +117,7 @@ const _slides = [
     layout: _Layout.textTopVisualBottom,
     bodyMaxLines: 4,
   ),
-  // 8 — ICP targeting: survival cut mechanic
+  // 8 - Purge/survival cut mechanic
   _Slide(
     tag: 'THE PURGE',
     tagColor: kAccent2,
