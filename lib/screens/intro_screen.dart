@@ -122,7 +122,7 @@ const _slides = [
     tag: 'THE PURGE',
     tagColor: kAccent2,
     headline: 'THE PURGE\nHAS BEGUN.',
-    body: 'Once a week, the Purge begins. The bottom 10% of players are wiped from the map. Their zones. Their rank. Their name. Gone. There is no space for the lazy or undisciplined.',
+    body: 'Once a week, the Purge begins. Are you under the water that week? You lose everything - zones, rank, access. Gone. There is no space for the lazy or undisciplined.',
     anim: _Anim.survivalCut,
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
