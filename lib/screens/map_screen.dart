@@ -122,7 +122,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       final userId = ref.read(authProvider).user?['id'] as String?;
       if (userId != null) {
         ref.read(profileGateProvider(userId).future).then((profile) {
-          final color = (profile?['color'] as String?) ?? '#FF7A00';
+          final color = profile?['color']?.toString() ?? '#FF7A00';
           RealtimePresenceService.instance.setColorHex(color);
         }).catchError((_) {});
       }
@@ -542,7 +542,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       final ownerProfile =
           ref.read(profileGateProvider(userId)).valueOrNull;
       final ownerColor =
-          _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
+          _hexToColor(ownerProfile?['color']?.toString() ?? '#FF7A00');
       _startEUAnimation(
         priorZoneScreenPts,
         newBlockScreenPts,
@@ -788,7 +788,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
                 Polyline(
                   points: track,
                   color: _hexToColor(
-                    (ref.watch(profileGateProvider(userId)).valueOrNull?['color'] as String?)
+                    ref.watch(profileGateProvider(userId)).valueOrNull?['color']?.toString()
                       ?? '#FF7A00',
                   ),
                   strokeWidth: 4,
@@ -808,7 +808,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
                   child: Center(
                     child: BeamPulseDot(
                       color: _hexToColor(
-                        (ref.watch(profileGateProvider(userId)).valueOrNull?['color'] as String?)
+                        ref.watch(profileGateProvider(userId)).valueOrNull?['color']?.toString()
                           ?? '#FF7A00',
                       ),
                       size: 11,
@@ -866,7 +866,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
                       ? (1.0 - windowT) / 0.15
                       : 1.0;
               final chipColor = _euAccent ?? _hexToColor(
-                (ref.watch(profileGateProvider(userId)).valueOrNull?['color'] as String?)
+                ref.watch(profileGateProvider(userId)).valueOrNull?['color']?.toString()
                   ?? '#FF7A00',
               );
               return Positioned(
@@ -899,7 +899,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
           CustomPaint(
             painter: TerritoryOverlayPainter(
               ownerColor: _euAccent ?? _hexToColor(
-                (ref.watch(profileGateProvider(userId)).valueOrNull?['color'] as String?)
+                ref.watch(profileGateProvider(userId)).valueOrNull?['color']?.toString()
                   ?? '#FF7A00',
               ),
               priorUnion: _euPriorUnion,
@@ -1101,7 +1101,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         final ownerProfile =
             ref.watch(profileCacheProvider(z.ownerId)).valueOrNull;
         final ownerColor =
-            _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
+            _hexToColor(ownerProfile?['color']?.toString() ?? '#FF7A00');
         final glowAlpha = 0.12 + pulse * 0.14; // 12% → 26%
         out.add(Polygon(
           points: z.points,
@@ -1136,7 +1136,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         final ownerProfile =
             ref.watch(profileCacheProvider(z.ownerId)).valueOrNull;
         final ownerColor =
-            _hexToColor((ownerProfile?['color'] as String?) ?? '#FF7A00');
+            _hexToColor(ownerProfile?['color']?.toString() ?? '#FF7A00');
         final level = z.influenceLevel.clamp(1, 15);
         // Fill breathes between 75% and 100% of base alpha (intro-slide glow).
         final baseAlpha = 0.0633 * level;

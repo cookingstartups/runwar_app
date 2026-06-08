@@ -37,7 +37,7 @@ class ProfileService {
       return {
         'id': p['id'],
         'username': p['username'] ?? '',
-        'color': (p['color'] as String?) ?? _colorForId(userId),
+        'color': p['color']?.toString() ?? _colorForId(userId),
         'score': 0,
         'invited_at': null,
         'is_tester': 0,
