@@ -119,10 +119,10 @@ const _slides = [
   ),
   // 8 — ICP targeting: survival cut mechanic
   _Slide(
-    tag: 'SURVIVAL CUT WEEK',
+    tag: 'THE PURGE',
     tagColor: kAccent2,
-    headline: 'WE CUT OFF THE BOTTOM\n10% OF PLAYERS.',
-    body: 'Once a week, the weakest players are removed from the map. Their territory. Their progress. Their name. Gone. If you stop running, someone will take your place. There is no space for the lazy or undisciplined.',
+    headline: 'THE PURGE\nHAS BEGUN.',
+    body: 'Once a week, the Purge begins. The bottom 10% of players are wiped from the map. Their zones. Their rank. Their name. Gone. There is no space for the lazy or undisciplined.',
     anim: _Anim.survivalCut,
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
