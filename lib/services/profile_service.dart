@@ -28,7 +28,7 @@ class ProfileService {
     try {
       final result = await SupabaseService.instance.supabase
           .from('players')
-          .select('id, username')
+          .select('id, username, color')
           .eq('id', userId)
           .limit(1);
       final list = result as List<dynamic>;
@@ -37,7 +37,7 @@ class ProfileService {
       return {
         'id': p['id'],
         'username': p['username'] ?? '',
-        'color': _colorForId(userId),
+        'color': (p['color'] as String?) ?? _colorForId(userId),
         'score': 0,
         'invited_at': null,
         'is_tester': 0,

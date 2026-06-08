@@ -64,7 +64,6 @@ const List<String> _kTileSubdomains = ['a', 'b', 'c', 'd'];
 
 // ── Zone styling ──────────────────────────────────────────────────────────────
 
-const Color _kGpsDotColor = Color(0xFF4A9EFF); // blue GPS dot (brief spec)
 const Color _kDisputedColor = Color(0xFFC8973A); // amber for disputed zones
 
 // ── MapScreen widget ─────────────────────────────────────────────────────────
@@ -98,6 +97,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   List<Offset> _euNewBlock = const [];
   Path _euUnionAfter = Path();
   List<List<Offset>>? _euSharedEdges;
+  Color? _euAccent;
 
   @override
   void initState() {
@@ -457,10 +457,15 @@ class _MapScreenState extends ConsumerState<MapScreen>
       _euNewBlock = newBlockPts;
       _euUnionAfter = unionAfter;
       _euSharedEdges = shared.isEmpty ? null : shared;
+      _euAccent = ownerColor;
     });
 
     ctrl.forward().then((_) {
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {
+          _euAccent = null;
+        });
+      }
     });
   }
 
@@ -736,7 +741,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
               return PolylineLayer(polylines: [
                 Polyline(
                   points: track,
-                  color: kAccent,
+                  color: _hexToColor(
+                    (ref.watch(profileGateProvider(userId)).valueOrNull?['color'] as String?)
+                      ?? '#FF7A00',
+                  ),
                   strokeWidth: 4,
                 ),
               ]);
@@ -751,8 +759,14 @@ class _MapScreenState extends ConsumerState<MapScreen>
                   ),
                   width: 60,
                   height: 60,
-                  child: const Center(
-                    child: BeamPulseDot(color: _kGpsDotColor, size: 11),
+                  child: Center(
+                    child: BeamPulseDot(
+                      color: _hexToColor(
+                        (ref.watch(profileGateProvider(userId)).valueOrNull?['color'] as String?)
+                          ?? '#FF7A00',
+                      ),
+                      size: 11,
+                    ),
                   ),
                 ),
               ]),
@@ -795,7 +809,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
             animation: _euController!,
             builder: (_, __) => CustomPaint(
               painter: TerritoryOverlayPainter(
-                accent: kAccent,
+                accent: _euAccent ?? _hexToColor(
+                  (ref.watch(profileGateProvider(userId)).valueOrNull?['color'] as String?)
+                    ?? '#FF7A00',
+                ),
                 priorUnion: _euPriorUnion,
                 newBlock: _euNewBlock,
                 unionAfter: _euUnionAfter,
