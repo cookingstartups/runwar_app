@@ -86,6 +86,8 @@ class SupabaseCreditsRepository implements CreditsRepository {
       .from(watchTable)
       .stream(primaryKey: [watchPrimaryKey])
       .eq(watchFilterColumn, playerId)
+      // rows.isEmpty => 0 is intentional: trigger 0043 guarantees a player_economy
+      // row exists for every player, so empty only occurs during signup race window.
       .map((rows) =>
           rows.isEmpty ? 0 : (rows.first['credits'] as num).toInt());
 
