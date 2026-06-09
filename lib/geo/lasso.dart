@@ -167,9 +167,9 @@ bool pointInPolygon(LatLng pt, List<LatLng> poly) {
 //
 // Parametric segment-segment intersection in lat/lng space (treated as planar
 // for short distances < a few km; sufficient for city-scale GPS territory).
-// Returns intersection point only if both parametric parameters are strictly
-// in (0, 1) — proper crossing only; endpoint-touch and collinear-overlap
-// both return null.
+// Returns intersection point when t is strictly in (0, 1) and u is in (0, 1].
+// Allowing u == 1 means a GPS endpoint that lands exactly on a prior segment
+// is detected as a valid lasso closure. Collinear-overlap returns null.
 // ---------------------------------------------------------------------------
 
 LatLng? segmentSegmentIntersection(
@@ -186,7 +186,7 @@ LatLng? segmentSegmentIntersection(
   if (denom.abs() < _eps) return null; // parallel / collinear
   final t = ((c.latitude - a.latitude) * s1 - (c.longitude - a.longitude) * s0) / denom;
   final u = ((c.latitude - a.latitude) * r1 - (c.longitude - a.longitude) * r0) / denom;
-  if (t <= 0 || t >= 1 || u <= 0 || u >= 1) return null;
+  if (t <= 0 || t >= 1 || u <= 0 || u > 1) return null;
   return LatLng(a.latitude + t * r0, a.longitude + t * r1);
 }
 

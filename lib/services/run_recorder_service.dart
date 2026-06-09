@@ -7,11 +7,9 @@ import 'package:latlong2/latlong.dart';
 import 'realtime_presence_service.dart';
 import 'run_scratch_store.dart';
 import 'telemetry_service.dart';
-import 'daily_missions_service.dart';
+import '../geo/lasso.dart' show detectSelfIntersection, computeCapture, polygonArea;
 
-enum RecorderState { idle, recording, awaitingClaim }
-
-enum LoopResult { valid, invalid, notRecording }
+enum RecorderState { idle, recording }
 
 class RunRecorderService {
   RunRecorderService._();
@@ -32,6 +30,26 @@ class RunRecorderService {
   String? _activeUserId;
   Timer? _notifTimer;
 
+  // Lower bound for the self-intersection scan. Set to 0 at startRun,
+  // advanced to _track.length after each successful or area-rejected claim.
+  int _loopStartTrailIndex = 0;
+
+  // Wall-clock moment of the FAB Start tap. Used for the 60-second gate.
+  // Persists across multiple auto-claims within the same session.
+  DateTime? _sessionStartTime;
+
+  // Callback invoked when an auto-claim should fire. Set by the provider
+  // during construction; the service does not import the provider layer.
+  Future<void> Function(List<LatLng> capturedPolygon)? onAutoClaim;
+
+  // Area floor for auto-claim. Below this, GPS jitter micro-loops are
+  // silently discarded.
+  static const double _minCapturedAreaSqm = 200.0;
+
+  // No auto-claim may fire before this many seconds have elapsed since
+  // the FAB Start tap. Applies once per session, not per loop.
+  static const int _minSessionElapsedSec = 60;
+
   void setActiveUser(String? userId) => _activeUserId = userId;
 
   List<LatLng> get track => List.unmodifiable(_track);
@@ -39,16 +57,13 @@ class RunRecorderService {
   DateTime? get startedAt => _startedAt;
   DateTime? get closedAt => _closedAt;
 
-  static const double _minPerimeterM = 200;
-  static const double _maxReturnGapM = 250;
-  static const int _minElapsedSec = 60;
-  static const double _earthRadiusM = 6371008.8;
-
   Future<void> startRun() async {
     if (stateNotifier.value == RecorderState.recording) return;
-    _track.clear();
+    _clearTrackInternal();
     _startedAt = DateTime.now().toUtc();
     _closedAt = null;
+    _loopStartTrailIndex = 0;
+    _sessionStartTime = DateTime.now();
     trackVersion.value++;
     // Clear any leftover scratch points from a previous run.
     final uid = _activeUserId;
@@ -72,7 +87,7 @@ class RunRecorderService {
     _track.add(LatLng(pos.latitude, pos.longitude));
     RealtimePresenceService.instance.updatePosition(LatLng(pos.latitude, pos.longitude));
     trackVersion.value++;
-    // Persist point to sqflite scratch table for crash/process-kill recovery.
+    // Persist point to scratch table for crash/process-kill recovery.
     final uid = _activeUserId;
     if (uid != null) {
       RunScratchStore.instance.insertPoint(
@@ -83,6 +98,9 @@ class RunRecorderService {
         ts: pos.timestamp.toIso8601String(),
       ).catchError((_) {});
     }
+
+    // Auto-claim scan on every new fix.
+    _scanForAutoClaim();
   }
 
   Future<void> _startForegroundTask() async {
@@ -109,7 +127,7 @@ class RunRecorderService {
       notificationTitle: 'Run in progress',
       notificationText: '00:00',
     );
-    // Update the notification body with elapsed time every 30 s (AC-4).
+    // Update the notification body with elapsed time every 30 s.
     // The timer runs on the main isolate so it can read _startedAt directly.
     _notifTimer?.cancel();
     _notifTimer = Timer.periodic(const Duration(seconds: 30), (_) {
@@ -127,11 +145,11 @@ class RunRecorderService {
     });
   }
 
-  Future<LoopResult> stopRun() async {
-    final s = stateNotifier.value;
-    if (s == RecorderState.idle || s == RecorderState.awaitingClaim) {
-      return LoopResult.notRecording;
-    }
+  /// Ends the recording session without evaluating any loop validity gates.
+  /// The recorder transitions directly to idle. Any in-flight onAutoClaim
+  /// futures continue to completion independently.
+  Future<void> stopRun() async {
+    if (stateNotifier.value != RecorderState.recording) return;
     _notifTimer?.cancel();
     _notifTimer = null;
     await _posSub?.cancel();
@@ -139,31 +157,36 @@ class RunRecorderService {
     RealtimePresenceService.instance.setRecording(false);
     unawaited(FlutterForegroundTask.stopService());
     _closedAt = DateTime.now().toUtc();
-
-    final perimeter = _trackPerimeter();
-    final returnGap = _track.length >= 2
-        ? _haversine(_track.first, _track.last)
-        : double.infinity;
-    final elapsed = (_startedAt == null)
-        ? 0
-        : _closedAt!.difference(_startedAt!).inSeconds;
-
-    final valid = perimeter >= _minPerimeterM &&
-        returnGap <= _maxReturnGapM &&
-        elapsed > _minElapsedSec;
-
-    if (valid) {
-      stateNotifier.value = RecorderState.awaitingClaim;
-      TelemetryService.instance.logEvent('valid_loop', props: {'perimeter_m': perimeter.round()}).catchError((_) {});
-      final uid = _activeUserId;
-      if (uid != null) {
-        DailyMissionsService.instance.reportProgress(uid, 'walk_2km', perimeter.round()).catchError((_) {});
-        DailyMissionsService.instance.reportProgress(uid, 'back_to_back', 1).catchError((_) {});
-      }
-      // Scratch cleared only after successful claim (in confirmClaim via discardRun).
-      return LoopResult.valid;
+    // Track is retained in memory in case an in-flight onAutoClaim future
+    // is still using it. _clearTrackInternal runs on the NEXT startRun().
+    // Scratch is cleared here so a future resumeFromScratch on a
+    // killed-app path does not re-hydrate this finished session.
+    final uid = _activeUserId;
+    if (uid != null) {
+      try {
+        await RunScratchStore.instance.deleteForUser(uid);
+      } catch (_) {}
     }
-    // Invalid loop — clear scratch immediately.
+    _loopStartTrailIndex = 0;
+    _sessionStartTime = null;
+    stateNotifier.value = RecorderState.idle;
+    TelemetryService.instance.logEvent('stop_run').catchError((_) {});
+  }
+
+  /// Discards the current track and idles the recorder WITHOUT claiming.
+  /// Triggered by FAB long-press while recording.
+  ///
+  /// Pre: state == recording (no-op otherwise).
+  /// Post: state == idle; track cleared; presence untracked; GPS stream closed;
+  ///       scratch table cleared.
+  Future<void> cancelRun() async {
+    if (stateNotifier.value != RecorderState.recording) return;
+    _notifTimer?.cancel();
+    _notifTimer = null;
+    await _posSub?.cancel();
+    _posSub = null;
+    RealtimePresenceService.instance.setRecording(false);
+    unawaited(FlutterForegroundTask.stopService());
     final uid = _activeUserId;
     if (uid != null) {
       try {
@@ -171,33 +194,62 @@ class RunRecorderService {
       } catch (_) {}
     }
     _clearTrackInternal();
+    _loopStartTrailIndex = 0;
+    _sessionStartTime = null;
     stateNotifier.value = RecorderState.idle;
-    return LoopResult.invalid;
+    TelemetryService.instance.logEvent('cancel_run').catchError((_) {});
   }
 
-  /// Force-close — bypasses loop-closure thresholds.
-  void forceClose() {
-    if (stateNotifier.value != RecorderState.recording) return;
-    _posSub?.cancel();
-    _posSub = null;
-    _closedAt = DateTime.now().toUtc();
-    stateNotifier.value = RecorderState.awaitingClaim;
-  }
+  /// Runs detectSelfIntersection on the newest segment and dispatches an
+  /// auto-claim if the captured polygon clears the 200 m^2 floor and the
+  /// 60-second post-start window has elapsed.
+  ///
+  /// Pre: state == recording; _track.length >= 1; _sessionStartTime != null.
+  /// Post: at most one onAutoClaim future is dispatched per call.
+  void _scanForAutoClaim() {
+    // detectSelfIntersection requires loopStartTrailIndex >= 1.
+    // When _loopStartTrailIndex is 0 (initial state), clamp to 1 so the
+    // first segment of the track is included in the scan.
+    final scanStart = math.max(1, _loopStartTrailIndex);
+    final hit = detectSelfIntersection(_track, scanStart);
+    if (hit == null) return;
 
-  /// Discard current run and reset to idle.
-  void discardRun() {
-    _notifTimer?.cancel();
-    _notifTimer = null;
-    _posSub?.cancel();
-    _posSub = null;
-    RealtimePresenceService.instance.setRecording(false);
-    unawaited(FlutterForegroundTask.stopService());
-    final uid = _activeUserId;
-    if (uid != null) {
-      RunScratchStore.instance.deleteForUser(uid).catchError((_) {});
+    final k = _track.length - 1;
+    final polygon = computeCapture(
+      _track,
+      scanStart,
+      hit.intersectingSegmentIdx,
+      hit.intersectionPoint,
+      k,
+    );
+
+    // Area floor (m^2). polygonArea returns km^2 -> convert.
+    final areaSqm = polygonArea(polygon) * 1e6;
+    if (areaSqm < _minCapturedAreaSqm) {
+      _loopStartTrailIndex = _track.length; // skip this crossing forever
+      return;
     }
-    _clearTrackInternal();
-    stateNotifier.value = RecorderState.idle;
+
+    // 60-second gate (per session, not per loop).
+    final start = _sessionStartTime;
+    if (start == null ||
+        DateTime.now().difference(start).inSeconds < _minSessionElapsedSec) {
+      // Leave _loopStartTrailIndex unchanged so this crossing re-evaluates
+      // on the next fix once the 60-second wall-clock threshold passes.
+      return;
+    }
+
+    // Advance index BEFORE dispatching the claim so a fast second fix
+    // does not re-fire the same crossing.
+    _loopStartTrailIndex = _track.length;
+
+    final cb = onAutoClaim;
+    if (cb != null) {
+      // Fire-and-forget; exceptions are swallowed here so a failed claim
+      // does not crash the GPS recording loop. The provider layer catches
+      // errors and surfaces them via _autoClaimOutcomeController.
+      cb(polygon).catchError((_) {});
+    }
   }
 
   /// Opens the GPS position stream and stores the subscription in [_posSub].
@@ -213,7 +265,7 @@ class RunRecorderService {
   }
 
   /// Rehydrates [_track] from run_scratch rows for [userId], then restarts
-  /// the foreground service and GPS subscription (AC-13).
+  /// the foreground service and GPS subscription.
   ///
   /// Pre: state == idle; [_activeUserId] is set; run_scratch has rows for [userId].
   /// Post: _track.length == row count; foreground service is running.
@@ -236,15 +288,65 @@ class RunRecorderService {
       // Use the earliest scratch timestamp so elapsed time carries over.
       _startedAt = earliest ?? DateTime.now().toUtc();
       _closedAt = null;
+      _loopStartTrailIndex = 0;
+      // Wall-clock session start reconstructed from earliest sample so the
+      // 60-second gate behaves correctly across kill+resume.
+      _sessionStartTime = earliest?.toLocal() ?? DateTime.now();
       trackVersion.value++;
+
+      // Iterative re-scan for missed intersections during background.
+      await _rescanRehydratedTrack();
+
       await _startForegroundTask();
       _openGpsStream();
       stateNotifier.value = RecorderState.recording;
     } catch (_) {}
   }
 
+  /// Iterates _track from index 0, calling detectSelfIntersection at each
+  /// position. Each successful claim advances _loopStartTrailIndex past the
+  /// matched crossing and continues. Failed claims advance silently.
+  Future<void> _rescanRehydratedTrack() async {
+    for (int len = 2; len <= _track.length; len++) {
+      final partial = _track.sublist(0, len);
+      final scanStart = math.max(1, _loopStartTrailIndex);
+      final hit = detectSelfIntersection(partial, scanStart);
+      if (hit == null) continue;
+      final polygon = computeCapture(
+        partial,
+        scanStart,
+        hit.intersectingSegmentIdx,
+        hit.intersectionPoint,
+        len - 1,
+      );
+      final areaSqm = polygonArea(polygon) * 1e6;
+      if (areaSqm < _minCapturedAreaSqm) {
+        _loopStartTrailIndex = len;
+        continue;
+      }
+      // 60-second gate at the timestamp of partial.last (approximate via
+      // _sessionStartTime, which was set above from the earliest scratch ts).
+      final start = _sessionStartTime;
+      if (start == null ||
+          DateTime.now().difference(start).inSeconds < _minSessionElapsedSec) {
+        // Edge: scratch was rehydrated very fast after start. Skip - the
+        // crossing will re-fire from live GPS once 60 s elapses.
+        continue;
+      }
+      _loopStartTrailIndex = len;
+      final cb = onAutoClaim;
+      if (cb != null) {
+        // Run sequentially so concurrent zones never collide; await blocks
+        // the rescan loop but the session is still in `idle` UI-wise.
+        try {
+          await cb(polygon);
+        } catch (_) {}
+      }
+    }
+  }
+
   /// Deletes all run_scratch rows for [userId] without affecting [_track],
-  /// the foreground service, or state (used internally by discardRun).
+  /// the foreground service, or state.
   Future<void> clearScratch(String userId) async {
     try {
       await RunScratchStore.instance.deleteForUser(userId);
@@ -255,25 +357,40 @@ class RunRecorderService {
     _track.clear();
     _startedAt = null;
     _closedAt = null;
+    _sessionStartTime = null;
     trackVersion.value++;
   }
 
-  double _trackPerimeter() {
-    if (_track.length < 2) return 0;
-    var sum = 0.0;
-    for (var i = 0; i < _track.length - 1; i++) {
-      sum += _haversine(_track[i], _track[i + 1]);
-    }
-    return sum;
+  // ── Test-only seams ──────────────────────────────────────────────────────────
+
+  @visibleForTesting
+  static RunRecorderService instanceForTesting() => RunRecorderService._();
+
+  @visibleForTesting
+  void injectSessionStartTime(DateTime t) => _sessionStartTime = t;
+
+  @visibleForTesting
+  void injectState(RecorderState s) => stateNotifier.value = s;
+
+  @visibleForTesting
+  void injectTrackForTesting(List<LatLng> pts) {
+    _track
+      ..clear()
+      ..addAll(pts);
   }
 
-  double _haversine(LatLng a, LatLng b) {
-    final p1 = a.latitude * math.pi / 180.0;
-    final p2 = b.latitude * math.pi / 180.0;
-    final dp = (b.latitude - a.latitude) * math.pi / 180.0;
-    final dl = (b.longitude - a.longitude) * math.pi / 180.0;
-    final h = math.sin(dp / 2) * math.sin(dp / 2) +
-        math.cos(p1) * math.cos(p2) * math.sin(dl / 2) * math.sin(dl / 2);
-    return 2 * _earthRadiusM * math.asin(math.min(1.0, math.sqrt(h)));
+  @visibleForTesting
+  void runScanForAutoClaimForTesting() => _scanForAutoClaim();
+
+  @visibleForTesting
+  int get loopStartTrailIndexForTesting => _loopStartTrailIndex;
+
+  @visibleForTesting
+  void reset() {
+    _loopStartTrailIndex = 0;
+    _sessionStartTime = null;
+    _track.clear();
+    stateNotifier.value = RecorderState.idle;
+    onAutoClaim = null;
   }
 }

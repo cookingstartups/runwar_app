@@ -25,7 +25,6 @@ import '../services/realtime_presence_service.dart';
 import '../services/superpower_service.dart';
 import '../services/supabase_service.dart';
 import '../services/territory_service.dart';
-import '../services/error_log_service.dart';
 import '../services/trial_service.dart';
 import '../services/database/models/zone.dart';
 import '../services/database/models/city_config.dart';
@@ -94,9 +93,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
   late final AnimationController _terrainPulse;
 
   // Cached city name updated on every build; read at transition time by the
-  // manual listener so the auto-claim handler always receives the current value.
+  // stream handler so the auto-claim handler always receives the current value.
   String? _currentCity;
-  late final ProviderSubscription<RecorderState> _recorderSub;
+  StreamSubscription<({ClaimOutcome outcome, List<LatLng> polygon})>? _autoClaimSub;
 
   // ── Expand & Unify overlay state ──────────────────────────────────────────
   AnimationController? _euController;
@@ -118,13 +117,12 @@ class _MapScreenState extends ConsumerState<MapScreen>
       duration: const Duration(milliseconds: 2400),
     )..repeat(reverse: true);
 
-    // Register the RecorderState listener unconditionally in initState so
-    // the recording -> awaitingClaim transition is never lost due to an
-    // early-return in build() while joinedCitySlugsProvider is loading.
-    _recorderSub = ref.listenManual<RecorderState>(
-      runRecorderProvider,
-      _onRecorderStateChanged,
-    );
+    // Subscribe to the auto-claim outcome stream unconditionally in initState
+    // so claim results are never lost regardless of build() state.
+    _autoClaimSub = ref
+        .read(runRecorderProvider.notifier)
+        .autoClaimOutcomes
+        .listen(_onAutoClaimOutcome);
 
     SuperpowerService.instance.onShieldEarned = (grant) {
       if (mounted) _showShieldEarnedModal(grant);
@@ -175,7 +173,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
 
   @override
   void dispose() {
-    _recorderSub.close();
+    _autoClaimSub?.cancel();
     SuperpowerService.instance.onShieldEarned = null;
     _terrainPulse.dispose();
     _euController?.dispose();
@@ -339,7 +337,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         // ── Run recording FAB ──────────────────────────────────────
         GestureDetector(
           onLongPress: isRecording
-              ? () => ref.read(runRecorderProvider.notifier).forceClose()
+              ? () => ref.read(runRecorderProvider.notifier).cancel()
               : null,
           child: FloatingActionButton(
             heroTag: 'run_rec',
@@ -394,18 +392,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
       await BatteryOptimizationService.requestOnce();
       await notifier.start();
     } else if (s == RecorderState.recording) {
-      final result = await notifier.stop();
-      if (!context.mounted) return;
-      if (result == LoopResult.invalid) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content:
-              Text('Loop too short or not closed — try again'),
-        ));
-      }
-      // LoopResult.valid → awaitingClaim state triggers the bottom sheet
-      // via the ref.listen handler in build().
+      // Tap always ends the session unconditionally. No validity gates.
+      await notifier.stop();
     }
-    // s == awaitingClaim → sheet is isDismissible:false; tap ignored.
   }
 
   /// Projects [latlngs] to screen Offsets using the current map camera.
@@ -506,92 +495,41 @@ class _MapScreenState extends ConsumerState<MapScreen>
     });
   }
 
-  void _onRecorderStateChanged(RecorderState? prev, RecorderState next) {
-    if (next == RecorderState.awaitingClaim &&
-        prev != RecorderState.awaitingClaim &&
-        mounted) {
-      // Read city at transition time from _currentCity, which is kept
-      // fresh on every build(). Fall back to the first joined-city slug
-      // in case build() has not yet run after the state change.
-      final auth = ref.read(authProvider);
-      final userId = auth.user?['id'] as String?;
-      final city = _currentCity ??
-          (userId != null
-              ? capitalize(
-                  ref
-                          .read(joinedCitySlugsProvider(userId))
-                          .valueOrNull
-                          ?.firstOrNull ??
-                      '',
-                )
-              : '');
-      _autoClaim(context, city);
-    }
-  }
-
-  Future<void> _autoClaim(BuildContext context, String city) async {
+  /// Handles an auto-claim outcome emitted by RunRecorderNotifier.autoClaimOutcomes.
+  /// Triggers E&U animation, mission hooks, and result snack.
+  /// The recorder remains in `recording` state throughout this handler.
+  void _onAutoClaimOutcome(
+      ({ClaimOutcome outcome, List<LatLng> polygon}) ev) {
+    if (!mounted) return;
+    final outcome = ev.outcome;
+    final polygon = ev.polygon;
     final auth = ref.read(authProvider);
-    final userId = auth.user?['id'] as String?;
-    if (userId == null) {
-      ref.read(runRecorderProvider.notifier).discard();
+    final userId = (auth.user?['id'] as String?) ?? '';
+    final city = _currentCity ?? '';
+
+    if (outcome.result == TerritoryResult.failed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Claim failed - try again')),
+      );
       return;
     }
-    try {
-      await _executeConfirmClaim(context, userId, city);
-    } catch (e, st) {
-      debugPrint('[MapScreen] _autoClaim failed: $e\n$st');
-      ref.read(runRecorderProvider.notifier).discard();
-      ErrorLogService.logClientError(
-        provider: '_autoClaim',
-        error: e,
-        stackTrace: st,
-        retryCount: 0,
-        userId: userId,
-      );
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Claim failed — try again')),
-        );
-      }
-    }
-  }
 
-  /// Executes the full claim flow after auth guard passes.
-  /// Called by [_autoClaim] inside a try/catch so any exception triggers discard.
-  Future<void> _executeConfirmClaim(
-    BuildContext context,
-    String userId,
-    String city,
-  ) async {
-    // Snapshot track and prior zones BEFORE confirmClaim (which calls discardRun).
-    final trackBefore = RunRecorderService.instance.trackSnapshot;
-    final zonesBefore = ref.read(zonesProvider(city)).valueOrNull ?? const [];
-
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Claiming territory…'), duration: Duration(seconds: 10)),
-    );
-    final outcome = await ref
-        .read(runRecorderProvider.notifier)
-        .confirmClaim(userId, city);
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    // Fire E&U animation on any successful claim or conquest.
+    // E&U animation: use the captured polygon (not raw _track).
     if (outcome.result == TerritoryResult.claimed ||
         outcome.result == TerritoryResult.conquered) {
+      final zonesBefore = ref.read(zonesProvider(city)).valueOrNull ?? const [];
       final priorZoneScreenPts = zonesBefore
           .where((z) => z.ownerId == userId)
           .map((z) => _projectToScreen(z.points))
           .where((pts) => pts.isNotEmpty)
           .toList();
-      final newBlockScreenPts = _projectToScreen(trackBefore);
+      final newBlockScreenPts = _projectToScreen(polygon);
       // Snapshot GPS trail for comet + runner (capped to last 60 points).
       final routePointsCapped = newBlockScreenPts.length > 60
           ? newBlockScreenPts.sublist(newBlockScreenPts.length - 60)
           : newBlockScreenPts;
       // Compute captured area in square meters.
-      final areaKm2 = polygonArea(trackBefore);
+      final areaKm2 = polygonArea(polygon);
       final sqm = (areaKm2.isFinite
               ? (areaKm2 * 1e6).clamp(0.0, 0x7FFFFFFF.toDouble())
               : 0.0)
@@ -609,8 +547,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         debugPrint('[MapScreen] mpp lookup failed: $e');
       }
       // Determine owner color from profile (default to kAccent).
-      final ownerProfile =
-          ref.read(profileGateProvider(userId)).valueOrNull;
+      final ownerProfile = ref.read(profileGateProvider(userId)).valueOrNull;
       final ownerColor =
           _hexToColor(ownerProfile?['color']?.toString() ?? '#FF7A00');
       _startEUAnimation(
@@ -628,7 +565,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     if (widget.missionStep == MissionStep.mission1Claim &&
         (outcome.result == TerritoryResult.claimed ||
             outcome.result == TerritoryResult.conquered)) {
-      await _completeMission1(context, userId, city);
+      unawaited(_completeMission1(context, userId, city));
       return;
     }
 
@@ -637,7 +574,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         (outcome.result == TerritoryResult.conquered ||
             outcome.result == TerritoryResult.disputed) &&
         outcome.affectedZoneId != null) {
-      await _completeMission2(context, userId, outcome.affectedZoneId!);
+      unawaited(_completeMission2(context, userId, outcome.affectedZoneId!));
       return;
     }
 
@@ -705,6 +642,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
       // pendingBotZoneIdProvider stays null; Gate 5b falls back to ''.
     }
 
+    // Clean up the active recording session before navigating away.
+    await ref.read(runRecorderProvider.notifier).cancel();
+
     // Invalidate mission status — _RouteGuard rebuilds and shows Gate 5b (FirstAttackBriefingScreen).
     ref.invalidate(missionStatusProvider(userId));
   }
@@ -735,6 +675,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
     }
 
     ref.invalidate(missionStatusProvider(userId));
+
+    // Clean up the active recording session before navigating away.
+    await ref.read(runRecorderProvider.notifier).cancel();
 
     if (!context.mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
