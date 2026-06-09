@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'error_log_service.dart';
 import 'realtime_presence_service.dart';
 import 'run_scratch_store.dart';
 import 'telemetry_service.dart';
@@ -300,7 +301,11 @@ class RunRecorderService {
       await _startForegroundTask();
       _openGpsStream();
       stateNotifier.value = RecorderState.recording;
-    } catch (_) {}
+    } catch (e, st) {
+      ErrorLogService.logClientError(
+        provider: 'resumeFromScratch', error: e, stackTrace: st, retryCount: 0,
+      );
+    }
   }
 
   /// Iterates _track from index 0, calling detectSelfIntersection at each

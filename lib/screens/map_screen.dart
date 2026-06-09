@@ -585,7 +585,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   /// celebration overlay, then navigates to FirstAttackBriefingScreen.
   Future<void> _completeMission1(
       BuildContext context, String userId, String city) async {
-    // 1. Server stamp + credits (fire-and-forget on network error — still shows overlay).
+    // 1. Server stamp + credits. On failure, show error and abort - do not show overlay.
     try {
       final resp = await SupabaseService.instance.supabase.functions
           .invoke('complete_first_mission', body: {});
@@ -606,7 +606,12 @@ class _MapScreenState extends ConsumerState<MapScreen>
         }
       }
     } catch (e) {
-      debugPrint('[MapScreen] complete_first_mission failed: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Mission save failed - please try again')),
+        );
+      }
+      return;
     }
 
     // 2. Invalidate providers so _RouteGuard reflects new state.
@@ -643,7 +648,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
     }
 
     // Clean up the active recording session before navigating away.
-    await ref.read(runRecorderProvider.notifier).cancel();
+    try {
+      await ref.read(runRecorderProvider.notifier).cancel();
+    } catch (e) {
+      debugPrint('[MapScreen] cancel during mission completion failed: $e');
+    }
 
     // Invalidate mission status — _RouteGuard rebuilds and shows Gate 5b (FirstAttackBriefingScreen).
     ref.invalidate(missionStatusProvider(userId));
@@ -671,13 +680,22 @@ class _MapScreenState extends ConsumerState<MapScreen>
         }
       }
     } catch (e) {
-      debugPrint('[MapScreen] complete_first_attack failed: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Mission save failed - please try again')),
+        );
+      }
+      return;
     }
 
     ref.invalidate(missionStatusProvider(userId));
 
     // Clean up the active recording session before navigating away.
-    await ref.read(runRecorderProvider.notifier).cancel();
+    try {
+      await ref.read(runRecorderProvider.notifier).cancel();
+    } catch (e) {
+      debugPrint('[MapScreen] cancel during mission completion failed: $e');
+    }
 
     if (!context.mounted) return;
     Navigator.of(context).pushAndRemoveUntil(

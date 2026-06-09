@@ -73,21 +73,51 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   Future<void> _handleAutoClaim(List<LatLng> capturedPolygon) async {
     final auth = _ref.read(authProvider);
     final userId = auth.user?['id'] as String?;
-    if (userId == null) return;
+    if (userId == null) {
+      ErrorLogService.logClientError(
+        provider: '_handleAutoClaim',
+        error: 'userId null - auto-claim dropped',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+      if (!_autoClaimOutcomeController.isClosed) {
+        _autoClaimOutcomeController.add(
+          (outcome: const ClaimOutcome(TerritoryResult.failed, null), polygon: capturedPolygon),
+        );
+      }
+      return;
+    }
     // City is resolved from joinedCitySlugsProvider - first slug, capitalised.
     final slugs = _ref.read(joinedCitySlugsProvider(userId)).valueOrNull;
-    if (slugs == null || slugs.isEmpty) return;
+    if (slugs == null || slugs.isEmpty) {
+      ErrorLogService.logClientError(
+        provider: '_handleAutoClaim',
+        error: 'joinedCitySlugs null/empty - auto-claim dropped',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+      if (!_autoClaimOutcomeController.isClosed) {
+        _autoClaimOutcomeController.add(
+          (outcome: const ClaimOutcome(TerritoryResult.failed, null), polygon: capturedPolygon),
+        );
+      }
+      return;
+    }
     final city = capitalize(slugs.first);
     try {
       final outcome = await confirmClaim(userId, city, capturedPolygon);
       // Push outcome to the stream MapScreen listens on for the E&U overlay.
-      _autoClaimOutcomeController
-          .add((outcome: outcome, polygon: capturedPolygon));
+      if (!_autoClaimOutcomeController.isClosed) {
+        _autoClaimOutcomeController
+            .add((outcome: outcome, polygon: capturedPolygon));
+      }
     } catch (e, st) {
-      _autoClaimOutcomeController.add((
-        outcome: const ClaimOutcome(TerritoryResult.failed, null),
-        polygon: capturedPolygon,
-      ));
+      if (!_autoClaimOutcomeController.isClosed) {
+        _autoClaimOutcomeController.add((
+          outcome: const ClaimOutcome(TerritoryResult.failed, null),
+          polygon: capturedPolygon,
+        ));
+      }
       ErrorLogService.logClientError(
         provider: '_handleAutoClaim',
         error: e,
@@ -247,6 +277,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
 
   @override
   void dispose() {
+    RunRecorderService.instance.onAutoClaim = null;
     RunRecorderService.instance.stateNotifier.removeListener(_onServiceState);
     RunRecorderService.instance.trackVersion.removeListener(_onTrackVersion);
     _autoClaimOutcomeController.close();
