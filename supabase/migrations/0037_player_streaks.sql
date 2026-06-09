@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS player_streaks (
 );
 
 -- Backfill: one row per existing player.
--- Reads players.streak as canonical (players.current_streak is the redundant alias — skip it).
+-- Reads players.streak as canonical (players.current_streak is the redundant alias - skip it).
 DO $$
 DECLARE
   expected_count INT;
