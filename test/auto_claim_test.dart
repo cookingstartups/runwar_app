@@ -487,19 +487,18 @@ void main() {
 // Path builders for area-floor tests
 // ---------------------------------------------------------------------------
 
-// A tiny crossing path: two segments that cross but produce a very small polygon.
-// The crossing creates a loop of roughly 0.0001 x 0.0001 degrees ~ 10m x 9m ~ 90 m^2.
+// A tiny X-crossing path: segment C->D crosses segment A->B at their midpoints.
+// Captured polygon is roughly a 5m x 4m quadrilateral (~63 m^2), well below 200 m^2.
+// At lat 34.7: 0.00005 deg lat = ~5.5m, 0.00005 deg lng = ~4.3m.
 List<LatLng> _buildMicroCrossPath() => [
-      // index 0: A
+      // index 0: A - origin
       const LatLng(34.700000, 33.000000),
-      // index 1: B
-      const LatLng(34.700000, 33.000200), // 0.0002 deg lng ~ 18 m E
-      // index 2: C
-      const LatLng(34.700200, 33.000200), // 0.0002 deg lat ~ 22 m N
-      // index 3: D
-      const LatLng(34.700200, 33.000000), // back W
-      // index 4: E - crosses A->B at roughly (34.700000, 33.000100)
-      const LatLng(34.700000, 33.000100),
+      // index 1: B - ~7m NE
+      const LatLng(34.700050, 33.000050),
+      // index 2: C - ~5.5m north of A, same longitude
+      const LatLng(34.700050, 33.000000),
+      // index 3: D - crosses A->B at midpoint (34.700025, 33.000025); captured area ~63 m^2
+      const LatLng(34.700000, 33.000050),
     ];
 
 // Extended figure-8 path: appends a second crossing loop after the first one.
