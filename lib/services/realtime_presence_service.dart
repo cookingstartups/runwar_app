@@ -46,6 +46,8 @@ class PlayerPresence {
 
 /// Broadcasts own GPS position at 1 Hz via Supabase Presence.
 /// Other players' positions are emitted via [playersStream].
+/// Presence is only published to rivals while recording is active
+/// (between setRecording(true) and setRecording(false)).
 class RealtimePresenceService {
   RealtimePresenceService._();
   static final RealtimePresenceService instance = RealtimePresenceService._();
@@ -92,31 +94,47 @@ class RealtimePresenceService {
             return;
           }
           if (status == RealtimeSubscribeStatus.subscribed) {
-            await _channel!.track({
-              'player_id': playerId,
-              'display_name': displayName,
-              'color': color,
-              'lat': 0,
-              'lng': 0,
-              't': DateTime.now().millisecondsSinceEpoch,
-            });
+            // Channel is live but we publish nothing until setRecording(true).
           }
         });
 
     _startBroadcasting();
   }
 
-  /// Update local position — broadcast will pick it up on next tick.
+  /// Update local position - broadcast will pick it up on next tick when recording.
   void updatePosition(LatLng position) {
     _currentPosition = position;
   }
 
-  void setRecording(bool v) => _isRecording = v;
+  void setRecording(bool v) {
+    final wasRecording = _isRecording;
+    _isRecording = v;
+    if (wasRecording && !v) {
+      // Recording just stopped: drop our presence slot so rivals see leave.
+      _untrackSafely();
+    }
+  }
+
   void setColorHex(String? v) => _colorHex = v;
+
+  void _untrackSafely() {
+    // Record that untrack was requested (test seam tracks intent, not result).
+    _untrackCalled = true;
+    final ch = _channel;
+    if (ch == null) return;
+    try {
+      // untrack() is idempotent in the Supabase Realtime SDK; calling
+      // before any track() is a no-op rather than an error.
+      unawaited(ch.untrack());
+    } catch (e) {
+      debugPrint('[Presence] untrack failed: $e');
+    }
+  }
 
   void _startBroadcasting() {
     _broadcastTimer?.cancel();
     _broadcastTimer = Timer.periodic(kPresenceBroadcastInterval, (_) {
+      if (!_isRecording) return; // Gate: only broadcast during active recording
       final pos = _currentPosition;
       if (pos == null || _channel == null || _myPlayerId == null) return;
       _channel!.track({
@@ -126,7 +144,7 @@ class RealtimePresenceService {
         'lat': pos.latitude,
         'lng': pos.longitude,
         't': DateTime.now().millisecondsSinceEpoch,
-        'rec': _isRecording,
+        'rec': true, // always true when published
         'color_hex': _colorHex ?? _myColor ?? '#FF7A00',
       });
     });
@@ -163,5 +181,27 @@ class RealtimePresenceService {
     _broadcastTimer?.cancel();
     await _channel?.unsubscribe();
     await _controller.close();
+  }
+
+  // ── Test-only seams ──────────────────────────────────────────────────────────
+
+  @visibleForTesting
+  static RealtimePresenceService instanceForTesting() =>
+      RealtimePresenceService._();
+
+  @visibleForTesting
+  bool get isRecordingForTesting => _isRecording;
+
+  // Tracks whether _untrackSafely() has been called. Read via public getter below.
+  bool _untrackCalled = false;
+
+  @visibleForTesting
+  bool get untrackCalledForTesting => _untrackCalled;
+
+  @visibleForTesting
+  void resetForTesting() {
+    _isRecording = false;
+    _untrackCalled = false;
+    _currentPosition = null;
   }
 }

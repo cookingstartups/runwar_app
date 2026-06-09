@@ -10,6 +10,9 @@ import '../services/supabase_service.dart';
 import '../services/superpower_service.dart';
 import '../services/outbox_aware_writer.dart';
 import '../services/error_log_service.dart';
+import '../utils/string_utils.dart';
+import 'auth_provider.dart';
+import 'cities_provider.dart';
 import 'connectivity_provider.dart';
 import 'runs_provider.dart';
 import 'zones_provider.dart';
@@ -29,9 +32,19 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     final svc = RunRecorderService.instance;
     svc.stateNotifier.addListener(_onServiceState);
     svc.trackVersion.addListener(_onTrackVersion);
+    // Register the auto-claim callback.
+    svc.onAutoClaim = _handleAutoClaim;
   }
 
   final Ref _ref;
+
+  final _autoClaimOutcomeController =
+      StreamController<({ClaimOutcome outcome, List<LatLng> polygon})>.broadcast();
+
+  /// Stream of auto-claim outcomes. MapScreen listens on this for E&U overlay
+  /// triggering and mission hook invocation.
+  Stream<({ClaimOutcome outcome, List<LatLng> polygon})> get autoClaimOutcomes =>
+      _autoClaimOutcomeController.stream;
 
   void _onServiceState() {
     state = RunRecorderService.instance.stateNotifier.value;
@@ -46,25 +59,89 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
 
   Future<void> start() => RunRecorderService.instance.startRun();
 
-  Future<LoopResult> stop() => RunRecorderService.instance.stopRun();
+  Future<void> stop() => RunRecorderService.instance.stopRun();
 
-  void discard() => RunRecorderService.instance.discardRun();
+  Future<void> cancel() => RunRecorderService.instance.cancelRun();
 
-  void forceClose() => RunRecorderService.instance.forceClose();
-
-  /// Resumes a run from orphaned run_scratch rows (AC-13).
+  /// Resumes a run from orphaned run_scratch rows.
   /// Delegates to [RunRecorderService.resumeFromScratch].
   Future<void> resume(String userId) =>
       RunRecorderService.instance.resumeFromScratch(userId);
 
-  /// Evaluates a territory claim, persists the run, and resets state.
+  /// Handles an auto-claim callback fired by RunRecorderService when
+  /// a valid self-intersection is detected.
+  Future<void> _handleAutoClaim(List<LatLng> capturedPolygon) async {
+    final auth = _ref.read(authProvider);
+    final userId = auth.user?['id'] as String?;
+    if (userId == null) {
+      ErrorLogService.logClientError(
+        provider: '_handleAutoClaim',
+        error: 'userId null - auto-claim dropped',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+      if (!_autoClaimOutcomeController.isClosed) {
+        _autoClaimOutcomeController.add(
+          (outcome: const ClaimOutcome(TerritoryResult.failed, null), polygon: capturedPolygon),
+        );
+      }
+      return;
+    }
+    // City is resolved from joinedCitySlugsProvider - first slug, capitalised.
+    final slugs = _ref.read(joinedCitySlugsProvider(userId)).valueOrNull;
+    if (slugs == null || slugs.isEmpty) {
+      ErrorLogService.logClientError(
+        provider: '_handleAutoClaim',
+        error: 'joinedCitySlugs null/empty - auto-claim dropped',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+      if (!_autoClaimOutcomeController.isClosed) {
+        _autoClaimOutcomeController.add(
+          (outcome: const ClaimOutcome(TerritoryResult.failed, null), polygon: capturedPolygon),
+        );
+      }
+      return;
+    }
+    final city = capitalize(slugs.first);
+    try {
+      final outcome = await confirmClaim(userId, city, capturedPolygon);
+      // Push outcome to the stream MapScreen listens on for the E&U overlay.
+      if (!_autoClaimOutcomeController.isClosed) {
+        _autoClaimOutcomeController
+            .add((outcome: outcome, polygon: capturedPolygon));
+      }
+    } catch (e, st) {
+      if (!_autoClaimOutcomeController.isClosed) {
+        _autoClaimOutcomeController.add((
+          outcome: const ClaimOutcome(TerritoryResult.failed, null),
+          polygon: capturedPolygon,
+        ));
+      }
+      ErrorLogService.logClientError(
+        provider: '_handleAutoClaim',
+        error: e,
+        stackTrace: st,
+        retryCount: 0,
+      );
+    }
+  }
+
+  /// Evaluates a territory claim using the captured polygon, persists the run,
+  /// and returns the [ClaimOutcome]. The recorder stays in `recording` state.
   ///
-  /// Returns the [ClaimOutcome] so the caller (MapScreen) can read both
-  /// [ClaimOutcome.result] and [ClaimOutcome.affectedZoneId].
-  Future<ClaimOutcome> confirmClaim(String userId, String city) async {
+  /// Pre: capturedPolygon.length >= 3; recorder state == recording.
+  /// Post: claim attempted; provider invalidations fired; outcome surfaced
+  ///       to MapScreen via _autoClaimOutcomeController.
+  Future<ClaimOutcome> confirmClaim(
+    String userId,
+    String city,
+    List<LatLng> capturedPolygon,
+  ) async {
     final svc = RunRecorderService.instance;
-    // Defensive snapshot — prevents mutation during the await chain.
-    final track = List<LatLng>.from(svc.track);
+    // The captured polygon - not svc.track - is what gets sent to the
+    // edge function and stored as track_json on the run record.
+    final track = List<LatLng>.from(capturedPolygon);
     final startedAt = svc.startedAt;
     final closedAt = svc.closedAt ?? DateTime.now().toUtc();
 
@@ -93,17 +170,18 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         runId: runId,
         userId: userId,
         city: city,
-        track: track,
+        track: track, // captured polygon, not raw _track
         startedAt: startedAt,
         closedAt: closedAt,
         zoneId: outcome.affectedZoneId!,
         networkUp: networkUp,
       );
-      // Fire-and-forget: upload GPS samples via outbox-aware writer.
+      // GPS samples upload: send the FULL raw _track so anti-cheat keeps
+      // the transit-pole context. capturedPolygon is for territory only.
       unawaited(_uploadGpsSamples(
         runId: runId,
         userId: userId,
-        track: track,
+        track: List<LatLng>.from(svc.track), // full raw trail
         startedAt: startedAt,
         closedAt: closedAt,
         networkUp: networkUp,
@@ -111,20 +189,21 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
       // Fire-and-forget: check if this run earned a SHIELD superpower.
       unawaited(SuperpowerService.instance.checkAndEarn(runId: runId));
       if (outcome.result == TerritoryResult.disputed) {
-        // Fire-and-forget — never propagates to caller.
+        // Fire-and-forget - never propagates to caller.
         unawaited(_NotificationGateway.fireDispute(city));
       }
       _ref.invalidate(zonesProvider(city));
       _ref.invalidate(userRunPointsProvider((userId: userId, city: city)));
     }
 
-    svc.discardRun();
+    // Do NOT call svc.cancelRun() here.
+    // The recorder stays in `recording` state so the next loop can form.
     return outcome;
   }
 
   /// Batch-uploads GPS track points via the outbox-aware writer.
   /// Timestamps are interpolated linearly between startedAt and closedAt.
-  /// Fire-and-forget — never throws to caller.
+  /// Fire-and-forget - never throws to caller.
   Future<void> _uploadGpsSamples({
     required String runId,
     required String userId,
@@ -198,8 +277,10 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
 
   @override
   void dispose() {
+    RunRecorderService.instance.onAutoClaim = null;
     RunRecorderService.instance.stateNotifier.removeListener(_onServiceState);
     RunRecorderService.instance.trackVersion.removeListener(_onTrackVersion);
+    _autoClaimOutcomeController.close();
     super.dispose();
   }
 }
@@ -213,7 +294,7 @@ String _encodeLineString(List<LatLng> track) {
 }
 
 // UUID v4 generator. Duplicated from TerritoryService to avoid adding the
-// `uuid` package (design §13 / I-12). Both copies removed at Supabase swap.
+// `uuid` package. Both copies removed at Supabase swap.
 final _rng = math.Random.secure();
 
 String _uuidV4() {
@@ -237,7 +318,7 @@ class _NotificationGateway {
   static const _channelName = 'Zone Disputes';
 
   /// Initialise the notifications plugin. Called from main() before runApp().
-  /// Never throws — failure is logged via debugPrint.
+  /// Never throws - failure is logged via debugPrint.
   static Future<void> init() async {
     try {
       const android = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -266,7 +347,7 @@ class _NotificationGateway {
   }
 
   /// Fire a dispute notification. Requests permission lazily on first call.
-  /// Fire-and-forget — never throws.
+  /// Fire-and-forget - never throws.
   static Future<void> fireDispute(String city) async {
     if (!_initialized) return;
     try {
