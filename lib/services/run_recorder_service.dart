@@ -47,6 +47,14 @@ class RunRecorderService {
   // silently discarded.
   static const double _minCapturedAreaSqm = 200.0;
 
+  /// Minimum distance in metres between consecutive stored track points.
+  /// A new GPS fix within this distance of _track.last is dropped before
+  /// _track.add and before the scratch table write. Strictly greater than
+  /// the OS distanceFilter of 25 m so the app filter actually fires; large
+  /// enough (5x the vertex-proximity tolerance) to guarantee stored
+  /// vertices are never within the vertex-proximity envelope of each other.
+  static const double _minTrackPointSpacingM = 50.0;
+
   // No auto-claim may fire before this many seconds have elapsed since
   // the FAB Start tap. Applies once per session, not per loop.
   static const int _minSessionElapsedSec = 60;
@@ -92,8 +100,15 @@ class RunRecorderService {
     // Defensive guard: discard non-finite coordinates.
     if (pos.latitude.isNaN || pos.longitude.isNaN) return;
     if (pos.latitude.isInfinite || pos.longitude.isInfinite) return;
-    _track.add(LatLng(pos.latitude, pos.longitude));
-    RealtimePresenceService.instance.updatePosition(LatLng(pos.latitude, pos.longitude));
+    final newLatLng = LatLng(pos.latitude, pos.longitude);
+    // Always update presence so rival comets stay live regardless of spacing filter.
+    RealtimePresenceService.instance.updatePosition(newLatLng);
+    // Track-point spacing filter: discard fixes < 50 m from the last stored point.
+    if (_track.isNotEmpty &&
+        _equirectangularDistanceM(_track.last, newLatLng) < _minTrackPointSpacingM) {
+      return;
+    }
+    _track.add(newLatLng);
     trackVersion.value++;
     // Persist point to scratch table for crash/process-kill recovery.
     final uid = _activeUserId;
@@ -406,6 +421,12 @@ class RunRecorderService {
   int get loopStartTrailIndexForTesting => _loopStartTrailIndex;
 
   @visibleForTesting
+  void handlePositionForTesting(Position p) => _onPosition(p);
+
+  @visibleForTesting
+  int get trackLengthForTesting => _track.length;
+
+  @visibleForTesting
   void reset() {
     _loopStartTrailIndex = 0;
     _sessionStartTime = null;
@@ -413,4 +434,16 @@ class RunRecorderService {
     stateNotifier.value = RecorderState.idle;
     onAutoClaim = null;
   }
+}
+
+/// Equirectangular distance in metres between two LatLng points.
+/// Uses the same cos-lat projection as polygonArea in lasso.dart so the
+/// spacing threshold scales consistently with the area floor.
+/// Mirrors the copy in lasso.dart; duplication is intentional (design.md §C).
+double _equirectangularDistanceM(LatLng a, LatLng b) {
+  const double latM = 110540.0;
+  final double lngM = 111320.0 * math.cos((a.latitude + b.latitude) / 2 * (math.pi / 180.0));
+  final double dy = (b.latitude - a.latitude) * latM;
+  final double dx = (b.longitude - a.longitude) * lngM;
+  return math.sqrt(dx * dx + dy * dy);
 }
