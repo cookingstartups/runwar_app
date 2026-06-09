@@ -10,6 +10,13 @@ import 'package:latlong2/latlong.dart';
 
 const double _eps = 1e-12;
 
+/// Closure tolerance for the vertex-proximity pass in
+/// detectSelfIntersection. 10 m sits above the GPS accuracy:high
+/// outdoor error envelope (3-5 m) and below the OS distanceFilter
+/// of 25 m, so it catches genuine return-to-start without producing
+/// false closures from parallel-pass GPS jitter.
+const double _vertexProximityM = 10.0;
+
 // ---------------------------------------------------------------------------
 // Bounding box helpers
 // ---------------------------------------------------------------------------
@@ -163,6 +170,21 @@ bool pointInPolygon(LatLng pt, List<LatLng> poly) {
 }
 
 // ---------------------------------------------------------------------------
+// _equirectangularDistanceM — mirrors the cos-lat projection used by polygonArea
+// so that the vertex-proximity threshold scales consistently with the area floor.
+// Duplicate of the copy in run_recorder_service.dart; duplication accepted
+// (see design.md Section C) to keep both files independently testable.
+// ---------------------------------------------------------------------------
+
+double _equirectangularDistanceM(LatLng a, LatLng b) {
+  const double latM = 110540.0;
+  final double lngM = 111320.0 * math.cos((a.latitude + b.latitude) / 2 * (math.pi / 180.0));
+  final double dy = (b.latitude - a.latitude) * latM;
+  final double dx = (b.longitude - a.longitude) * lngM;
+  return math.sqrt(dx * dx + dy * dy);
+}
+
+// ---------------------------------------------------------------------------
 // segmentSegmentIntersection
 //
 // Parametric segment-segment intersection in lat/lng space (treated as planar
@@ -229,6 +251,21 @@ SelfIntersection? detectSelfIntersection(
       return SelfIntersection(
         intersectionPoint: pt,
         intersectingSegmentIdx: i,
+      );
+    }
+  }
+
+  // Vertex-proximity pass: catches closures where the newest fix lands on
+  // or very near a prior trail vertex (e.g. runner returns to exact start point).
+  // The strictly-interior parametric guard (t in (0,1)) inside
+  // segmentSegmentIntersection silently drops these; we catch them here.
+  // Search range matches the segment scan: vertex[loopStartTrailIndex-1]
+  // is the first vertex referenced when i = loopStartTrailIndex.
+  for (int vertexIdx = loopStartTrailIndex - 1; vertexIdx <= k - 2; vertexIdx++) {
+    if (_equirectangularDistanceM(trailPoints[vertexIdx], newB) <= _vertexProximityM) {
+      return SelfIntersection(
+        intersectionPoint: trailPoints[vertexIdx],
+        intersectingSegmentIdx: vertexIdx,
       );
     }
   }
