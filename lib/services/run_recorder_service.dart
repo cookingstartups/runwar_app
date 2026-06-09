@@ -51,6 +51,13 @@ class RunRecorderService {
   // the FAB Start tap. Applies once per session, not per loop.
   static const int _minSessionElapsedSec = 60;
 
+  @visibleForTesting
+  static const String kNotificationTitle = 'RunWar - Active Session';
+  @visibleForTesting
+  static const Duration kForegroundTaskInterval = Duration(seconds: 15);
+  @visibleForTesting
+  static const String kNotificationChannelImportance = 'high';
+
   void setActiveUser(String? userId) => _activeUserId = userId;
 
   List<LatLng> get track => List.unmodifiable(_track);
@@ -110,8 +117,8 @@ class RunRecorderService {
         channelId: 'runwar_run_tracking',
         channelName: 'Run Tracking',
         channelDescription: 'RunWar is recording your route.',
-        channelImportance: NotificationChannelImportance.LOW,
-        priority: NotificationPriority.LOW,
+        channelImportance: NotificationChannelImportance.HIGH,
+        priority: NotificationPriority.HIGH,
       ),
       iosNotificationOptions: const IOSNotificationOptions(
         showNotification: true,
@@ -123,15 +130,23 @@ class RunRecorderService {
         allowWakeLock: true,
       ),
     );
+    // Android 13+ requires POST_NOTIFICATIONS to be granted at runtime.
+    // Manifest declaration alone is insufficient. FCM also triggers this dialog
+    // from main_shell, but we request defensively here so the run notification
+    // is guaranteed regardless of FCM init order or the user denying FCM.
+    final notifPerm = await FlutterForegroundTask.checkNotificationPermission();
+    if (notifPerm != NotificationPermission.granted) {
+      await FlutterForegroundTask.requestNotificationPermission();
+    }
     await FlutterForegroundTask.startService(
       serviceId: 100,
-      notificationTitle: 'Run in progress',
+      notificationTitle: kNotificationTitle,
       notificationText: '00:00',
     );
-    // Update the notification body with elapsed time every 30 s.
+    // Update the notification body with elapsed time every 15 s.
     // The timer runs on the main isolate so it can read _startedAt directly.
     _notifTimer?.cancel();
-    _notifTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+    _notifTimer = Timer.periodic(kForegroundTaskInterval, (_) {
       final started = _startedAt;
       if (started == null || stateNotifier.value != RecorderState.recording) {
         return;
@@ -140,7 +155,7 @@ class RunRecorderService {
       final mm = elapsed.inMinutes.toString().padLeft(2, '0');
       final ss = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
       unawaited(FlutterForegroundTask.updateService(
-        notificationTitle: 'Run in progress',
+        notificationTitle: kNotificationTitle,
         notificationText: '$mm:$ss',
       ));
     });
