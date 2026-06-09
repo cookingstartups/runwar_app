@@ -38,6 +38,7 @@ import '../widgets/mission_mode_overlay.dart';
 import '../widgets/first_zone_celebration_overlay.dart';
 import '../widgets/beam_pulse_dot.dart';
 import '../widgets/rival_runner_marker.dart';
+import '../widgets/runner_comet.dart';
 // Phase 2 providers — written by @Backend-Developer (design.md §5.1).
 import '../providers/drops/active_drops_provider.dart';
 // Phase 2 repositories — written by @Backend-Developer.
@@ -794,21 +795,29 @@ class _MapScreenState extends ConsumerState<MapScreen>
                   if (players.isEmpty) return const SizedBox.shrink();
                   return MarkerLayer(
                     markers: players.map((p) {
+                      final history = RealtimePresenceService.instance
+                          .historyFor(p.playerId)
+                          .map((e) => e.position)
+                          .toList(growable: false);
                       return Marker(
                         point: p.position,
-                        width: 70,
+                        width: 80,
                         height: 80,
                         child: RivalRunnerMarker(
                           presence: p,
                           myPos: _currentPosition != null
                               ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
                               : p.position,
+                          tailPositions: history,
                         ),
                       );
                     }).toList(),
                   );
                 },
               ),
+            // Own trace: local-only. Rendered from RunRecorderService.trackSnapshot.
+            // Never broadcast via presence - see realtime_presence_service.dart broadcast block.
+            // Do not add presence fields for track / polyline data.
             // Live track polyline while recording.
             Consumer(builder: (context, watchRef, _) {
               final recState = watchRef.watch(runRecorderProvider);
@@ -827,6 +836,38 @@ class _MapScreenState extends ConsumerState<MapScreen>
                       ?? '#FF7A00',
                   ),
                   strokeWidth: 4,
+                ),
+              ]);
+            }),
+            // Own player comet - sits below BeamPulseDot in z-order; visible only while recording.
+            // Tail derived from local RunRecorderService.trackSnapshot (NOT presence history).
+            Consumer(builder: (context, watchRef, _) {
+              final recState = watchRef.watch(runRecorderProvider);
+              watchRef.watch(runRecorderTrackVersionProvider);
+              if (recState != RecorderState.recording) return const SizedBox.shrink();
+              if (_currentPosition == null) return const SizedBox.shrink();
+              final snap = RunRecorderService.instance.trackSnapshot;
+              final tail = snap.length <= 6
+                  ? List<LatLng>.from(snap)
+                  : snap.sublist(snap.length - 6);
+              final pos = LatLng(_currentPosition!.latitude, _currentPosition!.longitude);
+              final positions = tail.isEmpty || tail.last == pos
+                  ? tail.isEmpty ? [pos] : tail
+                  : [...tail, pos];
+              final color = _hexToColor(
+                ref.watch(profileGateProvider(userId)).valueOrNull?['color']?.toString()
+                  ?? '#FF7A00',
+              );
+              return MarkerLayer(markers: [
+                Marker(
+                  point: pos,
+                  width: 80,
+                  height: 80,
+                  child: RunnerComet(
+                    positions: positions,
+                    accentColor: color,
+                    isRecording: true,
+                  ),
                 ),
               ]);
             }),

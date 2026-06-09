@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import '../services/realtime_presence_service.dart';
 import '../theme.dart';
-import 'beam_pulse_dot.dart';
+import 'runner_comet.dart';
 
 Color _colorFromHex(String hex) {
   try {
@@ -29,16 +29,22 @@ double _distanceM(LatLng a, LatLng b) {
   return r * 2 * math.atan2(math.sqrt(c), math.sqrt(1 - c));
 }
 
-/// Renders a rival player's map marker with the beam-pulse intro-slide aesthetic.
+/// Renders a rival player's map marker as a RunnerComet (head + decaying tail).
+/// The 200 m proximity ring and name label are retained unchanged.
 class RivalRunnerMarker extends StatelessWidget {
   const RivalRunnerMarker({
     super.key,
     required this.presence,
     required this.myPos,
+    this.tailPositions = const [],
   });
 
   final PlayerPresence presence;
   final LatLng myPos;
+
+  /// History positions for the comet tail, oldest-first.
+  /// Empty on cold start; populated after the first presence emission.
+  final List<LatLng> tailPositions;
 
   @override
   Widget build(BuildContext context) {
@@ -63,10 +69,10 @@ class RivalRunnerMarker extends StatelessWidget {
                   ),
                 ),
               ),
-            BeamPulseDot(
-              color: color,
-              size: 10,
-              showPulse: presence.isRecording,
+            RunnerComet(
+              positions: [...tailPositions, presence.position],
+              accentColor: color,
+              isRecording: presence.isRecording,
             ),
           ],
         ),
