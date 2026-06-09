@@ -8,7 +8,9 @@ import '../services/run_recorder_service.dart';
 import '../services/territory_service.dart';
 import '../services/supabase_service.dart';
 import '../services/superpower_service.dart';
-import '../services/database_service.dart';
+import '../services/outbox_aware_writer.dart';
+import '../services/error_log_service.dart';
+import 'connectivity_provider.dart';
 import 'runs_provider.dart';
 import 'zones_provider.dart';
 
@@ -66,10 +68,15 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     final startedAt = svc.startedAt;
     final closedAt = svc.closedAt ?? DateTime.now().toUtc();
 
+    // Resolve connectivity once for this entire claim flow.
+    final networkUp =
+        _ref.read(connectivityProvider).whenData((v) => v).valueOrNull ?? false;
+    final canWrite = SupabaseService.instance.canWriteRemote(networkUp);
+
     // Try server-side claim first (anti-cheat, Realtime sync).
     // Falls back to local evaluation when offline.
     ClaimOutcome? outcome;
-    if (SupabaseService.instance.isConnected) {
+    if (canWrite) {
       outcome = await TerritoryService.instance.claimViaEdgeFunction(
         track,
         city,
@@ -90,14 +97,16 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         startedAt: startedAt,
         closedAt: closedAt,
         zoneId: outcome.affectedZoneId!,
+        networkUp: networkUp,
       );
-      // Fire-and-forget: upload GPS samples to Supabase (needed by earn_superpower).
+      // Fire-and-forget: upload GPS samples via outbox-aware writer.
       unawaited(_uploadGpsSamples(
         runId: runId,
         userId: userId,
         track: track,
         startedAt: startedAt,
         closedAt: closedAt,
+        networkUp: networkUp,
       ));
       // Fire-and-forget: check if this run earned a SHIELD superpower.
       unawaited(SuperpowerService.instance.checkAndEarn(runId: runId));
@@ -113,7 +122,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     return outcome;
   }
 
-  /// Batch-uploads GPS track points to Supabase gps_samples.
+  /// Batch-uploads GPS track points via the outbox-aware writer.
   /// Timestamps are interpolated linearly between startedAt and closedAt.
   /// Fire-and-forget — never throws to caller.
   Future<void> _uploadGpsSamples({
@@ -122,8 +131,8 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     required List<LatLng> track,
     required DateTime startedAt,
     required DateTime closedAt,
+    required bool networkUp,
   }) async {
-    if (!SupabaseService.instance.isConnected) return;
     if (track.isEmpty) return;
     try {
       final durationMs =
@@ -146,12 +155,18 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         };
       }).toList();
 
-      await SupabaseService.instance.supabase
-          .from('gps_samples')
-          .insert(rows);
-      debugPrint('[RunRecorder] uploaded ${rows.length} gps_samples for run $runId');
-    } catch (e) {
-      debugPrint('[RunRecorder] gps_samples upload failed: $e');
+      await OutboxAwareWriter.instance.writeGpsSamples(
+        rows,
+        networkUp: networkUp,
+      );
+      debugPrint('[RunRecorder] queued ${rows.length} gps_samples for run $runId');
+    } catch (e, st) {
+      ErrorLogService.logClientError(
+        provider: '_uploadGpsSamples',
+        error: e,
+        stackTrace: st,
+        retryCount: 0,
+      );
     }
   }
 
@@ -163,18 +178,22 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     required DateTime startedAt,
     required DateTime closedAt,
     required String zoneId,
+    required bool networkUp,
   }) async {
     final nowIso = DateTime.now().toUtc().toIso8601String();
-    await DatabaseService.instance.insertRun({
-      'id': runId,
-      'user_id': userId,
-      'city': city,
-      'track_json': _encodeLineString(track),
-      'started_at': startedAt.toIso8601String(),
-      'closed_at': closedAt.toIso8601String(),
-      'zone_id': zoneId,
-      'created_at': nowIso,
-    });
+    await OutboxAwareWriter.instance.writeRun(
+      {
+        'id': runId,
+        'user_id': userId,
+        'city': city,
+        'track_json': _encodeLineString(track),
+        'started_at': startedAt.toIso8601String(),
+        'closed_at': closedAt.toIso8601String(),
+        'zone_id': zoneId,
+        'created_at': nowIso,
+      },
+      networkUp: networkUp,
+    );
   }
 
   @override
