@@ -156,8 +156,9 @@ class RunnerComet extends StatelessWidget {
               return Offset(s.x - headScreen.x, s.y - headScreen.y);
             })
             .toList(growable: false);
-      } catch (_) {
+      } catch (e) {
         // MapCamera not in tree (unit test / off-map render) - head-only.
+        debugPrint('[RunnerComet] MapCamera unavailable - falling back to head-only: $e');
         offsets = List.filled(positions.length, Offset.zero);
       }
     }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'error_log_service.dart';
 import 'supabase_service.dart';
 import '../config/supabase_config.dart';
 
@@ -87,7 +88,7 @@ class RealtimePresenceService {
   /// callers always receive fresh data regardless of when the buffer was last pruned.
   List<PlayerPresence> historyFor(String playerId) {
     final cutoff = DateTime.now().subtract(
-      Duration(seconds: _kHistoryMaxAgeSeconds),
+      const Duration(seconds: _kHistoryMaxAgeSeconds),
     );
     return List.unmodifiable(
       (_playerHistory[playerId] ?? const <PlayerPresence>[])
@@ -115,7 +116,12 @@ class RealtimePresenceService {
         .onPresenceLeave((payload) => _emitState())
         .subscribe((status, error) async {
           if (error != null) {
-            debugPrint('[Presence] subscribe error: $error');
+            ErrorLogService.logClientError(
+              provider: 'RealtimePresenceService.init',
+              error: error,
+              stackTrace: StackTrace.current,
+              retryCount: 0,
+            );
             return;
           }
           if (status == RealtimeSubscribeStatus.subscribed) {
