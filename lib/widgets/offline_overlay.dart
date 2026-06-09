@@ -15,7 +15,10 @@ class OfflineOverlay extends ConsumerWidget {
     final isOnline = connectivityAsync.when(
       data: (online) => online,
       loading: () => false,
-      error: (_, __) => true,
+      error: (e, __) {
+        debugPrint('[Connectivity] provider error: $e');
+        return false; // fail closed - unknown state treated as offline
+      },
     );
 
     if (!isOnline) return _OfflineScreen();

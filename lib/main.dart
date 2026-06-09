@@ -186,6 +186,7 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      if (!mounted) return;
       // Re-seed connectivity FIRST so the offline gate evaluates before any
       // auth/profile re-fetch triggered by the same resume event.
       ref.invalidate(connectivityProvider);
