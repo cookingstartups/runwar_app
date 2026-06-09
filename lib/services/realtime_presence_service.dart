@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'error_log_service.dart';
 import 'supabase_service.dart';
 import '../config/supabase_config.dart';
 
@@ -59,6 +60,13 @@ class RealtimePresenceService {
   final _controller =
       StreamController<List<PlayerPresence>>.broadcast();
 
+  // Per-player position history buffer for the RunnerComet tail.
+  // Updated on every _emitState() pass; cleared when a player goes stale or leaves.
+  // Never persisted, never broadcast.
+  final Map<String, List<PlayerPresence>> _playerHistory = {};
+  static const int _kHistoryMaxEntries = 12;
+  static const int _kHistoryMaxAgeSeconds = 60;
+
   Stream<List<PlayerPresence>> get playersStream => _controller.stream;
 
   /// Last known GPS position for this player. Null until first GPS fix.
@@ -70,6 +78,24 @@ class RealtimePresenceService {
   String? _myColor;
   bool _isRecording = false;
   String? _colorHex;
+
+  // Test seam: captures the last payload constructed by updatePosition/broadcast timer.
+  Map<String, dynamic> _lastBroadcastPayload = const {};
+
+  /// Returns the buffered position history for [playerId], oldest-first.
+  /// Returns an empty list when no history exists yet (cold start, first emission).
+  /// Filters out entries older than [_kHistoryMaxAgeSeconds] at read time so
+  /// callers always receive fresh data regardless of when the buffer was last pruned.
+  List<PlayerPresence> historyFor(String playerId) {
+    final cutoff = DateTime.now().subtract(
+      const Duration(seconds: _kHistoryMaxAgeSeconds),
+    );
+    return List.unmodifiable(
+      (_playerHistory[playerId] ?? const <PlayerPresence>[])
+          .where((e) => e.updatedAt.isAfter(cutoff))
+          .toList(),
+    );
+  }
 
   /// Call once after auth to begin presence tracking.
   void init({
@@ -90,7 +116,12 @@ class RealtimePresenceService {
         .onPresenceLeave((payload) => _emitState())
         .subscribe((status, error) async {
           if (error != null) {
-            debugPrint('[Presence] subscribe error: $error');
+            ErrorLogService.logClientError(
+              provider: 'RealtimePresenceService.init',
+              error: error,
+              stackTrace: StackTrace.current,
+              retryCount: 0,
+            );
             return;
           }
           if (status == RealtimeSubscribeStatus.subscribed) {
@@ -104,6 +135,23 @@ class RealtimePresenceService {
   /// Update local position - broadcast will pick it up on next tick when recording.
   void updatePosition(LatLng position) {
     _currentPosition = position;
+    // For the test seam: build the payload that would be broadcast.
+    // This mirrors what _startBroadcasting() sends without actually
+    // requiring an active channel (supports instanceForTesting()).
+    _lastBroadcastPayload = {
+      // Invariant: lat/lng only. Never include trace/track/polyline data here.
+      // Rival comet tail is reconstructed client-side from a rolling buffer of
+      // these single-point emissions (see _playerHistory). Adding track data
+      // would leak the runner's full path to all subscribers.
+      'player_id': _myPlayerId ?? '',
+      'display_name': _myDisplayName ?? '?',
+      'color': _myColor ?? '#FF7A00',
+      'lat': position.latitude,
+      'lng': position.longitude,
+      't': DateTime.now().millisecondsSinceEpoch,
+      'rec': _isRecording,
+      'color_hex': _colorHex ?? _myColor ?? '#FF7A00',
+    };
   }
 
   void setRecording(bool v) {
@@ -137,7 +185,11 @@ class RealtimePresenceService {
       if (!_isRecording) return; // Gate: only broadcast during active recording
       final pos = _currentPosition;
       if (pos == null || _channel == null || _myPlayerId == null) return;
-      _channel!.track({
+      // Invariant: lat/lng only. Never include trace/track/polyline data here.
+      // Rival comet tail is reconstructed client-side from a rolling buffer of
+      // these single-point emissions (see _playerHistory). Adding track data
+      // would leak the runner's full path to all subscribers.
+      final payload = {
         'player_id': _myPlayerId!,
         'display_name': _myDisplayName ?? '?',
         'color': _myColor ?? '#FF7A00',
@@ -146,7 +198,9 @@ class RealtimePresenceService {
         't': DateTime.now().millisecondsSinceEpoch,
         'rec': true, // always true when published
         'color_hex': _colorHex ?? _myColor ?? '#FF7A00',
-      });
+      };
+      _lastBroadcastPayload = payload;
+      _channel!.track(payload);
     });
   }
 
@@ -174,17 +228,43 @@ class RealtimePresenceService {
           (p) => DateTime.now().difference(p.updatedAt) <= kPresenceStaleTtl,
         )
         .toList();
+    _updateHistoryBuffer(fresh);
     _controller.add(fresh);
+  }
+
+  void _updateHistoryBuffer(List<PlayerPresence> fresh) {
+    final now = DateTime.now();
+    final freshIds = <String>{};
+    for (final p in fresh) {
+      freshIds.add(p.playerId);
+      final list = _playerHistory.putIfAbsent(p.playerId, () => <PlayerPresence>[]);
+      // Skip if the newest entry is the same timestamp (duplicate emission).
+      if (list.isNotEmpty && list.last.updatedAt == p.updatedAt) continue;
+      list.add(p);
+      // Trim by length.
+      while (list.length > _kHistoryMaxEntries) {
+        list.removeAt(0);
+      }
+      // Trim by age.
+      list.removeWhere(
+        (e) => now.difference(e.updatedAt).inSeconds > _kHistoryMaxAgeSeconds,
+      );
+    }
+    // Purge players no longer in the fresh set.
+    _playerHistory.removeWhere((id, _) => !freshIds.contains(id));
   }
 
   Future<void> dispose() async {
     _broadcastTimer?.cancel();
+    _playerHistory.clear();
     await _channel?.unsubscribe();
     await _controller.close();
   }
 
-  // ── Test-only seams ──────────────────────────────────────────────────────────
+  // ── Test seams ─────────────────────────────────────────────────────────────
 
+  /// Creates an isolated instance not backed by Supabase.
+  /// For use in unit tests only.
   @visibleForTesting
   static RealtimePresenceService instanceForTesting() =>
       RealtimePresenceService._();
@@ -204,4 +284,30 @@ class RealtimePresenceService {
     _untrackCalled = false;
     _currentPosition = null;
   }
+
+  /// Injects a presence entry directly into the history buffer for testing.
+  @visibleForTesting
+  void injectPresence(String playerId, PlayerPresence presence) {
+    final list = _playerHistory.putIfAbsent(playerId, () => []);
+    list.add(presence);
+    if (list.length > _kHistoryMaxEntries) list.removeAt(0);
+  }
+
+  /// Simulates a fresh player list emission, purging any absent player IDs.
+  @visibleForTesting
+  void injectFreshPlayerList(List<String> playerIds) {
+    _playerHistory.removeWhere((k, _) => !playerIds.contains(k));
+  }
+
+  /// Clears all history. Call in tearDown to prevent state leaking between tests.
+  @visibleForTesting
+  void disposeForTesting() {
+    _playerHistory.clear();
+  }
+
+  /// Returns the last payload that would have been broadcast via track().
+  /// Used by tests to verify the payload schema contains no trace/track fields.
+  /// Returns an empty map before [updatePosition] is called.
+  @visibleForTesting
+  Map<String, dynamic> captureLastBroadcastPayload() => _lastBroadcastPayload;
 }
