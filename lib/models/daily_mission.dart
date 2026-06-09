@@ -1,6 +1,8 @@
 // lib/models/daily_mission.dart
 // Data models for the daily-missions-retention feature.
 
+import 'package:flutter/foundation.dart';
+
 class DailyMission {
   const DailyMission({
     required this.slug,
@@ -105,7 +107,9 @@ class DailyStreak {
     if (rawLogin is String) {
       try {
         lastLogin = DateTime.parse(rawLogin);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[DailyStreak] failed to parse last_login_at: $e');
+      }
     }
     final streakValue = (src['streak'] as num?)?.toInt() ?? 0;
     final longestValue = (src['longest_streak'] as num?)?.toInt() ?? 0;

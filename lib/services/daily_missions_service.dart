@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:crypto/crypto.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -115,11 +116,10 @@ class DailyMissionsService {
 
     if (newProgress >= target) {
       // Fire-and-forget with typed catchError to avoid lint warning.
-      completeMission(userId, slug).catchError((Object _) => MissionCompletionResult(
-        slug: slug,
-        creditsGranted: 0,
-        newBalance: 0,
-      ));
+      completeMission(userId, slug).catchError((Object e) {
+        debugPrint('[DailyMissions] completeMission failed: $e');
+        return MissionCompletionResult(slug: slug, creditsGranted: 0, newBalance: 0);
+      });
     }
   }
 
@@ -311,14 +311,15 @@ class DailyMissionsService {
     try {
       final profile = await DatabaseService.instance.getProfile(userId);
       if (profile == null) return 0;
-      return (profile['current_streak'] as int?) ?? 0;
-    } catch (_) {
+      return (profile['streak'] as int?) ?? 0;
+    } catch (e) {
+      debugPrint('[DailyMissions] _getCurrentStreak: $e');
       return 0;
     }
   }
 
   DailyMission _rowToMission(Map<String, dynamic> row) {
-    final slug = row['slug'] as String;
+    final slug = row['slug'] as String? ?? '';
     final definition = missions.firstWhere(
       (m) => m.slug == slug,
       orElse: () => DailyMission(
@@ -354,14 +355,16 @@ class DailyMissionsService {
         (r) => r['completed_at'] != null && r['synced_at'] == null,
       ).toList();
       for (final row in pending) {
-        final slug = row['slug'] as String;
+        final slug = row['slug'] as String? ?? '';
         try {
           await completeMission(userId, slug);
-        } catch (_) {
-          // Swallow — will retry on next foreground.
+        } catch (e) {
+          debugPrint('[DailyMissions] _retryPendingCompletions: $e');
         }
       }
-    } catch (_) {}
+    } catch (e, st) {
+      debugPrint('[DailyMissions] _retryPendingCompletions: $e\n$st');
+    }
   }
 }
 

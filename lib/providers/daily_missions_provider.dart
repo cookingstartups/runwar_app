@@ -42,6 +42,7 @@ final dailyStreakProvider = FutureProvider.family<DailyStreak, String>(
         .eq('id', userId)
         .maybeSingle();
     if (row == null) {
+      debugPrint('[dailyStreakProvider] no row for userId=$userId - check RLS on player_streaks/player_economy');
       return const DailyStreak(current: 0, longest: 0);
     }
     return DailyStreak.fromMap(row);

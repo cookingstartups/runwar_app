@@ -559,12 +559,15 @@ class DatabaseService {
     final client = Supabase.instance.client;
     final rows = await client
         .from('daily_mission_progress')
-        .select()
+        .select('*, daily_mission_definitions(slug)')
         .eq('player_id', userId)
         .eq('date', date);
-    return (rows as List<dynamic>)
-        .map((r) => Map<String, dynamic>.from(r as Map<String, dynamic>))
-        .toList();
+    return (rows as List<dynamic>).map((r) {
+      final m = Map<String, dynamic>.from(r as Map<String, dynamic>);
+      m['slug'] = (m['daily_mission_definitions'] as Map?)?['slug'];
+      m.remove('daily_mission_definitions');
+      return m;
+    }).toList();
   }
 
   /// Upserts a daily_mission_progress row. Resolves `mission_id` from
