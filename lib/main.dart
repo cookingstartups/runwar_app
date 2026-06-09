@@ -38,6 +38,7 @@ import 'services/trial_service.dart';
 import 'services/run_recovery_service.dart';
 import 'screens/recovery_gate.dart';
 import 'providers/showcase_provider.dart';
+import 'widgets/offline_overlay.dart';
 
 /// Runs the daily trial tick then returns current trial status.
 /// Re-evaluated on app foreground via _RouteGuard's WidgetsBindingObserver.
@@ -92,6 +93,7 @@ class RunWarApp extends StatelessWidget {
       title: 'RunWar',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
+      builder: (context, child) => OfflineOverlay(child: child ?? const SizedBox.shrink()),
       // INVARIANT: _RouteGuard is the MaterialApp home and must never be replaced or
       // popped via Navigator.pushReplacement* or Navigator.pop. It manages all navigation
       // reactively by returning different widgets. To "navigate" to a new screen, change
@@ -184,6 +186,11 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      if (!mounted) return;
+      // Re-seed connectivity FIRST so the offline gate evaluates before any
+      // auth/profile re-fetch triggered by the same resume event.
+      ref.invalidate(connectivityProvider);
+
       // Drain outbox on foreground — fire-and-forget.
       OutboxDrainer.instance.drain().catchError((_) {});
 
