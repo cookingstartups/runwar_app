@@ -94,9 +94,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
   bool _centeredOnGps = false;
   late final AnimationController _terrainPulse;
 
-  StreamSubscription<double>? _tileCacheSub;
-  double? _tileCacheProgress; // null = chip hidden; 0.0-1.0 = chip visible.
-
   // Cached city name updated on every build; read at transition time by the
   // stream handler so the auto-claim handler always receives the current value.
   String? _currentCity;
@@ -183,19 +180,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     _terrainPulse.dispose();
     _euController?.dispose();
     _posSub?.cancel();
-    // Cancel prewarm without setState — widget is disposing.
-    _tileCacheSub?.cancel();
-    _tileCacheSub = null;
-    TileCacheService.instance.cancelPrewarm();
     super.dispose();
-  }
-
-  /// Cancels any in-flight tile prewarm subscription and hides the progress chip.
-  void _cancelTilePrewarm() {
-    _tileCacheSub?.cancel();
-    _tileCacheSub = null;
-    TileCacheService.instance.cancelPrewarm();
-    if (mounted) setState(() => _tileCacheProgress = null);
   }
 
   void _showShieldEarnedModal(SuperpowerGrant grant) {
@@ -354,10 +339,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         // ── Run recording FAB ──────────────────────────────────────
         GestureDetector(
           onLongPress: isRecording
-              ? () {
-                  _cancelTilePrewarm();
-                  ref.read(runRecorderProvider.notifier).cancel();
-                }
+              ? () => ref.read(runRecorderProvider.notifier).cancel()
               : null,
           child: FloatingActionButton(
             heroTag: 'run_rec',
@@ -373,8 +355,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
 
   Future<void> _onFabTap(
       BuildContext context, RecorderState s, String city) async {
-    // Capture devicePixelRatio synchronously before any await.
-    final isRetina = MediaQuery.of(context).devicePixelRatio > 1.5;
     final notifier = ref.read(runRecorderProvider.notifier);
     if (s == RecorderState.idle) {
       // Verify permission before startRun.
@@ -414,30 +394,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
       await BatteryOptimizationService.requestOnce();
       await notifier.start();
       // Fire-and-forget tile pre-download. Run starts regardless.
-      _tileCacheSub?.cancel();
-      final centerLatLng = LatLng(
-        _currentPosition!.latitude,
-        _currentPosition!.longitude,
-      );
-      _tileCacheSub = TileCacheService.instance
-          .prewarmRunArea(centerLatLng, retina: isRetina)
-          .listen(
-        (p) {
-          if (!mounted) return;
-          setState(() => _tileCacheProgress = p);
-        },
-        onError: (Object e) {
-          debugPrint('[MapScreen] tile prewarm error: $e');
-        },
-        onDone: () {
-          if (!mounted) return;
-          setState(() => _tileCacheProgress = null);
-        },
-        cancelOnError: false,
-      );
+      TileCacheService.instance.prewarmRunArea(
+        LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+      ).listen(null);
     } else if (s == RecorderState.recording) {
-      // Cancel any in-flight tile pre-download before ending the run.
-      _cancelTilePrewarm();
       // Tap always ends the session unconditionally. No validity gates.
       await notifier.stop();
     }
@@ -694,7 +654,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
     }
 
     // Clean up the active recording session before navigating away.
-    _cancelTilePrewarm();
     try {
       await ref.read(runRecorderProvider.notifier).cancel();
     } catch (e) {
@@ -738,7 +697,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
     ref.invalidate(missionStatusProvider(userId));
 
     // Clean up the active recording session before navigating away.
-    _cancelTilePrewarm();
     try {
       await ref.read(runRecorderProvider.notifier).cancel();
     } catch (e) {
@@ -1181,13 +1139,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
               ),
             ),
           ),
-        // Tile pre-warm progress chip -- non-blocking, dismisses when done.
-        if (_tileCacheProgress != null)
-          Positioned(
-            bottom: 120,
-            right: 16,
-            child: _TilePrewarmChip(progress: _tileCacheProgress!),
-          ),
       ],
     );
   }
@@ -1530,51 +1481,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
           ),
         );
       },
-    );
-  }
-}
-
-// ── Tile prewarm progress chip ────────────────────────────────────────────────
-
-class _TilePrewarmChip extends StatelessWidget {
-  const _TilePrewarmChip({required this.progress});
-
-  final double progress;
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.65),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Caching map... ${(progress * 100).round()}%',
-              style: const TextStyle(
-                color: kFgMuted,
-                fontSize: 11,
-                fontFamily: 'monospace',
-              ),
-            ),
-            const SizedBox(height: 4),
-            SizedBox(
-              width: 100,
-              child: LinearProgressIndicator(
-                value: progress,
-                backgroundColor: kBorder,
-                color: kSea,
-                minHeight: 3,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
