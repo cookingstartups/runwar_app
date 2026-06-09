@@ -14,19 +14,12 @@ class OfflineOverlay extends ConsumerWidget {
 
     final isOnline = connectivityAsync.when(
       data: (online) => online,
-      loading: () => true,
+      loading: () => false,
       error: (_, __) => true,
     );
 
-    return Stack(
-      children: [
-        child,
-        if (!isOnline)
-          Positioned.fill(
-            child: _OfflineScreen(),
-          ),
-      ],
-    );
+    if (!isOnline) return _OfflineScreen();
+    return child;
   }
 }
 
