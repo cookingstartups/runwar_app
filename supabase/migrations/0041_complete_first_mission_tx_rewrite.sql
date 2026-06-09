@@ -36,6 +36,10 @@ BEGIN
    WHERE pp.player_id = p_player_id
      FOR UPDATE;
 
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'complete_first_mission_tx: no player_progress row for player %', p_player_id;
+  END IF;
+
   -- Idempotency: already completed -- return without side effects.
   IF v_progress.first_mission_completed_at IS NOT NULL THEN
     SELECT ps.streak_started_at
@@ -57,6 +61,10 @@ BEGIN
     FROM player_streaks ps
    WHERE ps.player_id = p_player_id
      FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'complete_first_mission_tx: no player_streaks row for player %', p_player_id;
+  END IF;
 
   v_streak_at := COALESCE(v_streaks.streak_started_at, v_now);
 
