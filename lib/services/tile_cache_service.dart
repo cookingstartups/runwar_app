@@ -23,6 +23,7 @@ class CachedNetworkTileProvider extends TileProvider {
       url,
       cacheManager: DefaultCacheManager(),
       headers: headers,
+      errorListener: (e) => debugPrint('[TileCache] tile load failed: $e'),
     );
   }
 }
@@ -59,6 +60,7 @@ class TileCacheService {
   // ── Internal state ────────────────────────────────────────────────────────
 
   bool _inFlight = false;
+  StreamController<double>? _activeController;
 
   // ── Public API ────────────────────────────────────────────────────────────
 
@@ -82,17 +84,18 @@ class TileCacheService {
     _inFlight = true;
 
     final controller = StreamController<double>();
+    _activeController = controller;
     _run(controller, center, retina, radiusKm, minZoom, maxZoom);
     return controller.stream;
   }
 
-  /// Cancels any in-flight pre-download by closing the stream.
+  /// Cancels any in-flight pre-download by closing the active stream controller.
+  /// The worker loop checks [StreamController.isClosed] and breaks on close.
   /// The caller should also cancel its own subscription.
   void cancelPrewarm() {
-    // The stream controller is closed inside _run when the subscription is
-    // cancelled; this method is a convenience alias that makes the intent
-    // explicit at the call site.
     _inFlight = false;
+    _activeController?.close();
+    _activeController = null;
   }
 
   // ── @visibleForTesting seams ──────────────────────────────────────────────
@@ -192,7 +195,8 @@ class TileCacheService {
         concurrency = results.contains(ConnectivityResult.wifi)
             ? kParallelThreadsWifi
             : kParallelThreadsCellular;
-      } catch (_) {
+      } catch (e) {
+        debugPrint('[TileCache] connectivity check failed: $e');
         concurrency = kParallelThreadsCellular;
       }
 
@@ -206,6 +210,7 @@ class TileCacheService {
 
       final manager = DefaultCacheManager();
       var done = 0;
+      var failureCount = 0;
       final total = tiles.length;
       final iter = tiles.iterator;
 
@@ -219,6 +224,7 @@ class TileCacheService {
           try {
             await manager.downloadFile(url);
           } catch (e) {
+            failureCount += 1;
             debugPrint('[TileCacheService] tile failed: $url ($e)');
           }
           done += 1;
@@ -229,6 +235,9 @@ class TileCacheService {
       }
 
       await Future.wait(List.generate(concurrency, (_) => worker()));
+      if (failureCount > 0 && failureCount / total > 0.2) {
+        debugPrint('[TileCache] prewarm: $failureCount/$total tiles failed');
+      }
     } finally {
       _inFlight = false;
       if (!controller.isClosed) await controller.close();

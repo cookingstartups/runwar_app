@@ -183,8 +183,19 @@ class _MapScreenState extends ConsumerState<MapScreen>
     _terrainPulse.dispose();
     _euController?.dispose();
     _posSub?.cancel();
+    // Cancel prewarm without setState — widget is disposing.
     _tileCacheSub?.cancel();
+    _tileCacheSub = null;
+    TileCacheService.instance.cancelPrewarm();
     super.dispose();
+  }
+
+  /// Cancels any in-flight tile prewarm subscription and hides the progress chip.
+  void _cancelTilePrewarm() {
+    _tileCacheSub?.cancel();
+    _tileCacheSub = null;
+    TileCacheService.instance.cancelPrewarm();
+    if (mounted) setState(() => _tileCacheProgress = null);
   }
 
   void _showShieldEarnedModal(SuperpowerGrant grant) {
@@ -343,7 +354,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
         // ── Run recording FAB ──────────────────────────────────────
         GestureDetector(
           onLongPress: isRecording
-              ? () => ref.read(runRecorderProvider.notifier).cancel()
+              ? () {
+                  _cancelTilePrewarm();
+                  ref.read(runRecorderProvider.notifier).cancel();
+                }
               : null,
           child: FloatingActionButton(
             heroTag: 'run_rec',
@@ -423,9 +437,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       );
     } else if (s == RecorderState.recording) {
       // Cancel any in-flight tile pre-download before ending the run.
-      _tileCacheSub?.cancel();
-      _tileCacheSub = null;
-      if (mounted) setState(() => _tileCacheProgress = null);
+      _cancelTilePrewarm();
       // Tap always ends the session unconditionally. No validity gates.
       await notifier.stop();
     }
@@ -682,6 +694,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     }
 
     // Clean up the active recording session before navigating away.
+    _cancelTilePrewarm();
     try {
       await ref.read(runRecorderProvider.notifier).cancel();
     } catch (e) {
@@ -725,6 +738,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     ref.invalidate(missionStatusProvider(userId));
 
     // Clean up the active recording session before navigating away.
+    _cancelTilePrewarm();
     try {
       await ref.read(runRecorderProvider.notifier).cancel();
     } catch (e) {
@@ -1540,9 +1554,9 @@ class _TilePrewarmChip extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Caching map...',
-              style: TextStyle(
+            Text(
+              'Caching map... ${(progress * 100).round()}%',
+              style: const TextStyle(
                 color: kFgMuted,
                 fontSize: 11,
                 fontFamily: 'monospace',
