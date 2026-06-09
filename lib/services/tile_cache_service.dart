@@ -43,7 +43,7 @@ class TileCacheService {
   // ── Public constants ──────────────────────────────────────────────────────
 
   /// Radius in kilometres of the area pre-downloaded around the run start.
-  static const double kPrewarmRadiusKm = 7.0;
+  static const double kPrewarmRadiusKm = 1.0;
 
   /// Minimum zoom level included in the pre-download.
   static const int kPrewarmMinZoom = 14;
