@@ -11,6 +11,7 @@
 //
 // CI GATE: supabase_flutter import is ONLY permitted in lib/services/database/.
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// One row from the credit_transactions ledger table.
@@ -64,25 +65,38 @@ abstract interface class CreditsRepository {
 
 /// Supabase-backed CreditsRepository.
 /// Uses the supabase-flutter `.stream()` API which is already a broadcast
-/// stream — no additional StreamController wrapper needed (design.md §3.3).
+/// stream - no additional StreamController wrapper needed (design.md §3.3).
 class SupabaseCreditsRepository implements CreditsRepository {
   SupabaseCreditsRepository(this._client);
   final SupabaseClient _client;
 
+  @visibleForTesting
+  static const String watchTable = 'player_economy';
+  @visibleForTesting
+  static const String fetchTable = 'player_economy';
+  @visibleForTesting
+  static const String watchPrimaryKey = 'player_id';
+  @visibleForTesting
+  static const String watchFilterColumn = 'player_id';
+  @visibleForTesting
+  static const String fetchFilterColumn = 'player_id';
+
   @override
   Stream<int> watchBalance(String playerId) => _client
-      .from('players')
-      .stream(primaryKey: ['id'])
-      .eq('id', playerId)
+      .from(watchTable)
+      .stream(primaryKey: [watchPrimaryKey])
+      .eq(watchFilterColumn, playerId)
+      // rows.isEmpty => 0 is intentional: trigger 0043 guarantees a player_economy
+      // row exists for every player, so empty only occurs during signup race window.
       .map((rows) =>
           rows.isEmpty ? 0 : (rows.first['credits'] as num).toInt());
 
   @override
   Future<int> fetchBalance(String playerId) async {
     final r = await _client
-        .from('players')
+        .from(fetchTable)
         .select('credits')
-        .eq('id', playerId)
+        .eq(fetchFilterColumn, playerId)
         .single();
     return (r['credits'] as num).toInt();
   }
