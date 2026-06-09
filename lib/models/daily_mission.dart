@@ -1,6 +1,8 @@
 // lib/models/daily_mission.dart
 // Data models for the daily-missions-retention feature.
 
+import 'package:flutter/foundation.dart';
+
 class DailyMission {
   const DailyMission({
     required this.slug,
@@ -68,25 +70,57 @@ class DailyStreak {
   final String subscriptionTier;
 
   factory DailyStreak.fromMap(Map<String, dynamic> row) {
-    final rawMilestones = row['milestones_claimed'];
+    // Extract nested sub-maps if present (nested-join shape from
+    // dailyStreakProvider). Supabase returns 1:1 nested rows as either a Map
+    // or a 1-element List depending on the relation kind - handle both.
+    Map<String, dynamic>? streakMap;
+    Map<String, dynamic>? economyMap;
+
+    final rawStreaks = row['player_streaks'];
+    if (rawStreaks is Map<String, dynamic>) {
+      streakMap = rawStreaks;
+    } else if (rawStreaks is List && rawStreaks.isNotEmpty) {
+      final first = rawStreaks.first;
+      if (first is Map<String, dynamic>) streakMap = first;
+    }
+
+    final rawEconomy = row['player_economy'];
+    if (rawEconomy is Map<String, dynamic>) {
+      economyMap = rawEconomy;
+    } else if (rawEconomy is List && rawEconomy.isNotEmpty) {
+      final first = rawEconomy.first;
+      if (first is Map<String, dynamic>) economyMap = first;
+    }
+
+    // Source of truth: nested sub-maps if present, else top-level row keys
+    // (preserves the legacy flat-shape contract for tests and any direct
+    // callers that pass an already-flattened row).
+    final src = streakMap ?? row;
+
+    final rawMilestones = src['milestones_claimed'];
     List<int> milestones = [];
     if (rawMilestones is List) {
       milestones = rawMilestones.whereType<int>().toList();
     }
     DateTime? lastLogin;
-    final rawLogin = row['last_login_at'];
+    final rawLogin = src['last_login_at'];
     if (rawLogin is String) {
       try {
         lastLogin = DateTime.parse(rawLogin);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[DailyStreak] failed to parse last_login_at: $e');
+      }
     }
-    final streakValue = (row['streak'] as num?)?.toInt() ?? 0;
+    final streakValue = (src['streak'] as num?)?.toInt() ?? 0;
+    final longestValue = (src['longest_streak'] as num?)?.toInt() ?? 0;
+    final tier = (economyMap ?? row)['subscription_tier'] as String? ?? 'free';
+
     return DailyStreak(
       current: streakValue,
-      longest: (row['longest_streak'] as num?)?.toInt() ?? 0,
+      longest: longestValue,
       lastLoginAt: lastLogin,
       milestonesClaimed: milestones,
-      subscriptionTier: (row['subscription_tier'] as String?) ?? 'free',
+      subscriptionTier: tier,
     );
   }
 }

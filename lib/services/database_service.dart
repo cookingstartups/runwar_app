@@ -49,6 +49,17 @@ Map<String, dynamic> normaliseProfilePatch(Map<String, dynamic> patch) {
   return remote;
 }
 
+// ── Daily mission progress test constants ─────────────────────────────────────
+
+@visibleForTesting
+const String kGetDailyMissionsFilterColumn = 'player_id';
+@visibleForTesting
+const String kUpsertMissionProgressOnConflict = 'player_id,mission_id,date';
+@visibleForTesting
+const String kUpsertMissionProgressPlayerKey = 'player_id';
+@visibleForTesting
+const String kUpsertMissionProgressMissionKey = 'mission_id';
+
 class DatabaseService {
   DatabaseService._();
   static final DatabaseService instance = DatabaseService._();
@@ -548,19 +559,56 @@ class DatabaseService {
     final client = Supabase.instance.client;
     final rows = await client
         .from('daily_mission_progress')
-        .select()
-        .eq('user_id', userId)
+        .select('*, daily_mission_definitions(slug)')
+        .eq('player_id', userId)
         .eq('date', date);
-    return (rows as List<dynamic>)
-        .map((r) => Map<String, dynamic>.from(r as Map<String, dynamic>))
-        .toList();
+    return (rows as List<dynamic>).map((r) {
+      final m = Map<String, dynamic>.from(r as Map<String, dynamic>);
+      m['slug'] = (m['daily_mission_definitions'] as Map?)?['slug'];
+      m.remove('daily_mission_definitions');
+      return m;
+    }).toList();
   }
 
+  /// Upserts a daily_mission_progress row. Resolves `mission_id` from
+  /// `daily_mission_definitions` via the `slug` key before writing, since
+  /// the live UNIQUE constraint is (player_id, mission_id, date).
+  ///
+  /// Required row map keys:
+  ///   - 'player_id' (String UUID)
+  ///   - 'slug' (String, used for definition lookup; stripped before write)
+  ///   - 'date' (String, yyyy-MM-dd)
+  /// Optional keys: 'progress', 'target', 'completed_at', 'synced_at'.
+  ///
+  /// Throws StateError if the slug does not match any definition row.
   Future<void> upsertMissionProgress(Map<String, dynamic> row) async {
     final client = Supabase.instance.client;
+    final slug = row['slug'] as String?;
+    if (slug == null) {
+      throw StateError('upsertMissionProgress requires a slug in the row map');
+    }
+
+    // Resolve mission_id from definitions table.
+    final defRow = await client
+        .from('daily_mission_definitions')
+        .select('id')
+        .eq('slug', slug)
+        .maybeSingle();
+    if (defRow == null) {
+      throw StateError('Unknown mission slug: $slug');
+    }
+    final missionId = defRow['id'] as int;
+
+    // Build payload: strip slug and any legacy user_id; inject mission_id.
+    final payload = Map<String, dynamic>.from(row)
+      ..remove('slug')
+      ..remove('user_id')
+      ..remove('id'); // drop legacy composite id; live table generates UUID
+    payload['mission_id'] = missionId;
+
     await client.from('daily_mission_progress').upsert(
-      row,
-      onConflict: 'user_id,date,slug',
+      payload,
+      onConflict: 'player_id,mission_id,date',
     );
   }
 
