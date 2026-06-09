@@ -511,8 +511,20 @@ class _MapScreenState extends ConsumerState<MapScreen>
         prev != RecorderState.awaitingClaim &&
         mounted) {
       // Read city at transition time from _currentCity, which is kept
-      // fresh on every build(), then delegate to the claim handler.
-      final city = _currentCity ?? '';
+      // fresh on every build(). Fall back to the first joined-city slug
+      // in case build() has not yet run after the state change.
+      final auth = ref.read(authProvider);
+      final userId = auth.user?['id'] as String?;
+      final city = _currentCity ??
+          (userId != null
+              ? capitalize(
+                  ref
+                          .read(joinedCitySlugsProvider(userId))
+                          .valueOrNull
+                          ?.firstOrNull ??
+                      '',
+                )
+              : '');
       _autoClaim(context, city);
     }
   }
@@ -652,7 +664,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
           if (patch.isNotEmpty) {
             await DatabaseService.instance.updateProfile(userId, patch);
           }
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('[MapScreen] updateProfile stamp failed: $e');
+        }
       }
     } catch (e) {
       debugPrint('[MapScreen] complete_first_mission failed: $e');
@@ -711,7 +725,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
               userId,
               {'first_attack_completed_at': attackAt},
             );
-          } catch (_) {}
+          } catch (e) {
+            debugPrint('[MapScreen] updateProfile stamp failed: $e');
+          }
         }
       }
     } catch (e) {

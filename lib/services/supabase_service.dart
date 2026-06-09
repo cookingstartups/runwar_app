@@ -35,7 +35,7 @@ class SupabaseService {
   /// Returns true only when BOTH an active Supabase session exists AND
   /// [networkUp] (from connectivityProvider) is true.
   /// Always returns false before Supabase is initialized so the outbox
-  /// is never bypassed on first boot (offline-first per AC-8).
+  /// is never bypassed on first boot (offline-first guarantee).
   bool canWriteRemote(bool networkUp) {
     if (!_initialized) return false;
     try {

@@ -9,6 +9,7 @@ import '../services/territory_service.dart';
 import '../services/supabase_service.dart';
 import '../services/superpower_service.dart';
 import '../services/outbox_aware_writer.dart';
+import '../services/error_log_service.dart';
 import 'connectivity_provider.dart';
 import 'runs_provider.dart';
 import 'zones_provider.dart';
@@ -159,8 +160,13 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         networkUp: networkUp,
       );
       debugPrint('[RunRecorder] queued ${rows.length} gps_samples for run $runId');
-    } catch (e) {
-      debugPrint('[RunRecorder] gps_samples queue failed: $e');
+    } catch (e, st) {
+      ErrorLogService.logClientError(
+        provider: '_uploadGpsSamples',
+        error: e,
+        stackTrace: st,
+        retryCount: 0,
+      );
     }
   }
 

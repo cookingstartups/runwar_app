@@ -62,7 +62,7 @@ class OutboxDrainer {
     }
 
     try {
-      // Use upsert with onConflict: 'id' for idempotent replay (AC-18).
+      // Use upsert with onConflict: 'id' for idempotent replay on retry.
       // gps_samples has no PK so upsert falls back to insert for that table.
       if (tableName == 'gps_samples') {
         final samplesRaw = payload['samples'];

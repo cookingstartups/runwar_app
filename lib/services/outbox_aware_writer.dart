@@ -6,8 +6,9 @@ import 'outbox_drainer.dart';
 import 'supabase_service.dart';
 
 /// Facade for all Supabase write paths.
-/// Every write is enqueued in the outbox BEFORE any network call (AC-10).
-/// If [canWriteRemote] is true, a drain attempt follows immediately.
+/// Every write is enqueued in the outbox BEFORE any network call so data is
+/// never lost on network failure. If [canWriteRemote] is true, a drain
+/// attempt follows immediately.
 class OutboxAwareWriter {
   OutboxAwareWriter._();
   static final OutboxAwareWriter instance = OutboxAwareWriter._();
@@ -31,21 +32,22 @@ class OutboxAwareWriter {
         await OutboxService.instance.markSuccess(id);
       } catch (e) {
         debugPrint('[OutboxAwareWriter] writeRun failed, kept in outbox: $e');
-        // Row stays in outbox for drainer to retry.
+        // Row stays in outbox; mark failed so the drainer applies backoff.
+        await OutboxService.instance.markFailure(id, 0, error: e.toString());
       }
     }
   }
 
   /// Writes a zone row.
   /// If [edgeFunctionZoneId] matches [zone['id']], the edge function already
-  /// created this row server-side — skip enqueue entirely (AC-14).
+  /// created this row server-side — skip enqueue entirely to avoid a duplicate.
   Future<void> writeZone(
     Map<String, dynamic> zone, {
     required bool networkUp,
     String? edgeFunctionZoneId,
   }) async {
     final id = zone['id'] as String? ?? _uuid.v4();
-    // AC-14: edge-function zone idempotency — do not re-insert.
+    // Edge-function zone already created server-side — skip re-insertion.
     if (edgeFunctionZoneId != null && edgeFunctionZoneId == id) return;
     final payload = {...zone, 'id': id};
     await OutboxService.instance.enqueue('zones', id, payload);
@@ -57,6 +59,8 @@ class OutboxAwareWriter {
         await OutboxService.instance.markSuccess(id);
       } catch (e) {
         debugPrint('[OutboxAwareWriter] writeZone failed, kept in outbox: $e');
+        // Row stays in outbox; mark failed so the drainer applies backoff.
+        await OutboxService.instance.markFailure(id, 0, error: e.toString());
       }
     }
   }
@@ -69,7 +73,7 @@ class OutboxAwareWriter {
   }) async {
     if (samples.isEmpty) return;
     final batchId = _uuid.v4();
-    // Enqueue BEFORE network call (AC-10).
+    // Enqueue BEFORE the network call so data survives a connection drop.
     await OutboxService.instance.enqueue(
       'gps_samples',
       batchId,
@@ -84,6 +88,9 @@ class OutboxAwareWriter {
       } catch (e) {
         debugPrint(
             '[OutboxAwareWriter] writeGpsSamples failed, kept in outbox: $e');
+        // Row stays in outbox; mark failed so the drainer applies backoff.
+        await OutboxService.instance.markFailure(batchId, 0,
+            error: e.toString());
       }
     }
   }

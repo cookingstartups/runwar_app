@@ -11,7 +11,8 @@ class OutboxService {
   /// Enqueues a row for later drain.
   /// [id] is provided by the caller and doubles as the Supabase row id
   /// so upsert replay is idempotent.
-  Future<void> enqueue(
+  /// Returns [id] so callers can pass it to [markFailure] on inline write error.
+  Future<String> enqueue(
     String tableName,
     String id,
     Map<String, dynamic> payload,
@@ -30,6 +31,7 @@ class OutboxService {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    return id;
   }
 
   Future<List<Map<String, dynamic>>> peekBatch({int limit = 50}) async {
