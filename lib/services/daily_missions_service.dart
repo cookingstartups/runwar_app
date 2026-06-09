@@ -62,10 +62,9 @@ class DailyMissionsService {
     // Upsert slate rows.
     for (final mission in slate) {
       await ds.upsertMissionProgress({
-        'id': '${userId}_${today}_${mission.slug}',
-        'user_id': userId,
-        'date': today,
+        'player_id': userId,
         'slug': mission.slug,
+        'date': today,
         'progress': 0,
         'target': mission.targetValue,
         'completed_at': null,
@@ -98,10 +97,9 @@ class DailyMissionsService {
     final newProgress = math.min(current + delta, target);
 
     await ds.upsertMissionProgress({
-      'id': '${userId}_${today}_$slug',
-      'user_id': userId,
-      'date': today,
+      'player_id': userId,
       'slug': slug,
+      'date': today,
       'progress': newProgress,
       'target': target,
       'completed_at': row['completed_at'],
@@ -172,10 +170,9 @@ class DailyMissionsService {
     // Update remote mirror.
     final ds = DatabaseService.instance;
     await ds.upsertMissionProgress({
-      'id': '${userId}_${today}_$slug',
-      'user_id': userId,
-      'date': today,
+      'player_id': userId,
       'slug': slug,
+      'date': today,
       'completed_at': (completedAt ?? DateTime.now().toUtc()).toIso8601String(),
       'synced_at': DateTime.now().toUtc().toIso8601String(),
     });
