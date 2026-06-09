@@ -75,7 +75,7 @@ void main() {
     // AND  the buffer for player B holds 4 entries independently
     // AND  entries are ordered from oldest to newest
     test('buffer stores independent entries per player, oldest-first', () {
-      final baseTime = DateTime(2026, 1, 1, 12, 0, 0);
+      final baseTime = DateTime.now();
       final origin = LatLng(51.5, -0.1);
 
       for (var i = 0; i < 4; i++) {
@@ -119,7 +119,7 @@ void main() {
     // WHEN a 13th entry is injected
     // THEN the buffer length is still 12 (oldest evicted)
     test('buffer stores up to 12 entries per player and evicts the oldest on overflow', () {
-      final baseTime = DateTime(2026, 1, 1, 12, 0, 0);
+      final baseTime = DateTime.now();
 
       for (var i = 0; i < 13; i++) {
         service.injectPresence(

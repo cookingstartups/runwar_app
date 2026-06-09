@@ -83,9 +83,18 @@ class RealtimePresenceService {
 
   /// Returns the buffered position history for [playerId], oldest-first.
   /// Returns an empty list when no history exists yet (cold start, first emission).
-  /// Age filtering happens in [_updateHistoryBuffer]; this returns the buffer as-is.
-  List<PlayerPresence> historyFor(String playerId) =>
-      List.unmodifiable(_playerHistory[playerId] ?? const []);
+  /// Filters out entries older than [_kHistoryMaxAgeSeconds] at read time so
+  /// callers always receive fresh data regardless of when the buffer was last pruned.
+  List<PlayerPresence> historyFor(String playerId) {
+    final cutoff = DateTime.now().subtract(
+      Duration(seconds: _kHistoryMaxAgeSeconds),
+    );
+    return List.unmodifiable(
+      (_playerHistory[playerId] ?? const <PlayerPresence>[])
+          .where((e) => e.updatedAt.isAfter(cutoff))
+          .toList(),
+    );
+  }
 
   /// Call once after auth to begin presence tracking.
   void init({
