@@ -58,7 +58,7 @@ class TrialService {
     }
 
     final daysSince = lastTick == null ? 1 : _daysBetween(lastTick, today);
-    int newStreak = (row['current_streak'] as int?) ?? 0;
+    int newStreak = (row['streak'] as int?) ?? 0;
 
     if (daysSince <= 0) return;
 
@@ -84,7 +84,7 @@ class TrialService {
       trialLastTickDate: today,
       freezeTokens: freezeTokens,
       freezeRefreshedAt: refreshedAt ?? today,
-      currentStreak: newStreak,
+      streak: newStreak,
     );
   }
 
@@ -96,7 +96,7 @@ class TrialService {
     return TrialStatus(
       started: row['trial_started_at'] != null,
       daysRemaining: (row['trial_days_remaining'] as int?) ?? 14,
-      streak: (row['current_streak'] as int?) ?? 0,
+      streak: (row['streak'] as int?) ?? 0,
     );
   }
 

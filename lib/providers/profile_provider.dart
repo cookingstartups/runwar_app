@@ -12,15 +12,15 @@ final profileGateProvider =
     FutureProvider.family<Map<String, dynamic>?, String>(
         (ref, userId) => ProfileService.instance.fetchProfile(userId));
 
-/// P3: Player reputation score (0–100+) from the players table.
+/// P3: Player reputation score (0-100+) from the player_economy table.
 /// Defaults to 100 if the row is missing or Supabase is unavailable.
 final reputationProvider = FutureProvider.family<int, String>((ref, userId) async {
   if (!SupabaseService.instance.isConnected) return 100;
   try {
     final row = await SupabaseService.instance.supabase
-        .from('players')
+        .from('player_economy')
         .select('reputation')
-        .eq('id', userId)
+        .eq('player_id', userId)
         .maybeSingle();
     return (row?['reputation'] as int?) ?? 100;
   } catch (_) {

@@ -55,23 +55,24 @@ Deno.serve(async (req) => {
     const requiresZone = ['BLITZ', 'FORTIFY'].includes(offer.offered_power_type);
     if (requiresZone && !target_zone_id) return ok({ success: false, reason: 'no_target_zone' });
 
-    // Fetch player credits
-    const { data: player } = await supabase
-      .from('players')
+    // Fetch player credits from player_economy
+    const { data: economy } = await supabase
+      .from('player_economy')
       .select('credits')
-      .eq('id', playerId)
+      .eq('player_id', playerId)
       .maybeSingle();
 
-    const currentCredits: number = player?.credits ?? 0;
+    const currentCredits: number = economy?.credits ?? 0;
     if (currentCredits < offer.cost_credits) {
       return ok({ success: false, reason: 'insufficient_credits' });
     }
 
     // Debit credits
-    await supabase.rpc('increment_credits', {
+    const { error: debitErr } = await supabase.rpc('increment_credits', {
       p_player: playerId,
       p_amount: -offer.cost_credits,
     });
+    if (debitErr) return new Response(JSON.stringify({ error: 'Failed to debit credits: ' + debitErr.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
 
     const newBalance = currentCredits - offer.cost_credits;
 
