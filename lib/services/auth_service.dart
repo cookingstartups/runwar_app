@@ -3,6 +3,11 @@ import 'package:flutter/foundation.dart';
 import 'database_service.dart';
 import 'google_auth_service.dart';
 import 'supabase_service.dart';
+import '../config/constants.dart';
+
+@visibleForTesting
+String deriveEmailUsername(String id) =>
+    'Runner_${id.replaceAll('-', '').substring(0, 6).toLowerCase()}';
 
 class AuthService {
   AuthService._();
@@ -22,11 +27,15 @@ class AuthService {
     // Fall back to a local UUID when offline / Supabase unavailable.
     final id = supabaseId ?? _uuidV4();
 
+    // Auto-assign username and a deterministic palette color.
+    final username = deriveEmailUsername(id);
+    final color = kPlayerColors[id.hashCode.abs() % kPlayerColors.length];
+
     try {
       await DatabaseService.instance.insertProfile(
         id,
-        '',
-        '#FF7A00',
+        username,
+        color,
         influence: 1,
         invitedAt: null,
         isTester: 0,
