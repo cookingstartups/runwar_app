@@ -196,7 +196,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
       _ref.invalidate(userRunPointsProvider((userId: userId, city: city)));
     }
 
-    // IMPORTANT: do NOT call svc.cancelRun() or svc.discardRun() here.
+    // Do NOT call svc.cancelRun() here.
     // The recorder stays in `recording` state so the next loop can form.
     return outcome;
   }

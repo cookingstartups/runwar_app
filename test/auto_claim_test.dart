@@ -1,8 +1,6 @@
-import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:mocktail/mocktail.dart';
 
 import 'package:runwar_app/geo/lasso.dart';
 import 'package:runwar_app/services/run_recorder_service.dart';
@@ -74,20 +72,6 @@ List<LatLng> _largePolygon() => [
       const LatLng(34.705, 33.005),
       const LatLng(34.700, 33.005),
     ];
-
-// ---------------------------------------------------------------------------
-// Fake RealtimePresenceService used for presence-gate tests.
-// We cannot easily instantiate the singleton; instead we test the service's
-// internal _isRecording flag indirectly via the exposed setRecording / timer.
-// ---------------------------------------------------------------------------
-
-// Track calls to channel.track/untrack via a simple log.
-class _PresenceCallLog {
-  final List<String> calls = [];
-  void track() => calls.add('track');
-  void untrack() => calls.add('untrack');
-  void clear() => calls.clear();
-}
 
 // ---------------------------------------------------------------------------
 // Stub for the onAutoClaim callback injected into RunRecorderService.
@@ -339,8 +323,6 @@ void main() {
       svc.injectTrackForTesting(_figure8Path());
       svc.runScanForAutoClaimForTesting();
       await Future<void>.delayed(Duration.zero);
-
-      final indexAfterFirst = svc.loopStartTrailIndexForTesting;
 
       // Second intersection: extend the trail with another crossing loop
       svc.injectTrackForTesting(_figure8PathExtended());
