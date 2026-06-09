@@ -9,6 +9,8 @@ import 'services/database_service.dart';
 import 'services/supabase_service.dart';
 import 'services/territory_service.dart';
 import 'services/error_log_service.dart';
+import 'services/outbox_drainer.dart';
+import 'providers/connectivity_provider.dart';
 import 'providers/auth_provider.dart';
 import 'services/auth_service.dart';
 import 'providers/profile_provider.dart';
@@ -183,6 +185,9 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      // Drain outbox on foreground — fire-and-forget.
+      OutboxDrainer.instance.drain().catchError((_) {});
+
       final userId =
           ref.read(authProvider).user?['id'] as String?;
       if (userId != null) {
@@ -275,6 +280,15 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
     // ── Phase A: unconditional providers ──────────────────────────────────
     final authState = ref.watch(authProvider);
     final showcaseAsync = ref.watch(showcaseSeenProvider);
+
+    // Drain outbox when network is restored — fire-and-forget.
+    ref.listen<AsyncValue<bool>>(connectivityProvider, (prev, next) {
+      final wasOffline = !(prev?.valueOrNull ?? false);
+      final isOnline = next.valueOrNull ?? false;
+      if (wasOffline && isOnline) {
+        OutboxDrainer.instance.drain().catchError((_) {});
+      }
+    });
 
     // Extract userId without await — null when auth is loading or unauthenticated.
     final userId = authState.user?['id'] as String?;

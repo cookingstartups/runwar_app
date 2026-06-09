@@ -31,6 +31,22 @@ class SupabaseService {
     }
   }
 
+  /// Composite connectivity check for write paths.
+  /// Returns true only when BOTH an active Supabase session exists AND
+  /// [networkUp] (from connectivityProvider) is true.
+  /// Always returns false before Supabase is initialized so the outbox
+  /// is never bypassed on first boot (offline-first per AC-8).
+  bool canWriteRemote(bool networkUp) {
+    if (!_initialized) return false;
+    try {
+      final hasSession =
+          Supabase.instance.client.auth.currentSession != null;
+      return hasSession && networkUp;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Current Supabase user ID, or null if not yet authed.
   String? get currentUserId {
     if (!_initialized) return null;

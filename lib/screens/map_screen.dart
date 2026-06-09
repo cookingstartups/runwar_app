@@ -25,6 +25,7 @@ import '../services/realtime_presence_service.dart';
 import '../services/superpower_service.dart';
 import '../services/supabase_service.dart';
 import '../services/territory_service.dart';
+import '../services/error_log_service.dart';
 import '../services/trial_service.dart';
 import '../services/database/models/zone.dart';
 import '../services/database/models/city_config.dart';
@@ -92,6 +93,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
   bool _centeredOnGps = false;
   late final AnimationController _terrainPulse;
 
+  // Cached city name updated on every build; read at transition time by the
+  // manual listener so the auto-claim handler always receives the current value.
+  String? _currentCity;
+  late final ProviderSubscription<RecorderState> _recorderSub;
+
   // ── Expand & Unify overlay state ──────────────────────────────────────────
   AnimationController? _euController;
   Path _euPriorUnion = Path();
@@ -111,6 +117,15 @@ class _MapScreenState extends ConsumerState<MapScreen>
       vsync: this,
       duration: const Duration(milliseconds: 2400),
     )..repeat(reverse: true);
+
+    // Register the RecorderState listener unconditionally in initState so
+    // the recording -> awaitingClaim transition is never lost due to an
+    // early-return in build() while joinedCitySlugsProvider is loading.
+    _recorderSub = ref.listenManual<RecorderState>(
+      runRecorderProvider,
+      _onRecorderStateChanged,
+    );
+
     SuperpowerService.instance.onShieldEarned = (grant) {
       if (mounted) _showShieldEarnedModal(grant);
     };
@@ -160,6 +175,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
 
   @override
   void dispose() {
+    _recorderSub.close();
     SuperpowerService.instance.onShieldEarned = null;
     _terrainPulse.dispose();
     _euController?.dispose();
@@ -246,15 +262,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
     }
 
     final city = capitalize(slugsAsync.value!.first);
-
-    // Auto-claim immediately when lasso closes — no button press required.
-    ref.listen<RecorderState>(runRecorderProvider, (prev, next) {
-      if (next == RecorderState.awaitingClaim &&
-          prev != RecorderState.awaitingClaim &&
-          context.mounted) {
-        _autoClaim(context, city);
-      }
-    });
+    // Keep _currentCity fresh on every build so the initState listener reads
+    // the current city value at transition time, not a stale captured value.
+    _currentCity = city;
 
     final zonesAsync = ref.watch(zonesProvider(city));
 
@@ -369,9 +379,17 @@ class _MapScreenState extends ConsumerState<MapScreen>
       }
       // Start trial clock on first FAB tap (no-op if already started).
       final fabUserId = ref.read(authProvider).user?['id'] as String?;
-      if (fabUserId != null) {
-        await TrialService.instance.initTrial(fabUserId);
+      if (fabUserId == null) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Not signed in — please restart the app')),
+        );
+        return;
       }
+      await TrialService.instance.initTrial(fabUserId);
+      // Wire the active user ID before starting so scratch inserts and
+      // DailyMissions progress calls are never blocked by the null guard.
+      RunRecorderService.instance.setActiveUser(fabUserId);
       // Request battery optimization exemption exactly once (AC-15).
       await BatteryOptimizationService.requestOnce();
       await notifier.start();
@@ -488,6 +506,17 @@ class _MapScreenState extends ConsumerState<MapScreen>
     });
   }
 
+  void _onRecorderStateChanged(RecorderState? prev, RecorderState next) {
+    if (next == RecorderState.awaitingClaim &&
+        prev != RecorderState.awaitingClaim &&
+        mounted) {
+      // Read city at transition time from _currentCity, which is kept
+      // fresh on every build(), then delegate to the claim handler.
+      final city = _currentCity ?? '';
+      _autoClaim(context, city);
+    }
+  }
+
   Future<void> _autoClaim(BuildContext context, String city) async {
     final auth = ref.read(authProvider);
     final userId = auth.user?['id'] as String?;
@@ -495,7 +524,33 @@ class _MapScreenState extends ConsumerState<MapScreen>
       ref.read(runRecorderProvider.notifier).discard();
       return;
     }
+    try {
+      await _executeConfirmClaim(context, userId, city);
+    } catch (e, st) {
+      debugPrint('[MapScreen] _autoClaim failed: $e\n$st');
+      ref.read(runRecorderProvider.notifier).discard();
+      ErrorLogService.logClientError(
+        provider: '_autoClaim',
+        error: e,
+        stackTrace: st,
+        retryCount: 0,
+        userId: userId,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Claim failed — try again')),
+        );
+      }
+    }
+  }
 
+  /// Executes the full claim flow after auth guard passes.
+  /// Called by [_autoClaim] inside a try/catch so any exception triggers discard.
+  Future<void> _executeConfirmClaim(
+    BuildContext context,
+    String userId,
+    String city,
+  ) async {
     // Snapshot track and prior zones BEFORE confirmClaim (which calls discardRun).
     final trackBefore = RunRecorderService.instance.trackSnapshot;
     final zonesBefore = ref.read(zonesProvider(city)).valueOrNull ?? const [];

@@ -4,8 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
-import 'database_service.dart';
 import 'realtime_presence_service.dart';
+import 'run_scratch_store.dart';
 import 'telemetry_service.dart';
 import 'daily_missions_service.dart';
 
@@ -54,7 +54,7 @@ class RunRecorderService {
     final uid = _activeUserId;
     if (uid != null) {
       try {
-        DatabaseService.instance.deleteScratchRun(uid);
+        await RunScratchStore.instance.deleteForUser(uid);
       } catch (_) {}
     }
     await _startForegroundTask();
@@ -72,18 +72,16 @@ class RunRecorderService {
     _track.add(LatLng(pos.latitude, pos.longitude));
     RealtimePresenceService.instance.updatePosition(LatLng(pos.latitude, pos.longitude));
     trackVersion.value++;
-    // Persist point to scratch table for crash/process-kill recovery.
+    // Persist point to sqflite scratch table for crash/process-kill recovery.
     final uid = _activeUserId;
     if (uid != null) {
-      try {
-        DatabaseService.instance.insertScratchPoint(
-          uid,
-          pos.latitude,
-          pos.longitude,
-          pos.accuracy,
-          pos.timestamp.toIso8601String(),
-        );
-      } catch (_) {}
+      RunScratchStore.instance.insertPoint(
+        uid,
+        pos.latitude,
+        pos.longitude,
+        accuracy: pos.accuracy,
+        ts: pos.timestamp.toIso8601String(),
+      ).catchError((_) {});
     }
   }
 
@@ -169,7 +167,7 @@ class RunRecorderService {
     final uid = _activeUserId;
     if (uid != null) {
       try {
-        DatabaseService.instance.deleteScratchRun(uid);
+        await RunScratchStore.instance.deleteForUser(uid);
       } catch (_) {}
     }
     _clearTrackInternal();
@@ -196,9 +194,7 @@ class RunRecorderService {
     unawaited(FlutterForegroundTask.stopService());
     final uid = _activeUserId;
     if (uid != null) {
-      try {
-        DatabaseService.instance.deleteScratchRun(uid);
-      } catch (_) {}
+      RunScratchStore.instance.deleteForUser(uid).catchError((_) {});
     }
     _clearTrackInternal();
     stateNotifier.value = RecorderState.idle;
@@ -224,7 +220,7 @@ class RunRecorderService {
   Future<void> resumeFromScratch(String userId) async {
     if (stateNotifier.value == RecorderState.recording) return;
     try {
-      final rows = DatabaseService.instance.getScratchRun(userId);
+      final rows = await RunScratchStore.instance.getPoints(userId);
       if (rows.isEmpty) return;
       _track.clear();
       DateTime? earliest;
@@ -248,10 +244,10 @@ class RunRecorderService {
   }
 
   /// Deletes all run_scratch rows for [userId] without affecting [_track],
-  /// the foreground service, or state (AC-14, and used internally by discardRun).
+  /// the foreground service, or state (used internally by discardRun).
   Future<void> clearScratch(String userId) async {
     try {
-      DatabaseService.instance.deleteScratchRun(userId);
+      await RunScratchStore.instance.deleteForUser(userId);
     } catch (_) {}
   }
 
