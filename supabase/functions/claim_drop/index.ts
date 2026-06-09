@@ -80,16 +80,16 @@ Deno.serve(async (req) => {
 
     if (dropType === 'credits_cache') {
       await supabase.rpc('increment_credits', { p_player: playerId, p_amount: value });
-      const { data: player } = await supabase
-        .from('players')
+      const { data: economy } = await supabase
+        .from('player_economy')
         .select('credits')
-        .eq('id', playerId)
+        .eq('player_id', playerId)
         .maybeSingle();
       return ok({
         success: true,
         drop_type: dropType,
         credits_awarded: value,
-        new_balance: player?.credits ?? 0,
+        new_balance: economy?.credits ?? 0,
       });
     }
 

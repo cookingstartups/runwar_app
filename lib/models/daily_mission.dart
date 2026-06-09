@@ -80,8 +80,9 @@ class DailyStreak {
         lastLogin = DateTime.parse(rawLogin);
       } catch (_) {}
     }
+    final streakValue = ((row['streak'] ?? row['current_streak']) as num?)?.toInt() ?? 0;
     return DailyStreak(
-      current: (row['current_streak'] as num?)?.toInt() ?? 0,
+      current: streakValue,
       longest: (row['longest_streak'] as num?)?.toInt() ?? 0,
       lastLoginAt: lastLogin,
       milestonesClaimed: milestones,

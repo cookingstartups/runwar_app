@@ -1,7 +1,28 @@
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-// ── Patch normalisation (AC-2, AC-4) ─────────────────────────────────────────
+// ── Child table column sets (used by updateProfile routing) ───────────────────
+
+const _kIdentityCols = <String>{
+  'username', 'color', 'phone', 'bio', 'avatar_url', 'avatar_metadata',
+  'referral_code', 'is_active', 'is_tester', 'invited_at',
+};
+const _kEconomyCols = <String>{
+  'credits', 'total_kickback_earned', 'subscription_tier',
+  'subscription_expires', 'reputation',
+};
+const _kProgressCols = <String>{
+  'score', 'first_mission_completed_at', 'first_attack_completed_at',
+};
+const _kStreaksCols = <String>{
+  'streak', 'longest_streak', 'last_login_at', 'streak_started_at',
+  'milestones_claimed', 'freeze_tokens', 'freeze_refreshed_at',
+};
+const _kTrialCols = <String>{
+  'trial_started_at', 'trial_days_remaining', 'trial_last_tick_date',
+};
+
+// ── Patch normalisation ───────────────────────────────────────────────────────
 
 /// Strips any character that is not `+` or a digit from phone values, and
 /// trims leading/trailing whitespace from username values.
@@ -44,12 +65,27 @@ class DatabaseService {
     final client = Supabase.instance.client;
     final rows = await client
         .from('players')
-        .select()
+        .select('*, player_economy(*), player_progress(*), player_streaks(*), player_trial(*)')
         .eq('id', userId)
         .limit(1);
     final list = rows as List<dynamic>;
     if (list.isEmpty) return null;
-    return Map<String, dynamic>.from(list.first as Map<String, dynamic>);
+
+    final row = Map<String, dynamic>.from(list.first as Map<String, dynamic>);
+    final economy  = row.remove('player_economy')  as Map<String, dynamic>?;
+    final progress = row.remove('player_progress') as Map<String, dynamic>?;
+    final streaks  = row.remove('player_streaks')  as Map<String, dynamic>?;
+    final trial    = row.remove('player_trial')    as Map<String, dynamic>?;
+
+    if (economy  != null) row.addAll(economy);
+    if (progress != null) row.addAll(progress);
+    if (streaks  != null) row.addAll(streaks);
+    if (trial    != null) row.addAll(trial);
+
+    // Remove the duplicate player_id key injected by child table joins.
+    row.remove('player_id');
+
+    return row;
   }
 
   Future<void> insertProfile(
@@ -97,9 +133,57 @@ class DatabaseService {
 
   Future<void> updateProfile(String userId, Map<String, dynamic> patch) async {
     if (patch.isEmpty) return;
+    final normalised = normaliseProfilePatch(patch);
     final client = Supabase.instance.client;
-    final remote = normaliseProfilePatch(patch);
-    await client.from('players').update(remote).eq('id', userId);
+
+    final identityPatch  = <String, dynamic>{};
+    final economyPatch   = <String, dynamic>{};
+    final progressPatch  = <String, dynamic>{};
+    final streaksPatch   = <String, dynamic>{};
+    final trialPatch     = <String, dynamic>{};
+
+    for (final entry in normalised.entries) {
+      if (_kIdentityCols.contains(entry.key)) {
+        identityPatch[entry.key] = entry.value;
+      } else if (_kEconomyCols.contains(entry.key)) {
+        economyPatch[entry.key] = entry.value;
+      } else if (_kProgressCols.contains(entry.key)) {
+        progressPatch[entry.key] = entry.value;
+      } else if (_kStreaksCols.contains(entry.key)) {
+        streaksPatch[entry.key] = entry.value;
+      } else if (_kTrialCols.contains(entry.key)) {
+        trialPatch[entry.key] = entry.value;
+      }
+      // Unknown key: skip silently.
+    }
+
+    if (identityPatch.isNotEmpty) {
+      await client.from('players').update(identityPatch).eq('id', userId);
+    }
+    if (economyPatch.isNotEmpty) {
+      await client.from('player_economy').upsert(
+        {'player_id': userId, ...economyPatch},
+        onConflict: 'player_id',
+      );
+    }
+    if (progressPatch.isNotEmpty) {
+      await client.from('player_progress').upsert(
+        {'player_id': userId, ...progressPatch},
+        onConflict: 'player_id',
+      );
+    }
+    if (streaksPatch.isNotEmpty) {
+      await client.from('player_streaks').upsert(
+        {'player_id': userId, ...streaksPatch},
+        onConflict: 'player_id',
+      );
+    }
+    if (trialPatch.isNotEmpty) {
+      await client.from('player_trial').upsert(
+        {'player_id': userId, ...trialPatch},
+        onConflict: 'player_id',
+      );
+    }
   }
 
   Future<bool> isProfileInvited(String userId) async {
@@ -126,15 +210,24 @@ class DatabaseService {
     final client = Supabase.instance.client;
     final rows = await client
         .from('players')
-        .select(
-          'trial_started_at, trial_days_remaining, trial_last_tick_date, '
-          'freeze_tokens, freeze_refreshed_at, current_streak',
-        )
+        .select('id, player_trial(*), player_streaks(freeze_tokens, freeze_refreshed_at, streak)')
         .eq('id', userId)
         .limit(1);
     final list = rows as List<dynamic>;
     if (list.isEmpty) return null;
-    return Map<String, dynamic>.from(list.first as Map<String, dynamic>);
+
+    final row = Map<String, dynamic>.from(list.first as Map<String, dynamic>);
+    final trial   = row['player_trial']   as Map<String, dynamic>?;
+    final streaks = row['player_streaks'] as Map<String, dynamic>?;
+
+    return {
+      'trial_started_at':     trial?['trial_started_at'],
+      'trial_days_remaining': trial?['trial_days_remaining'],
+      'trial_last_tick_date': trial?['trial_last_tick_date'],
+      'freeze_tokens':        streaks?['freeze_tokens'],
+      'freeze_refreshed_at':  streaks?['freeze_refreshed_at'],
+      'streak':               streaks?['streak'],
+    };
   }
 
   Future<void> updateTrialState(
@@ -144,7 +237,7 @@ class DatabaseService {
     String? trialLastTickDate,
     int? freezeTokens,
     String? freezeRefreshedAt,
-    int? currentStreak,
+    int? streak,
     String? streakStartedAt,
     int? longestStreak,
   }) async {
@@ -154,7 +247,7 @@ class DatabaseService {
     if (trialLastTickDate != null) patch['trial_last_tick_date'] = trialLastTickDate;
     if (freezeTokens != null) patch['freeze_tokens'] = freezeTokens;
     if (freezeRefreshedAt != null) patch['freeze_refreshed_at'] = freezeRefreshedAt;
-    if (currentStreak != null) patch['current_streak'] = currentStreak;
+    if (streak != null) patch['streak'] = streak;
     if (streakStartedAt != null) patch['streak_started_at'] = streakStartedAt;
     if (longestStreak != null) patch['longest_streak'] = longestStreak;
     if (patch.isEmpty) return;

@@ -58,14 +58,14 @@ Deno.serve(async (req) => {
 
     if (!local_date) return err('Missing local_date');
 
-    // Fetch player row
+    // Fetch player streaks row
     const { data: player, error: playerErr } = await supabase
-      .from('players')
-      .select('id, current_streak, longest_streak, freeze_tokens, freeze_refreshed_at, last_login_at, milestones_claimed, credits')
-      .eq('id', playerId)
+      .from('player_streaks')
+      .select('streak, longest_streak, freeze_tokens, freeze_refreshed_at, last_login_at, milestones_claimed')
+      .eq('player_id', playerId)
       .maybeSingle();
 
-    if (playerErr || !player) return err('Player not found', 404);
+    if (playerErr || !player) return err('player_streaks row not found for player', 404);
 
     const now = new Date();
 
@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
       freezeRefreshedAt = now;
     }
 
-    let currentStreak: number = player.current_streak ?? 0;
+    let currentStreak: number = player.streak ?? 0;
     const previousStreak = currentStreak;
     let longestStreak: number = player.longest_streak ?? 0;
     let lastLoginAt: Date | null = player.last_login_at ? new Date(player.last_login_at) : null;
@@ -134,7 +134,6 @@ Deno.serve(async (req) => {
     let milestoneUnlocked: { day: number; credits: number; power: string | null; power_duration_s: number | null } | null = null;
     let checkInGranted = false;
     let newBalance: number | null = null;
-    let currentCredits: number = player.credits ?? 0;
 
     const milestoneDays = [3, 7, 14, 21, 30];
     for (const day of milestoneDays) {
@@ -150,8 +149,7 @@ Deno.serve(async (req) => {
             p_player: playerId,
             p_amount: credits,
           });
-          currentCredits += credits;
-          newBalance = currentCredits;
+          newBalance = credits; // caller can re-fetch for exact balance if needed
         }
 
         // Insert SHIELD superpower grant for day 3
@@ -180,18 +178,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Persist updated player row
+    // Persist updated player_streaks row
     const { error: updateErr } = await supabase
-      .from('players')
+      .from('player_streaks')
       .update({
-        current_streak: currentStreak,
+        streak: currentStreak,
         longest_streak: longestStreak,
         last_login_at: lastLoginAt ? lastLoginAt.toISOString() : null,
         freeze_tokens: freezeTokens,
         freeze_refreshed_at: freezeRefreshedAt.toISOString(),
         milestones_claimed: milestonesClaimed,
+        updated_at: new Date().toISOString(),
       })
-      .eq('id', playerId);
+      .eq('player_id', playerId);
 
     if (updateErr) return err(updateErr.message, 500);
 
