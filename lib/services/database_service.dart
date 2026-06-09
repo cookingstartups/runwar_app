@@ -142,6 +142,7 @@ class DatabaseService {
     final streaksPatch   = <String, dynamic>{};
     final trialPatch     = <String, dynamic>{};
 
+    final unknownKeys = <String>[];
     for (final entry in normalised.entries) {
       if (_kIdentityCols.contains(entry.key)) {
         identityPatch[entry.key] = entry.value;
@@ -153,9 +154,12 @@ class DatabaseService {
         streaksPatch[entry.key] = entry.value;
       } else if (_kTrialCols.contains(entry.key)) {
         trialPatch[entry.key] = entry.value;
+      } else {
+        unknownKeys.add(entry.key);
       }
-      // Unknown key: skip silently.
     }
+    // In debug builds, surface unknown patch keys so they don't silently vanish.
+    assert(unknownKeys.isEmpty, 'updateProfile: unknown patch keys dropped: $unknownKeys');
 
     if (identityPatch.isNotEmpty) {
       await client.from('players').update(identityPatch).eq('id', userId);

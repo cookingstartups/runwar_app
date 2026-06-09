@@ -79,7 +79,8 @@ Deno.serve(async (req) => {
     const value: number = drop.value ?? 0;
 
     if (dropType === 'credits_cache') {
-      await supabase.rpc('increment_credits', { p_player: playerId, p_amount: value });
+      const { error: creditErr } = await supabase.rpc('increment_credits', { p_player: playerId, p_amount: value });
+      if (creditErr) return new Response(JSON.stringify({ error: 'Failed to award credits: ' + creditErr.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
       const { data: economy } = await supabase
         .from('player_economy')
         .select('credits')

@@ -1,12 +1,12 @@
 // test/database_service_split_test.dart
 //
 // RED phase: unit tests for Dart behavior changes required by the
-// players god-table split (AC-16, AC-17, AC-18).
+// players god-table split.
 //
 // Strategy:
-//   - AC-16 getProfile / updateTrialState routing: source-inspection of
+//   - getProfile / updateTrialState routing: source-inspection of
 //     database_service.dart (Supabase cannot be initialised in unit tests).
-//   - AC-18 DailyStreak.fromMap: instantiate directly with constructed Maps.
+//   - DailyStreak.fromMap: instantiate directly with constructed Maps.
 //
 // Tests will be RED because:
 //   - database_service.dart still queries players directly (not child tables)
@@ -20,7 +20,7 @@ import 'package:runwar_app/models/daily_mission.dart';
 
 void main() {
   // ---------------------------------------------------------------------------
-  // getProfile nested JOIN response flattening (AC-16)
+  // getProfile nested JOIN response flattening
   // Source-inspection: after the split, database_service.dart must reference
   // player_economy, player_progress, player_streaks, and player_trial in
   // the getProfile query (nested select) and must contain a flatten step.
@@ -40,7 +40,7 @@ void main() {
         source.contains('player_economy'),
         isTrue,
         reason:
-            'AC-16: getProfile must include player_economy in its Supabase select '
+            'getProfile must include player_economy in its Supabase select '
             'so that economy fields (credits, reputation) are returned',
       );
     });
@@ -53,7 +53,7 @@ void main() {
         source.contains('player_progress'),
         isTrue,
         reason:
-            'AC-16: getProfile must include player_progress in its Supabase select '
+            'getProfile must include player_progress in its Supabase select '
             'so that score and milestone fields are returned',
       );
     });
@@ -66,7 +66,7 @@ void main() {
         source.contains('player_streaks'),
         isTrue,
         reason:
-            'AC-16: getProfile must include player_streaks in its Supabase select '
+            'getProfile must include player_streaks in its Supabase select '
             'so that streak and freeze fields are returned',
       );
     });
@@ -79,7 +79,7 @@ void main() {
         source.contains('player_trial'),
         isTrue,
         reason:
-            'AC-16: getProfile must include player_trial in its Supabase select '
+            'getProfile must include player_trial in its Supabase select '
             'so that trial lifecycle fields are returned',
       );
     });
@@ -96,14 +96,14 @@ void main() {
         source.contains('current_streak'),
         isFalse,
         reason:
-            'AC-16: no query in database_service.dart may reference current_streak '
+            'no query in database_service.dart may reference current_streak '
             'after the split -- streak is the canonical column name',
       );
     });
   });
 
   // ---------------------------------------------------------------------------
-  // updateTrialState routes to child tables (AC-16)
+  // updateTrialState routes to child tables
   // ---------------------------------------------------------------------------
   group('updateTrialState routes trial fields to player_trial and streak fields to player_streaks', () {
     // GIVEN database_service.dart has been updated for the split
@@ -120,7 +120,7 @@ void main() {
         source.contains('player_trial'),
         isTrue,
         reason:
-            'AC-16: updateTrialState must route trial_days_remaining to the '
+            'updateTrialState must route trial_days_remaining to the '
             'player_trial child table, not write to players directly',
       );
     });
@@ -137,14 +137,14 @@ void main() {
         source.contains('player_streaks'),
         isTrue,
         reason:
-            'AC-16: updateTrialState must route streak fields to the '
+            'updateTrialState must route streak fields to the '
             'player_streaks child table, not write to players directly',
       );
     });
   });
 
   // ---------------------------------------------------------------------------
-  // DailyStreak.fromMap reads 'streak' key (AC-18)
+  // DailyStreak.fromMap reads 'streak' key
   // ---------------------------------------------------------------------------
   group('DailyStreak.fromMap reads the streak key from the supplied map', () {
     // GIVEN a map containing the key 'streak' with value 7
@@ -166,7 +166,7 @@ void main() {
         streak.current,
         equals(7),
         reason:
-            'AC-18: DailyStreak.fromMap must read the streak key -- '
+            'DailyStreak.fromMap must read the streak key -- '
             'the post-split player_streaks table uses streak (not current_streak)',
       );
     });
@@ -190,9 +190,9 @@ void main() {
         streak.current,
         equals(0),
         reason:
-            'AC-18 Unwanted behaviour: when only current_streak is present but not '
-            'streak, fromMap must return 0 for current -- the old key must no longer '
-            'drive the streak value after the players god-table split',
+            'when only current_streak is present but not streak, fromMap must '
+            'return 0 for current -- the old key must no longer drive the streak '
+            'value after the players god-table split',
       );
     });
 
@@ -216,8 +216,8 @@ void main() {
         streak.current,
         equals(9),
         reason:
-            'AC-18: when both streak and current_streak are in the map, fromMap '
-            'must prefer streak (the canonical post-split key) -- value 9, not 3',
+            'when both streak and current_streak are in the map, fromMap must '
+            'prefer streak (the canonical post-split key) -- value 9, not 3',
       );
     });
   });
@@ -242,7 +242,7 @@ void main() {
             source.contains('"streak"'),
         isTrue,
         reason:
-            "AC-18: daily_mission.dart fromMap must read the 'streak' key "
+            "daily_mission.dart fromMap must read the 'streak' key "
             "from the map -- player_streaks.streak is the canonical column",
       );
     });
@@ -252,7 +252,7 @@ void main() {
       final source = file.readAsStringSync();
 
       // After the split, current_streak must not appear as a standalone primary
-      // lookup. The design (§C.4) allows a fallback form:
+      // lookup. The design allows a fallback form:
       //   (map['streak'] ?? map['current_streak'] ?? 0)
       // but current_streak must come AFTER streak in any fallback chain.
       // The simplest assertion: current_streak must not be the first key read.
@@ -265,14 +265,14 @@ void main() {
           streakIdx < currentStreakIdx,
           isTrue,
           reason:
-              "AC-18: if both 'streak' and 'current_streak' appear in fromMap, "
+              "if both 'streak' and 'current_streak' appear in fromMap, "
               "'streak' must be evaluated first (it is the canonical key from "
               'player_streaks after the split)',
         );
       } else if (streakIdx == -1) {
         // No 'streak' key at all -- this is a RED failure.
         fail(
-          "AC-18: daily_mission.dart fromMap must read row['streak'] -- "
+          "daily_mission.dart fromMap must read row['streak'] -- "
           "the key was not found in the source",
         );
       }

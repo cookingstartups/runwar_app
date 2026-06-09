@@ -68,10 +68,11 @@ Deno.serve(async (req) => {
     }
 
     // Debit credits
-    await supabase.rpc('increment_credits', {
+    const { error: debitErr } = await supabase.rpc('increment_credits', {
       p_player: playerId,
       p_amount: -offer.cost_credits,
     });
+    if (debitErr) return new Response(JSON.stringify({ error: 'Failed to debit credits: ' + debitErr.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
 
     const newBalance = currentCredits - offer.cost_credits;
 

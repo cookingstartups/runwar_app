@@ -145,11 +145,12 @@ Deno.serve(async (req) => {
 
         // Award credits
         if (credits > 0) {
-          await supabase.rpc('increment_credits', {
+          const { data: newBal, error: creditErr } = await supabase.rpc('increment_credits', {
             p_player: playerId,
             p_amount: credits,
           });
-          newBalance = credits; // caller can re-fetch for exact balance if needed
+          if (creditErr) return new Response(JSON.stringify({ error: creditErr.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+          newBalance = newBal as number; // actual post-credit balance from RPC
         }
 
         // Insert SHIELD superpower grant for day 3

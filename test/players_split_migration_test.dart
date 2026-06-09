@@ -202,7 +202,7 @@ void main() {
         isFalse,
         reason:
             '0037 must NOT add a current_streak column to player_streaks -- '
-            'streak is the canonical name; current_streak is being dropped (AC-3)',
+            'streak is the canonical name; current_streak is being dropped',
       );
     });
   });
@@ -267,7 +267,7 @@ void main() {
         isTrue,
         reason:
             '0039 must define a composite PRIMARY KEY (player_id, device_token) -- '
-            'this is a 1:N table so a single-column PK is incorrect (AC-5)',
+            'this is a 1:N table so a single-column PK is incorrect',
       );
     });
   });
@@ -426,7 +426,7 @@ void main() {
         isTrue,
         reason:
             '0042 must use COALESCE(pp.score, 0) so that a player with no '
-            'player_progress row still appears in the view with score = 0 (AC-8)',
+            'player_progress row still appears in the view with score = 0',
       );
     });
   });
@@ -453,7 +453,7 @@ void main() {
         isTrue,
         reason:
             '0043 must define an AFTER INSERT trigger on the players table so that '
-            'every new player gets default child rows atomically (AC-9)',
+            'every new player gets default child rows atomically',
       );
     });
   });
@@ -494,7 +494,7 @@ void main() {
         isTrue,
         reason:
             '0044 must DROP COLUMN IF EXISTS current_streak -- '
-            'this redundant column is being permanently removed (AC-10)',
+            'this redundant column is being permanently removed',
       );
     });
   });
