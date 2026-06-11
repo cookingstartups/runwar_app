@@ -91,6 +91,10 @@ class RunRecorderService {
   DateTime? get startedAt => _startedAt;
   DateTime? get closedAt => _closedAt;
 
+  /// City slug for the active run. Set by the provider before calling startRun()
+  /// so the NOT NULL runs.city column is satisfied on the Postgres upsert.
+  String activeCity = '';
+
   Future<void> startRun() async {
     if (stateNotifier.value == RecorderState.recording) return;
     _clearTrackInternal();
@@ -114,7 +118,9 @@ class RunRecorderService {
     final cb = onRunUpdate;
     if (cb != null && uid != null) {
       cb(sid, {
+        'id': sid,
         'user_id': uid,
+        'city': activeCity,
         'started_at': _startedAt!.toIso8601String(),
         'status': 'active',
       }).catchError((_) {});
@@ -406,8 +412,11 @@ class RunRecorderService {
         // Write a new stub runs row since there is no server-side session yet.
         final runCb = onRunUpdate;
         if (runCb != null) {
-          runCb(_currentSessionId!, {
+          final legacySid = _currentSessionId!;
+          runCb(legacySid, {
+            'id': legacySid,
             'user_id': userId,
+            'city': activeCity,
             'started_at': _startedAt!.toIso8601String(),
             'status': 'active',
           }).catchError((_) {});
@@ -548,6 +557,7 @@ class RunRecorderService {
     _sessionStartTime = null;
     _currentSessionId = null;
     _track.clear();
+    activeCity = '';
     stateNotifier.value = RecorderState.idle;
     onAutoClaim = null;
     onGpsFix = null;

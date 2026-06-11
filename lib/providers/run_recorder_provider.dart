@@ -78,7 +78,17 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
 
   List<LatLng> get track => RunRecorderService.instance.track;
 
-  Future<void> start() => RunRecorderService.instance.startRun();
+  Future<void> start() async {
+    final auth = _ref.read(authProvider);
+    final userId = auth.user?['id'] as String?;
+    if (userId != null) {
+      final slugs =
+          _ref.read(joinedCitySlugsProvider(userId)).valueOrNull;
+      RunRecorderService.instance.activeCity =
+          (slugs != null && slugs.isNotEmpty) ? slugs.first : '';
+    }
+    await RunRecorderService.instance.startRun();
+  }
 
   Future<void> stop() => RunRecorderService.instance.stopRun();
 
@@ -86,8 +96,13 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
 
   /// Resumes a run from orphaned run_scratch rows.
   /// Delegates to [RunRecorderService.resumeFromScratch].
-  Future<void> resume(String userId) =>
-      RunRecorderService.instance.resumeFromScratch(userId);
+  Future<void> resume(String userId) {
+    final slugs =
+        _ref.read(joinedCitySlugsProvider(userId)).valueOrNull;
+    RunRecorderService.instance.activeCity =
+        (slugs != null && slugs.isNotEmpty) ? slugs.first : '';
+    return RunRecorderService.instance.resumeFromScratch(userId);
+  }
 
   /// Handles an auto-claim callback fired by RunRecorderService when
   /// a valid self-intersection is detected.

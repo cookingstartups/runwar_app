@@ -85,14 +85,22 @@ class OutboxDrainer {
       }
       await OutboxService.instance.markSuccess(id);
     } on PostgrestException catch (e) {
-      // RLS denial: HTTP 401 / 403 / code 42501 — discard immediately.
-      if (e.code == '42501' ||
-          e.code == '401' ||
-          e.code == '403' ||
-          (e.message.contains('row-level security') == true)) {
+      // Permanent errors: RLS denial (42501, 401, 403) and schema violations
+      // (23502 NOT NULL, 23503 FK) — discard immediately rather than retrying.
+      final code = e.code ?? '';
+      final msg = e.message;
+      if (code == '42501' ||
+          code == '401' ||
+          code == '403' ||
+          msg.contains('row-level security') ||
+          code == '23502' ||
+          code == '23503') {
+        debugPrint(
+          '[OutboxDrainer] permanent error $code on $tableName/$id — discarding',
+        );
         ErrorLogService.logClientError(
           provider: 'outbox_drainer',
-          error: 'RLS discard: $tableName/$id — ${e.message}',
+          error: 'permanent discard ($code): $tableName/$id — $msg',
           stackTrace: StackTrace.empty,
           retryCount: attemptCount,
         );
