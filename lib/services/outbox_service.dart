@@ -75,6 +75,55 @@ class OutboxService {
     await db.delete('outbox_queue');
   }
 
+  /// Merge-enqueues a partial update for an existing row.
+  ///
+  /// If a pending outbox entry already exists for [table]/[id], the new
+  /// [fields] are merged into its payload (additive, new keys win). This
+  /// prevents a later [enqueue] (which uses ConflictAlgorithm.replace) from
+  /// silently overwriting fields written by an earlier call for the same row.
+  ///
+  /// If no pending entry exists, a new row is created with payload
+  /// `{id: id, ...fields}`.
+  ///
+  /// The read-modify-write is performed inside a single sqflite transaction
+  /// to be safe against concurrent callers (e.g. confirmClaim + stopRun).
+  Future<void> mergeEnqueue(
+    String table,
+    String id,
+    Map<String, dynamic> fields,
+  ) async {
+    final db = await LocalDb.instance.db;
+    await db.transaction((txn) async {
+      final existing = await txn.query(
+        'outbox_queue',
+        where: 'id = ? AND table_name = ?',
+        whereArgs: [id, table],
+        limit: 1,
+      );
+      if (existing.isEmpty) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await txn.insert('outbox_queue', {
+          'id': id,
+          'table_name': table,
+          'payload': jsonEncode({'id': id, ...fields}),
+          'created_at': now,
+          'attempt_count': 0,
+          'next_retry_at': 0,
+        });
+      } else {
+        final prior =
+            jsonDecode(existing.first['payload'] as String) as Map<String, dynamic>;
+        final merged = {...prior, ...fields};
+        await txn.update(
+          'outbox_queue',
+          {'payload': jsonEncode(merged)},
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+      }
+    });
+  }
+
   /// Exponential backoff: 5000 * 2^attempt, capped at 300 000 ms (5 min).
   int _backoffMs(int attempt) {
     final base = 5000 * (1 << attempt.clamp(0, 6));

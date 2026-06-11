@@ -34,6 +34,27 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     svc.trackVersion.addListener(_onTrackVersion);
     // Register the auto-claim callback.
     svc.onAutoClaim = _handleAutoClaim;
+    // Wire real-time GPS streaming: each spacing-filtered fix goes to gps_samples.
+    svc.onGpsFix = (sample) async {
+      final up =
+          _ref.read(connectivityProvider).whenData((v) => v).valueOrNull ??
+              false;
+      await OutboxAwareWriter.instance.writeGpsSamples(
+        [sample],
+        networkUp: up,
+      );
+    };
+    // Wire runs row updates (stub/stop/cancel/lasso-link).
+    svc.onRunUpdate = (sid, fields) async {
+      final up =
+          _ref.read(connectivityProvider).whenData((v) => v).valueOrNull ??
+              false;
+      await OutboxAwareWriter.instance.writeRunUpdate(
+        sid,
+        fields,
+        networkUp: up,
+      );
+    };
   }
 
   final Ref _ref;
@@ -57,7 +78,17 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
 
   List<LatLng> get track => RunRecorderService.instance.track;
 
-  Future<void> start() => RunRecorderService.instance.startRun();
+  Future<void> start() async {
+    final auth = _ref.read(authProvider);
+    final userId = auth.user?['id'] as String?;
+    if (userId != null) {
+      final slugs =
+          _ref.read(joinedCitySlugsProvider(userId)).valueOrNull;
+      RunRecorderService.instance.activeCity =
+          (slugs != null && slugs.isNotEmpty) ? slugs.first : '';
+    }
+    await RunRecorderService.instance.startRun();
+  }
 
   Future<void> stop() => RunRecorderService.instance.stopRun();
 
@@ -65,8 +96,13 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
 
   /// Resumes a run from orphaned run_scratch rows.
   /// Delegates to [RunRecorderService.resumeFromScratch].
-  Future<void> resume(String userId) =>
-      RunRecorderService.instance.resumeFromScratch(userId);
+  Future<void> resume(String userId) {
+    final slugs =
+        _ref.read(joinedCitySlugsProvider(userId)).valueOrNull;
+    RunRecorderService.instance.activeCity =
+        (slugs != null && slugs.isNotEmpty) ? slugs.first : '';
+    return RunRecorderService.instance.resumeFromScratch(userId);
+  }
 
   /// Handles an auto-claim callback fired by RunRecorderService when
   /// a valid self-intersection is detected.
@@ -139,11 +175,10 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     List<LatLng> capturedPolygon,
   ) async {
     final svc = RunRecorderService.instance;
-    // The captured polygon - not svc.track - is what gets sent to the
-    // edge function and stored as track_json on the run record.
+    // The captured polygon is what gets sent to the edge function for
+    // territory evaluation.
     final track = List<LatLng>.from(capturedPolygon);
     final startedAt = svc.startedAt;
-    final closedAt = svc.closedAt ?? DateTime.now().toUtc();
 
     // Resolve connectivity once for this entire claim flow.
     final networkUp =
@@ -165,28 +200,22 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     if (outcome.result != TerritoryResult.failed &&
         outcome.affectedZoneId != null &&
         startedAt != null) {
-      final runId = _uuidV4();
-      await _insertRun(
-        runId: runId,
-        userId: userId,
-        city: city,
-        track: track, // captured polygon, not raw _track
-        startedAt: startedAt,
-        closedAt: closedAt,
-        zoneId: outcome.affectedZoneId!,
-        networkUp: networkUp,
-      );
-      // GPS samples upload: send the FULL raw _track so anti-cheat keeps
-      // the transit-pole context. capturedPolygon is for territory only.
-      unawaited(_uploadGpsSamples(
-        runId: runId,
-        userId: userId,
-        track: List<LatLng>.from(svc.track), // full raw trail
-        startedAt: startedAt,
-        closedAt: closedAt,
-        networkUp: networkUp,
-      ));
+      final sessionId = svc.currentSessionId;
+      // Link this claim's lasso and zone to the in-flight runs row.
+      // GPS samples are already streaming in real-time; no batch upload needed.
+      if (sessionId != null) {
+        final lassoId = _uuidV4();
+        unawaited(OutboxAwareWriter.instance.writeRunUpdate(
+          sessionId,
+          {
+            'lasso_id': lassoId,
+            'zone_id': outcome.affectedZoneId!,
+          },
+          networkUp: networkUp,
+        ));
+      }
       // Fire-and-forget: check if this run earned a SHIELD superpower.
+      final runId = sessionId ?? _uuidV4();
       unawaited(SuperpowerService.instance.checkAndEarn(runId: runId));
       if (outcome.result == TerritoryResult.disputed) {
         // Fire-and-forget - never propagates to caller.
@@ -201,80 +230,6 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     return outcome;
   }
 
-  /// Batch-uploads GPS track points via the outbox-aware writer.
-  /// Timestamps are interpolated linearly between startedAt and closedAt.
-  /// Fire-and-forget - never throws to caller.
-  Future<void> _uploadGpsSamples({
-    required String runId,
-    required String userId,
-    required List<LatLng> track,
-    required DateTime startedAt,
-    required DateTime closedAt,
-    required bool networkUp,
-  }) async {
-    if (track.isEmpty) return;
-    try {
-      final durationMs =
-          closedAt.millisecondsSinceEpoch - startedAt.millisecondsSinceEpoch;
-      final rows = track.asMap().entries.map((e) {
-        final offsetMs = track.length == 1
-            ? 0
-            : (durationMs * e.key / (track.length - 1)).round();
-        final ts = startedAt
-            .add(Duration(milliseconds: offsetMs))
-            .toUtc()
-            .toIso8601String();
-        return {
-          'run_id': runId,
-          'player_id': userId,
-          'lat': e.value.latitude,
-          'lng': e.value.longitude,
-          'ts': ts,
-          'is_mocked': false,
-        };
-      }).toList();
-
-      await OutboxAwareWriter.instance.writeGpsSamples(
-        rows,
-        networkUp: networkUp,
-      );
-      debugPrint('[RunRecorder] queued ${rows.length} gps_samples for run $runId');
-    } catch (e, st) {
-      ErrorLogService.logClientError(
-        provider: '_uploadGpsSamples',
-        error: e,
-        stackTrace: st,
-        retryCount: 0,
-      );
-    }
-  }
-
-  Future<void> _insertRun({
-    required String runId,
-    required String userId,
-    required String city,
-    required List<LatLng> track,
-    required DateTime startedAt,
-    required DateTime closedAt,
-    required String zoneId,
-    required bool networkUp,
-  }) async {
-    final nowIso = DateTime.now().toUtc().toIso8601String();
-    await OutboxAwareWriter.instance.writeRun(
-      {
-        'id': runId,
-        'user_id': userId,
-        'city': city,
-        'track_json': _encodeLineString(track),
-        'started_at': startedAt.toIso8601String(),
-        'closed_at': closedAt.toIso8601String(),
-        'zone_id': zoneId,
-        'created_at': nowIso,
-      },
-      networkUp: networkUp,
-    );
-  }
-
   @override
   void dispose() {
     RunRecorderService.instance.onAutoClaim = null;
@@ -283,14 +238,6 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     _autoClaimOutcomeController.close();
     super.dispose();
   }
-}
-
-/// GeoJSON LineString encoder. Coordinates in [longitude, latitude] order
-/// per RFC 7946.
-String _encodeLineString(List<LatLng> track) {
-  final coords =
-      track.map((p) => '[${p.longitude},${p.latitude}]').join(',');
-  return '{"type":"LineString","coordinates":[$coords]}';
 }
 
 // UUID v4 generator. Duplicated from TerritoryService to avoid adding the

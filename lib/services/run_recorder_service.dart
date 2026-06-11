@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:uuid/uuid.dart';
 import 'error_log_service.dart';
 import 'realtime_presence_service.dart';
 import 'run_scratch_store.dart';
@@ -16,6 +17,8 @@ enum RecorderState { idle, recording }
 class RunRecorderService {
   RunRecorderService._();
   static final RunRecorderService instance = RunRecorderService._();
+
+  static const _uuid = Uuid();
 
   final ValueNotifier<RecorderState> stateNotifier =
       ValueNotifier(RecorderState.idle);
@@ -32,6 +35,12 @@ class RunRecorderService {
   String? _activeUserId;
   Timer? _notifTimer;
 
+  // Durable session identity minted at startRun and recovered on crash/resume.
+  String? _currentSessionId;
+
+  // Expose session ID so the provider layer can wire lasso_id + zone_id writes.
+  String? get currentSessionId => _currentSessionId;
+
   // Lower bound for the self-intersection scan. Set to 0 at startRun,
   // advanced to _track.length after each successful or area-rejected claim.
   int _loopStartTrailIndex = 0;
@@ -43,6 +52,15 @@ class RunRecorderService {
   // Callback invoked when an auto-claim should fire. Set by the provider
   // during construction; the service does not import the provider layer.
   Future<void> Function(List<LatLng> capturedPolygon)? onAutoClaim;
+
+  // Callback invoked for each spacing-filtered GPS fix so the provider layer
+  // can stream it to gps_samples via OutboxAwareWriter without this service
+  // importing connectivity or Riverpod.
+  Future<void> Function(Map<String, dynamic> sample)? onGpsFix;
+
+  // Callback invoked when the runs row needs a partial update (stop/cancel/
+  // confirmClaim lasso link). Arguments: sessionId, field map.
+  Future<void> Function(String sessionId, Map<String, dynamic> fields)? onRunUpdate;
 
   // Area floor for auto-claim. Below this, GPS jitter micro-loops are
   // silently discarded.
@@ -74,6 +92,10 @@ class RunRecorderService {
   DateTime? get startedAt => _startedAt;
   DateTime? get closedAt => _closedAt;
 
+  /// City slug for the active run. Set by the provider before calling startRun()
+  /// so the NOT NULL runs.city column is satisfied on the Postgres upsert.
+  String activeCity = '';
+
   Future<void> startRun() async {
     if (stateNotifier.value == RecorderState.recording) return;
     _clearTrackInternal();
@@ -82,12 +104,27 @@ class RunRecorderService {
     _loopStartTrailIndex = 0;
     _sessionStartTime = DateTime.now();
     trackVersion.value++;
+    // Mint a stable session identity for this run.
+    _currentSessionId = _uuid.v4();
     // Clear any leftover scratch points from a previous run.
     final uid = _activeUserId;
     if (uid != null) {
       try {
         await RunScratchStore.instance.deleteForUser(uid);
       } catch (_) {}
+    }
+    // Write the runs stub row before the GPS stream opens so gps_samples
+    // rows always have a parent runs row on the server.
+    final sid = _currentSessionId!;
+    final cb = onRunUpdate;
+    if (cb != null && uid != null) {
+      cb(sid, {
+        'id': sid,
+        'user_id': uid,
+        'city': activeCity,
+        'started_at': _startedAt!.toIso8601String(),
+        'status': 'active',
+      }).catchError((_) {});
     }
     await _startForegroundTask();
     _openGpsStream();
@@ -145,7 +182,24 @@ class RunRecorderService {
         pos.longitude,
         accuracy: pos.accuracy,
         ts: pos.timestamp.toIso8601String(),
+        sessionId: _currentSessionId,
       ).catchError((_) {});
+
+      // Stream this fix to gps_samples in real-time via the provider callback.
+      // Fire-and-forget: a write failure must never terminate the GPS loop.
+      final sid = _currentSessionId;
+      final gpsCb = onGpsFix;
+      if (gpsCb != null && sid != null) {
+        gpsCb({
+          'session_id': sid,
+          'player_id': uid,
+          'lat': pos.latitude,
+          'lng': pos.longitude,
+          'ts': pos.timestamp.toIso8601String(),
+          'speed_ms': pos.speed,
+          'is_mocked': false,
+        }).catchError((_) {});
+      }
     }
 
     // Auto-claim scan on every new fix.
@@ -214,6 +268,17 @@ class RunRecorderService {
     RealtimePresenceService.instance.setRecording(false);
     unawaited(FlutterForegroundTask.stopService());
     _closedAt = DateTime.now().toUtc();
+    // Write the completed status BEFORE clearing scratch so the outbox row
+    // is enqueued even if scratch deletion fails.
+    final sid = _currentSessionId;
+    final runCb = onRunUpdate;
+    if (runCb != null && sid != null) {
+      runCb(sid, {
+        'status': 'completed',
+        'closed_at': _closedAt!.toIso8601String(),
+      }).catchError((_) {});
+    }
+    _currentSessionId = null;
     // Track is retained in memory in case an in-flight onAutoClaim future
     // is still using it. _clearTrackInternal runs on the NEXT startRun().
     // Scratch is cleared here so a future resumeFromScratch on a
@@ -244,6 +309,16 @@ class RunRecorderService {
     _posSub = null;
     RealtimePresenceService.instance.setRecording(false);
     unawaited(FlutterForegroundTask.stopService());
+    // Write the cancelled status BEFORE clearing scratch.
+    final sid = _currentSessionId;
+    final runCb = onRunUpdate;
+    if (runCb != null && sid != null) {
+      runCb(sid, {
+        'status': 'cancelled',
+        'closed_at': DateTime.now().toUtc().toIso8601String(),
+      }).catchError((_) {});
+    }
+    _currentSessionId = null;
     final uid = _activeUserId;
     if (uid != null) {
       try {
@@ -333,6 +408,10 @@ class RunRecorderService {
       if (rows.isEmpty) return;
       _track.clear();
       DateTime? earliest;
+      // Read the durable session_id from the first scratch row (all rows share
+      // the same session_id since they were written in the same run).
+      final String? durableSessionId =
+          rows.first['session_id'] as String?;
       for (final row in rows) {
         final lat = row['lat'] as double;
         final lng = row['lng'] as double;
@@ -350,6 +429,46 @@ class RunRecorderService {
       // 60-second gate behaves correctly across kill+resume.
       _sessionStartTime = earliest?.toLocal() ?? DateTime.now();
       trackVersion.value++;
+
+      // Restore durable session_id or mint a fresh one for legacy null rows.
+      if (durableSessionId != null) {
+        _currentSessionId = durableSessionId;
+      } else {
+        _currentSessionId = _uuid.v4();
+        // Write a new stub runs row since there is no server-side session yet.
+        final runCb = onRunUpdate;
+        if (runCb != null) {
+          final legacySid = _currentSessionId!;
+          runCb(legacySid, {
+            'id': legacySid,
+            'user_id': userId,
+            'city': activeCity,
+            'started_at': _startedAt!.toIso8601String(),
+            'status': 'active',
+          }).catchError((_) {});
+        }
+      }
+
+      // Replay all scratch rows into gps_samples outbox so they reach
+      // the server even if they were not streamed before the crash.
+      // The unique index (session_id, ts, player_id) deduplicates server-side.
+      final gpsCb = onGpsFix;
+      if (gpsCb != null) {
+        final sid = _currentSessionId!;
+        for (final row in rows) {
+          final ts = row['ts'] as String?;
+          if (ts == null) continue;
+          gpsCb({
+            'session_id': sid,
+            'player_id': userId,
+            'lat': row['lat'] as double,
+            'lng': row['lng'] as double,
+            'ts': ts,
+            'speed_ms': 0.0,
+            'is_mocked': false,
+          }).catchError((_) {});
+        }
+      }
 
       // Iterative re-scan for missed intersections during background.
       await _rescanRehydratedTrack();
@@ -431,7 +550,13 @@ class RunRecorderService {
   void injectSessionStartTime(DateTime t) => _sessionStartTime = t;
 
   @visibleForTesting
-  void injectState(RecorderState s) => stateNotifier.value = s;
+  void injectState(RecorderState s) {
+    stateNotifier.value = s;
+    // When injecting recording state for tests, mint a session ID if absent.
+    if (s == RecorderState.recording && _currentSessionId == null) {
+      _currentSessionId = _uuid.v4();
+    }
+  }
 
   @visibleForTesting
   void injectTrackForTesting(List<LatLng> pts) {
@@ -456,9 +581,13 @@ class RunRecorderService {
   void reset() {
     _loopStartTrailIndex = 0;
     _sessionStartTime = null;
+    _currentSessionId = null;
     _track.clear();
+    activeCity = '';
     stateNotifier.value = RecorderState.idle;
     onAutoClaim = null;
+    onGpsFix = null;
+    onRunUpdate = null;
   }
 }
 

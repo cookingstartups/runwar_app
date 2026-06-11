@@ -12,6 +12,7 @@ class RunScratchStore {
     double lng, {
     double? accuracy,
     required String ts,
+    String? sessionId,
   }) async {
     final db = await LocalDb.instance.db;
     await db.insert('run_scratch', {
@@ -20,6 +21,7 @@ class RunScratchStore {
       'lng': lng,
       'accuracy': accuracy,
       'ts': ts,
+      if (sessionId != null) 'session_id': sessionId,
     });
   }
 

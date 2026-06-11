@@ -17,7 +17,7 @@ class LocalDb {
     final path = join(await getDatabasesPath(), 'runwar_local.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, _) async {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS outbox_queue (
@@ -41,13 +41,21 @@ class LocalDb {
             lat         REAL NOT NULL,
             lng         REAL NOT NULL,
             accuracy    REAL,
-            ts          TEXT NOT NULL
+            ts          TEXT NOT NULL,
+            session_id  TEXT
           )
         ''');
         await db.execute(
           'CREATE INDEX IF NOT EXISTS idx_run_scratch_user_ts '
           'ON run_scratch (user_id, ts)',
         );
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+            'ALTER TABLE run_scratch ADD COLUMN session_id TEXT',
+          );
+        }
       },
     );
   }
