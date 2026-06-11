@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:latlong2/latlong.dart';
+import 'package:runwar_app/utils/runwar_constants.dart';
 
 // ---------------------------------------------------------------------------
 // GPS Lasso — Dart port of geo.ts
@@ -10,12 +11,6 @@ import 'package:latlong2/latlong.dart';
 
 const double _eps = 1e-12;
 
-/// Closure tolerance for the vertex-proximity pass in
-/// detectSelfIntersection. 10 m sits above the GPS accuracy:high
-/// outdoor error envelope (3-5 m) and below the OS distanceFilter
-/// of 25 m, so it catches genuine return-to-start without producing
-/// false closures from parallel-pass GPS jitter.
-const double _vertexProximityM = 10.0;
 
 // ---------------------------------------------------------------------------
 // Bounding box helpers
@@ -262,7 +257,7 @@ SelfIntersection? detectSelfIntersection(
   // Search range matches the segment scan: vertex[loopStartTrailIndex-1]
   // is the first vertex referenced when i = loopStartTrailIndex.
   for (int vertexIdx = loopStartTrailIndex - 1; vertexIdx <= k - 2; vertexIdx++) {
-    if (_equirectangularDistanceM(trailPoints[vertexIdx], newB) <= _vertexProximityM) {
+    if (_equirectangularDistanceM(trailPoints[vertexIdx], newB) <= kProximityTriggerM) {
       return SelfIntersection(
         intersectionPoint: trailPoints[vertexIdx],
         intersectingSegmentIdx: vertexIdx,

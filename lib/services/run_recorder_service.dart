@@ -9,6 +9,7 @@ import 'realtime_presence_service.dart';
 import 'run_scratch_store.dart';
 import 'telemetry_service.dart';
 import '../geo/lasso.dart' show detectSelfIntersection, computeCapture, polygonArea;
+import '../utils/runwar_constants.dart';
 
 enum RecorderState { idle, recording }
 
@@ -53,7 +54,7 @@ class RunRecorderService {
   /// the OS distanceFilter of 25 m so the app filter actually fires; large
   /// enough (5x the vertex-proximity tolerance) to guarantee stored
   /// vertices are never within the vertex-proximity envelope of each other.
-  static const double _minTrackPointSpacingM = 50.0;
+  static const double _minTrackPointSpacingM = kTrackPointSpacingM;
 
   // No auto-claim may fire before this many seconds have elapsed since
   // the FAB Start tap. Applies once per session, not per loop.
@@ -103,6 +104,25 @@ class RunRecorderService {
     final newLatLng = LatLng(pos.latitude, pos.longitude);
     // Always update presence so rival comets stay live regardless of spacing filter.
     RealtimePresenceService.instance.updatePosition(newLatLng);
+    // Proximity pre-check: if raw fix is within kProximityTriggerM of any prior
+    // stored vertex (from _loopStartTrailIndex onward), bypass the spacing filter
+    // so the closing fix is stored and _scanForAutoClaim can detect the closure.
+    if (_track.length > 1) {
+      final scanFrom = math.max(0, _loopStartTrailIndex);
+      for (int i = scanFrom; i < _track.length; i++) {
+        if (_equirectangularDistanceM(_track[i], newLatLng) < kProximityTriggerM) {
+          _track.add(newLatLng);
+          trackVersion.value++;
+          final uid = _activeUserId;
+          if (uid != null) {
+            RunScratchStore.instance.insertPoint(uid, pos.latitude, pos.longitude,
+                accuracy: pos.accuracy, ts: pos.timestamp.toIso8601String()).catchError((_) {});
+          }
+          _scanForAutoClaim();
+          return;
+        }
+      }
+    }
     // Track-point spacing filter: discard fixes < 50 m from the last stored point.
     if (_track.isNotEmpty &&
         _equirectangularDistanceM(_track.last, newLatLng) < _minTrackPointSpacingM) {
