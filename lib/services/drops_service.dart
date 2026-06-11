@@ -99,6 +99,7 @@ class DropsService {
         nearest = d;
       }
     }
+    // Unified from prior 30m default — see runwar_constants.dart
     if (nearest == null || nearestM > kProximityTriggerM) return;
 
     _busy = true;

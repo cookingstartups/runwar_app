@@ -88,10 +88,13 @@ class CtfService {
   /// Track last emitted active events for proximity checks.
   List<CtfEvent> _lastActiveEvents = [];
 
-  /// Override hook for testing: replaces the real [claimWin] network call.
+  // Nullable override for unit tests. Must be nulled in tearDown via resetForTesting().
   /// When non-null, [checkCaptureProximity] calls this instead of [claimWin].
   @visibleForTesting
   Future<bool> Function(String eventId, LatLng pos)? claimWinForTesting;
+
+  @visibleForTesting
+  void resetForTesting() => claimWinForTesting = null;
 
   static const _channelId = 'runwar_ctf';
   static const _channelName = 'CTF Events';
@@ -118,13 +121,21 @@ class CtfService {
 
   Future<void> _loadConfig() async {
     try {
+      // ctf_capture_threshold_m was removed — threshold is now kProximityTriggerM
+      // (a compile-time constant in runwar_constants.dart). Only
+      // ctf_notification_radius_km is still read from app_config.
       final rows = await SupabaseService.instance.supabase
           .from('app_config')
           .select('key, value')
           .inFilter('key', ['ctf_notification_radius_km']);
+      // If the deprecated key arrives anyway (pre-existing DB rows), log and ignore.
       for (final row in (rows as List<dynamic>)) {
         final key = row['key'] as String?;
         final raw = row['value'] as String?;
+        if (key == 'ctf_capture_threshold_m') {
+          debugPrint('[CtfService] ctf_capture_threshold_m row ignored — threshold is now kProximityTriggerM (${kProximityTriggerM}m)');
+          continue;
+        }
         if (raw == null) continue;
         if (key == 'ctf_notification_radius_km') {
           _notifRadiusKm = double.tryParse(raw) ?? 100;

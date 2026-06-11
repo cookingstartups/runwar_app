@@ -115,8 +115,14 @@ class RunRecorderService {
           trackVersion.value++;
           final uid = _activeUserId;
           if (uid != null) {
-            RunScratchStore.instance.insertPoint(uid, pos.latitude, pos.longitude,
-                accuracy: pos.accuracy, ts: pos.timestamp.toIso8601String()).catchError((_) {});
+            // Intentional: closing fix may be closer than kTrackPointSpacingM; invariant relaxed only at loop closure
+            RunScratchStore.instance.insertPoint(
+              uid, pos.latitude, pos.longitude,
+              accuracy: pos.accuracy,
+              ts: pos.timestamp.toIso8601String(),
+            ).catchError((e) {
+              debugPrint('[RunRecorderService] scratch insert error on closure fix: $e');
+            });
           }
           _scanForAutoClaim();
           return;
