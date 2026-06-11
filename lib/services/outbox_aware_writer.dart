@@ -83,7 +83,7 @@ class OutboxAwareWriter {
       try {
         await SupabaseService.instance.supabase
             .from('gps_samples')
-            .insert(samples);
+            .upsert(samples, onConflict: 'session_id,ts,player_id');
         await OutboxService.instance.markSuccess(batchId);
       } catch (e) {
         debugPrint(
@@ -91,6 +91,33 @@ class OutboxAwareWriter {
         // Row stays in outbox; mark failed so the drainer applies backoff.
         await OutboxService.instance.markFailure(batchId, 0,
             error: e.toString());
+      }
+    }
+  }
+
+  /// Writes a partial update to an existing `runs` row.
+  ///
+  /// Uses [OutboxService.mergeEnqueue] so multiple calls for the same
+  /// [id] accumulate their fields instead of overwriting each other
+  /// (prevents offline confirmClaim fields being lost when stopRun follows).
+  ///
+  /// If [networkUp] is true, an immediate upsert is attempted with
+  /// `onConflict: 'id'` so only the changed columns need to be sent.
+  Future<void> writeRunUpdate(
+    String id,
+    Map<String, dynamic> fields, {
+    required bool networkUp,
+  }) async {
+    await OutboxService.instance.mergeEnqueue('runs', id, fields);
+    if (SupabaseService.instance.canWriteRemote(networkUp)) {
+      try {
+        await SupabaseService.instance.supabase
+            .from('runs')
+            .upsert({...fields, 'id': id}, onConflict: 'id');
+        await OutboxService.instance.markSuccess(id);
+      } catch (e) {
+        debugPrint('[OutboxAwareWriter] writeRunUpdate failed, kept in outbox: $e');
+        await OutboxService.instance.markFailure(id, 0, error: e.toString());
       }
     }
   }
