@@ -75,11 +75,11 @@ class SupabaseCreditsRepository implements CreditsRepository {
   @visibleForTesting
   static const String fetchTable = 'player_economy';
   @visibleForTesting
-  static const String watchPrimaryKey = 'player_id';
+  static const String watchPrimaryKey = 'user_id';
   @visibleForTesting
-  static const String watchFilterColumn = 'player_id';
+  static const String watchFilterColumn = 'user_id';
   @visibleForTesting
-  static const String fetchFilterColumn = 'player_id';
+  static const String fetchFilterColumn = 'user_id';
 
   @override
   Stream<int> watchBalance(String playerId) => _client

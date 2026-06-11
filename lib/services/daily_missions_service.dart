@@ -63,7 +63,7 @@ class DailyMissionsService {
     // Upsert slate rows.
     for (final mission in slate) {
       await ds.upsertMissionProgress({
-        'player_id': userId,
+        'user_id': userId,
         'slug': mission.slug,
         'date': today,
         'progress': 0,
@@ -98,7 +98,7 @@ class DailyMissionsService {
     final newProgress = math.min(current + delta, target);
 
     await ds.upsertMissionProgress({
-      'player_id': userId,
+      'user_id': userId,
       'slug': slug,
       'date': today,
       'progress': newProgress,
@@ -137,7 +137,7 @@ class DailyMissionsService {
     final response = await supabase.functions.invoke(
       'complete_daily_mission',
       body: {
-        'player_id': userId,
+        'user_id': userId,
         'mission_slug': slug,
         'date': today,
       },
@@ -170,7 +170,7 @@ class DailyMissionsService {
     // Update remote mirror.
     final ds = DatabaseService.instance;
     await ds.upsertMissionProgress({
-      'player_id': userId,
+      'user_id': userId,
       'slug': slug,
       'date': today,
       'completed_at': (completedAt ?? DateTime.now().toUtc()).toIso8601String(),
@@ -205,7 +205,7 @@ class DailyMissionsService {
     final response = await supabase.functions.invoke(
       'record_daily_login',
       body: {
-        'player_id': userId,
+        'user_id': userId,
         'local_date': today,
         'tz_offset_minutes': tzOffsetMinutes,
       },

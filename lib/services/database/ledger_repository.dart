@@ -29,7 +29,7 @@ class SupabaseLedgerRepository implements LedgerRepository {
     final rows = await _client
         .from('credit_transactions')
         .select()
-        .eq('player_id', playerId)
+        .eq('user_id', playerId)
         .order('created_at', ascending: false)
         .limit(limit);
     return rows

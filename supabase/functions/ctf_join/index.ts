@@ -37,7 +37,7 @@ Deno.serve(async (req)=>{
         status: 401
       });
     }
-    const player_id = user.id;
+    const user_id = user.id;
     const body = await req.json();
     const { event_id } = body;
     if (!event_id) {
@@ -89,9 +89,9 @@ Deno.serve(async (req)=>{
     // ── Insert participant (idempotent via ON CONFLICT DO NOTHING) ───────────
     const { error: insertErr } = await supabase.from('ctf_participants').upsert({
       event_id,
-      player_id
+      user_id
     }, {
-      onConflict: 'event_id,player_id',
+      onConflict: 'event_id,user_id',
       ignoreDuplicates: true
     });
     if (insertErr) {

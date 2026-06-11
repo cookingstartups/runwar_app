@@ -47,7 +47,7 @@ Deno.serve(async (req)=>{
     }
     const body = await req.json();
     const { event_id, lat, lng } = body;
-    const player_id = user.id;
+    const user_id = user.id;
     if (!event_id || lat == null || lng == null) {
       return new Response(JSON.stringify({
         error: 'Missing required fields'
@@ -60,7 +60,7 @@ Deno.serve(async (req)=>{
       });
     }
     // ── Participant check ─────────────────────────────────────────────────────
-    const { data: participant, error: partErr } = await supabase.from('ctf_participants').select('player_id').eq('event_id', event_id).eq('player_id', player_id).maybeSingle();
+    const { data: participant, error: partErr } = await supabase.from('ctf_participants').select('user_id').eq('event_id', event_id).eq('user_id', user_id).maybeSingle();
     if (partErr || !participant) {
       return new Response(JSON.stringify({
         error: 'Not a participant in this event'
@@ -136,7 +136,7 @@ Deno.serve(async (req)=>{
     }
     // ── Claim win: update ctf_events ──────────────────────────────────────────
     const { error: updateErr } = await supabase.from('ctf_events').update({
-      winner_id: player_id,
+      winner_id: user_id,
       is_active: false
     }).eq('id', event_id).is('winner_id', null) // guard against race condition
     ;
@@ -153,13 +153,13 @@ Deno.serve(async (req)=>{
     }
     // ── Award 500 credits ─────────────────────────────────────────────────────
     await supabase.rpc('increment_credits', {
-      p_player: player_id,
+      p_player: user_id,
       p_amount: 500
     });
     // ── Grant SHIELD superpower for 2 hours ───────────────────────────────────
     const shieldExpiry = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
     await supabase.from('superpower_grants').insert({
-      player_id,
+      user_id,
       power_type: 'SHIELD',
       expires_at: shieldExpiry,
       charge_cost: 0
@@ -168,7 +168,7 @@ Deno.serve(async (req)=>{
     await supabase.from('zones').update({
       shield_active: true,
       shield_expires_at: shieldExpiry
-    }).eq('owner_id', player_id);
+    }).eq('owner_id', user_id);
     return new Response(JSON.stringify({
       won: true,
       credits_awarded: 500,

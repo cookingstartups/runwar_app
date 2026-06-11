@@ -152,7 +152,7 @@ class CtfService {
       final rows = await SupabaseService.instance.supabase
           .from('ctf_participants')
           .select('event_id')
-          .eq('player_id', _playerId!);
+          .eq('user_id', _playerId!);
       for (final row in (rows as List<dynamic>)) {
         final id = (row as Map<String, dynamic>)['event_id'] as String?;
         if (id != null) _joinedEventIds.add(id);
@@ -340,7 +340,7 @@ class CtfService {
       final rows = await SupabaseService.instance.supabase
           .from('players')
           .select('username')
-          .eq('id', winnerId)
+          .eq('user_id', winnerId)
           .limit(1);
       final list = rows as List<dynamic>;
       if (list.isNotEmpty) {

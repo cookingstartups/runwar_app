@@ -61,7 +61,7 @@ class SupabaseReferralsRepository implements ReferralsRepository {
     final rows = await _client
         .from('credit_transactions')
         .select()
-        .eq('player_id', inviterId)
+        .eq('user_id', inviterId)
         .eq('reason', 'referral_kickback')
         .order('created_at', ascending: false)
         .limit(limit);
@@ -73,7 +73,7 @@ class SupabaseReferralsRepository implements ReferralsRepository {
     final row = await _client
         .from('players')
         .select('total_kickback_earned')
-        .eq('id', playerId)
+        .eq('user_id', playerId)
         .single();
     return (row['total_kickback_earned'] as num).toInt();
   }
@@ -81,8 +81,8 @@ class SupabaseReferralsRepository implements ReferralsRepository {
   @override
   Stream<int> watchTotalKickback(String playerId) => _client
       .from('players')
-      .stream(primaryKey: ['id'])
-      .eq('id', playerId)
+      .stream(primaryKey: ['user_id'])
+      .eq('user_id', playerId)
       .map((rows) => rows.isEmpty
           ? 0
           : (rows.first['total_kickback_earned'] as num).toInt());

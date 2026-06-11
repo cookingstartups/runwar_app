@@ -64,7 +64,7 @@ class OutboxDrainer {
     try {
       // Use upsert with onConflict: 'id' for idempotent replay on retry.
       // gps_samples uses the gps_samples_dedup unique index
-      // (session_id, ts, player_id) for crash-replay deduplication.
+      // (session_id, ts, user_id) for crash-replay deduplication.
       if (tableName == 'gps_samples') {
         final samplesRaw = payload['samples'];
         final List<Map<String, dynamic>> samples;
@@ -77,7 +77,7 @@ class OutboxDrainer {
         }
         await SupabaseService.instance.supabase
             .from('gps_samples')
-            .upsert(samples, onConflict: 'session_id,ts,player_id');
+            .upsert(samples, onConflict: 'session_id,ts,user_id');
       } else {
         await SupabaseService.instance.supabase
             .from(tableName)

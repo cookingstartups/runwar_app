@@ -20,7 +20,7 @@ final reputationProvider = FutureProvider.family<int, String>((ref, userId) asyn
     final row = await SupabaseService.instance.supabase
         .from('player_economy')
         .select('reputation')
-        .eq('player_id', userId)
+        .eq('user_id', userId)
         .maybeSingle();
     return (row?['reputation'] as int?) ?? 100;
   } catch (_) {
@@ -71,7 +71,7 @@ final referralCodeProvider =
     try {
       await SupabaseService.instance.supabase
           .from('players')
-          .upsert({'id': userId, 'referral_code': code}, onConflict: 'id');
+          .upsert({'user_id': userId, 'referral_code': code}, onConflict: 'user_id');
     } catch (_) {}
   }
   return code;

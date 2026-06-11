@@ -24,14 +24,14 @@ class ProfileService {
     try {
       final result = await SupabaseService.instance.supabase
           .from('players')
-          .select('id, username, color')
-          .eq('id', userId)
+          .select('user_id, username, color')
+          .eq('user_id', userId)
           .limit(1);
       final list = result as List<dynamic>;
       if (list.isEmpty) return null;
       final p = list.first as Map<String, dynamic>;
       return {
-        'id': p['id'],
+        'id': p['user_id'],
         'username': p['username'] ?? '',
         'color': p['color']?.toString() ?? _colorForId(userId),
         'score': 0,

@@ -41,7 +41,7 @@ class FcmService {
       await SupabaseService.instance.supabase
           .from('players')
           .update({'fcm_token': token})
-          .eq('id', playerId);
+          .eq('user_id', playerId);
     } catch (e) {
       debugPrint('[FcmService] token save error: $e');
     }

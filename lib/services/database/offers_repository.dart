@@ -122,7 +122,7 @@ class SupabaseOffersRepository implements OffersRepository {
   Stream<SuperpowerOffer?> watchPending(String playerId) => _client
       .from('superpower_offers')
       .stream(primaryKey: ['id'])
-      .eq('player_id', playerId)
+      .eq('user_id', playerId)
       .map((rows) {
         final pending = rows
             .where((r) =>

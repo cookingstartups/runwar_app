@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
       const { data: economy } = await supabase
         .from('player_economy')
         .select('credits')
-        .eq('player_id', playerId)
+        .eq('user_id', playerId)
         .maybeSingle();
       return ok({
         success: true,
@@ -122,7 +122,7 @@ Deno.serve(async (req) => {
       const grantId = crypto.randomUUID();
       await supabase.from('superpower_grants').insert({
         id: grantId,
-        player_id: playerId,
+        user_id: playerId,
         power_type: grantedPower,
         charges: value || 1,
         charges_used: 0,

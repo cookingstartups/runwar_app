@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
 
     const { error: insertErr } = await supabase.from('superpower_grants').insert({
       id: grantId,
-      player_id: playerId,
+      user_id: playerId,
       power_type: powerType,
       charges: config.charges,
       charges_used: 0,

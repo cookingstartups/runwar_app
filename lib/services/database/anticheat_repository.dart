@@ -67,7 +67,7 @@ class SuspicionScore {
   });
 
   factory SuspicionScore.fromJson(Map<String, dynamic> j) => SuspicionScore(
-        playerId: j['player_id'] as String,
+        playerId: j['user_id'] as String,
         score: (j['score'] as num).toDouble(),
         sessionMaxScore: (j['session_max_score'] as num? ?? 0.0).toDouble(),
       );
@@ -148,7 +148,7 @@ class SupabaseAntiCheatRepository implements AntiCheatRepository {
         'anticheat_score',
         body: {
           'run_id': runId,
-          'player_id': playerId,
+          'user_id': playerId,
           'samples': samples.map((s) => s.toJson()).toList(),
           if (gyroSummary != null) 'gyro_summary': gyroSummary.toJson(),
           if (gpsPatternHash != null) 'gps_pattern_hash': gpsPatternHash,
@@ -208,8 +208,8 @@ class SupabaseAntiCheatRepository implements AntiCheatRepository {
 
     final sub = _client
         .from('suspicion_scores')
-        .stream(primaryKey: ['player_id'])
-        .eq('player_id', playerId)
+        .stream(primaryKey: ['user_id'])
+        .eq('user_id', playerId)
         .listen(
           (rows) {
             if (_disposed) return;

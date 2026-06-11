@@ -52,11 +52,11 @@ Map<String, dynamic> normaliseProfilePatch(Map<String, dynamic> patch) {
 // ── Daily mission progress test constants ─────────────────────────────────────
 
 @visibleForTesting
-const String kGetDailyMissionsFilterColumn = 'player_id';
+const String kGetDailyMissionsFilterColumn = 'user_id';
 @visibleForTesting
-const String kUpsertMissionProgressOnConflict = 'player_id,mission_id,date';
+const String kUpsertMissionProgressOnConflict = 'user_id,mission_id,date';
 @visibleForTesting
-const String kUpsertMissionProgressPlayerKey = 'player_id';
+const String kUpsertMissionProgressPlayerKey = 'user_id';
 @visibleForTesting
 const String kUpsertMissionProgressMissionKey = 'mission_id';
 
@@ -76,8 +76,14 @@ class DatabaseService {
     final client = Supabase.instance.client;
     final rows = await client
         .from('players')
-        .select('*, player_economy(*), player_progress(*), player_streaks(*), player_trial(*)')
-        .eq('id', userId)
+        .select(
+          '*, '
+          'player_economy(credits, total_kickback_earned, subscription_tier, subscription_expires, reputation), '
+          'player_progress(score, first_mission_completed_at, first_attack_completed_at), '
+          'player_streaks(streak, longest_streak, last_login_at, streak_started_at, milestones_claimed, freeze_tokens, freeze_refreshed_at), '
+          'player_trial(trial_started_at, trial_days_remaining, trial_last_tick_date)',
+        )
+        .eq('user_id', userId)
         .limit(1);
     final list = rows as List<dynamic>;
     if (list.isEmpty) return null;
@@ -93,9 +99,6 @@ class DatabaseService {
     if (streaks  != null) row.addAll(streaks);
     if (trial    != null) row.addAll(trial);
 
-    // Remove the duplicate player_id key injected by child table joins.
-    row.remove('player_id');
-
     return row;
   }
 
@@ -110,7 +113,7 @@ class DatabaseService {
   }) async {
     final client = Supabase.instance.client;
     await client.from('players').insert({
-      'id': id,
+      'user_id': id,
       'username': username.trim(),
       'color': color,
       'invited_at': invitedAt,
@@ -130,14 +133,14 @@ class DatabaseService {
     final client = Supabase.instance.client;
     await client.from('players').upsert(
       {
-        'id': id,
+        'user_id': id,
         'username': username.trim(),
         'color': color,
         'invited_at': invitedAt,
         'is_tester': isTester,
         'created_at': DateTime.now().toUtc().toIso8601String(),
       },
-      onConflict: 'id',
+      onConflict: 'user_id',
       ignoreDuplicates: true,
     );
   }
@@ -173,30 +176,30 @@ class DatabaseService {
     assert(unknownKeys.isEmpty, 'updateProfile: unknown patch keys dropped: $unknownKeys');
 
     if (identityPatch.isNotEmpty) {
-      await client.from('players').update(identityPatch).eq('id', userId);
+      await client.from('players').update(identityPatch).eq('user_id', userId);
     }
     if (economyPatch.isNotEmpty) {
       await client.from('player_economy').upsert(
-        {'player_id': userId, ...economyPatch},
-        onConflict: 'player_id',
+        {'user_id': userId, ...economyPatch},
+        onConflict: 'user_id',
       );
     }
     if (progressPatch.isNotEmpty) {
       await client.from('player_progress').upsert(
-        {'player_id': userId, ...progressPatch},
-        onConflict: 'player_id',
+        {'user_id': userId, ...progressPatch},
+        onConflict: 'user_id',
       );
     }
     if (streaksPatch.isNotEmpty) {
       await client.from('player_streaks').upsert(
-        {'player_id': userId, ...streaksPatch},
-        onConflict: 'player_id',
+        {'user_id': userId, ...streaksPatch},
+        onConflict: 'user_id',
       );
     }
     if (trialPatch.isNotEmpty) {
       await client.from('player_trial').upsert(
-        {'player_id': userId, ...trialPatch},
-        onConflict: 'player_id',
+        {'user_id': userId, ...trialPatch},
+        onConflict: 'user_id',
       );
     }
   }
@@ -225,8 +228,8 @@ class DatabaseService {
     final client = Supabase.instance.client;
     final rows = await client
         .from('players')
-        .select('id, player_trial(*), player_streaks(freeze_tokens, freeze_refreshed_at, streak)')
-        .eq('id', userId)
+        .select('user_id, player_trial(*), player_streaks(freeze_tokens, freeze_refreshed_at, streak)')
+        .eq('user_id', userId)
         .limit(1);
     final list = rows as List<dynamic>;
     if (list.isEmpty) return null;
@@ -560,7 +563,7 @@ class DatabaseService {
     final rows = await client
         .from('daily_mission_progress')
         .select('*, daily_mission_definitions(slug)')
-        .eq('player_id', userId)
+        .eq('user_id', userId)
         .eq('date', date);
     return (rows as List<dynamic>).map((r) {
       final m = Map<String, dynamic>.from(r as Map<String, dynamic>);
@@ -572,10 +575,10 @@ class DatabaseService {
 
   /// Upserts a daily_mission_progress row. Resolves `mission_id` from
   /// `daily_mission_definitions` via the `slug` key before writing, since
-  /// the live UNIQUE constraint is (player_id, mission_id, date).
+  /// the live UNIQUE constraint is (user_id, mission_id, date).
   ///
   /// Required row map keys:
-  ///   - 'player_id' (String UUID)
+  ///   - 'user_id' (String UUID)
   ///   - 'slug' (String, used for definition lookup; stripped before write)
   ///   - 'date' (String, yyyy-MM-dd)
   /// Optional keys: 'progress', 'target', 'completed_at', 'synced_at'.
@@ -599,16 +602,15 @@ class DatabaseService {
     }
     final missionId = defRow['id'] as int;
 
-    // Build payload: strip slug and any legacy user_id; inject mission_id.
+    // Build payload: strip slug; inject mission_id.
     final payload = Map<String, dynamic>.from(row)
       ..remove('slug')
-      ..remove('user_id')
       ..remove('id'); // drop legacy composite id; live table generates UUID
     payload['mission_id'] = missionId;
 
     await client.from('daily_mission_progress').upsert(
       payload,
-      onConflict: 'player_id,mission_id,date',
+      onConflict: 'user_id,mission_id,date',
     );
   }
 

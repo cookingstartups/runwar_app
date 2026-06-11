@@ -83,7 +83,7 @@ class OutboxAwareWriter {
       try {
         await SupabaseService.instance.supabase
             .from('gps_samples')
-            .upsert(samples, onConflict: 'session_id,ts,player_id');
+            .upsert(samples, onConflict: 'session_id,ts,user_id');
         await OutboxService.instance.markSuccess(batchId);
       } catch (e) {
         debugPrint(

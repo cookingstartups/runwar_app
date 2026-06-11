@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
         const { data: existingHash } = await supabase
           .from('anticheat_reports')
           .select('id')
-          .eq('player_id', playerId)
+          .eq('user_id', playerId)
           .eq('gps_pattern_hash', body.gps_pattern_hash)
           .limit(1);
         if (existingHash && existingHash.length > 0) {
@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
     const reportId = crypto.randomUUID();
     await supabase.from('anticheat_reports').insert({
       id: reportId,
-      player_id: playerId,
+      user_id: playerId,
       run_id: run_id ?? null,
       score,
       flags,
@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
       challengeId = crypto.randomUUID();
       await supabase.from('challenges').insert({
         id: challengeId,
-        player_id: playerId,
+        user_id: playerId,
         status: 'open',
         trigger: flags[0] ?? 'anticheat',
         anticheat_report_id: reportId,

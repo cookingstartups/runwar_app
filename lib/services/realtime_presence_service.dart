@@ -30,7 +30,7 @@ class PlayerPresence {
 
   factory PlayerPresence.fromPayload(Map<String, dynamic> p) =>
       PlayerPresence(
-        playerId: p['player_id'] as String? ?? '',
+        playerId: p['user_id'] as String? ?? '',
         displayName: p['display_name'] as String? ?? '?',
         color: p['color'] as String? ?? '#FF7A00',
         position: LatLng(
@@ -143,7 +143,7 @@ class RealtimePresenceService {
       // Rival comet tail is reconstructed client-side from a rolling buffer of
       // these single-point emissions (see _playerHistory). Adding track data
       // would leak the runner's full path to all subscribers.
-      'player_id': _myPlayerId ?? '',
+      'user_id': _myPlayerId ?? '',
       'display_name': _myDisplayName ?? '?',
       'color': _myColor ?? '#FF7A00',
       'lat': position.latitude,
@@ -190,7 +190,7 @@ class RealtimePresenceService {
       // these single-point emissions (see _playerHistory). Adding track data
       // would leak the runner's full path to all subscribers.
       final payload = {
-        'player_id': _myPlayerId!,
+        'user_id': _myPlayerId!,
         'display_name': _myDisplayName ?? '?',
         'color': _myColor ?? '#FF7A00',
         'lat': pos.latitude,
@@ -213,7 +213,7 @@ class RealtimePresenceService {
     final others = state
         .expand((s) => s.presences.map((p) => p.payload))
         .where((payload) =>
-            (payload['player_id'] as String?) != _myPlayerId)
+            (payload['user_id'] as String?) != _myPlayerId)
         .map((payload) {
           try {
             return PlayerPresence.fromPayload(payload);
