@@ -121,6 +121,7 @@ class RunRecorderService {
       cb(sid, {
         'id': sid,
         'user_id': uid,
+        'player_id': uid,
         'city': activeCity,
         'started_at': _startedAt!.toIso8601String(),
         'status': 'active',
@@ -442,6 +443,7 @@ class RunRecorderService {
           runCb(legacySid, {
             'id': legacySid,
             'user_id': userId,
+            'player_id': userId,
             'city': activeCity,
             'started_at': _startedAt!.toIso8601String(),
             'status': 'active',
