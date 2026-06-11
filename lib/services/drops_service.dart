@@ -16,6 +16,7 @@ import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'database/drops_repository.dart';
+import '../utils/runwar_constants.dart';
 
 /// Minimal GPS adapter interface consumed by [DropsService].
 /// The Riverpod provider supplies a concrete implementation backed by the
@@ -37,16 +38,13 @@ class DropsService {
     required DropsRepository repo,
     required GpsStream gps,
     Duration pollInterval = const Duration(seconds: 10),
-    double pickupRadiusM = 30,
   })  : _repo = repo,
         _gps = gps,
-        _pollInterval = pollInterval,
-        _pickupRadiusM = pickupRadiusM;
+        _pollInterval = pollInterval;
 
   final DropsRepository _repo;
   final GpsStream _gps;
   final Duration _pollInterval;
-  final double _pickupRadiusM;
 
   StreamSubscription<List<Drop>>? _sub;
   Timer? _timer;
@@ -101,7 +99,8 @@ class DropsService {
         nearest = d;
       }
     }
-    if (nearest == null || nearestM > _pickupRadiusM) return;
+    // Unified from prior 30m default — see runwar_constants.dart
+    if (nearest == null || nearestM > kProximityTriggerM) return;
 
     _busy = true;
     try {

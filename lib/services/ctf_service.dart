@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_service.dart';
 import 'realtime_presence_service.dart';
 import '../config/supabase_config.dart';
+import '../utils/runwar_constants.dart';
 
 class CtfEvent {
   const CtfEvent({
@@ -68,6 +69,9 @@ class CtfService {
   CtfService._();
   static final CtfService instance = CtfService._();
 
+  @visibleForTesting
+  static CtfService instanceForTesting() => CtfService._();
+
   RealtimeChannel? _channel;
   final _controller = StreamController<List<CtfEvent>>.broadcast();
   final _pendingController = StreamController<List<CtfEvent>>.broadcast();
@@ -76,7 +80,6 @@ class CtfService {
   bool _serviceInited = false;
   bool _notifInit = false;
   double _notifRadiusKm = 100;
-  double _captureThresholdM = 50.0;
   String? _playerId;
 
   final _joinedEventIds = <String>{};
@@ -84,6 +87,14 @@ class CtfService {
 
   /// Track last emitted active events for proximity checks.
   List<CtfEvent> _lastActiveEvents = [];
+
+  // Nullable override for unit tests. Must be nulled in tearDown via resetForTesting().
+  /// When non-null, [checkCaptureProximity] calls this instead of [claimWin].
+  @visibleForTesting
+  Future<bool> Function(String eventId, LatLng pos)? claimWinForTesting;
+
+  @visibleForTesting
+  void resetForTesting() => claimWinForTesting = null;
 
   static const _channelId = 'runwar_ctf';
   static const _channelName = 'CTF Events';
@@ -105,23 +116,29 @@ class CtfService {
     _subscribe();
     await _fetchAndEmit();
     await _fetchAndEmitPending();
-    debugPrint('[CtfService] init complete — radius=${_notifRadiusKm}km captureThreshold=${_captureThresholdM}m notifInit=$_notifInit');
+    debugPrint('[CtfService] init complete — radius=${_notifRadiusKm}km captureThreshold=${kProximityTriggerM}m notifInit=$_notifInit');
   }
 
   Future<void> _loadConfig() async {
     try {
+      // ctf_capture_threshold_m was removed — threshold is now kProximityTriggerM
+      // (a compile-time constant in runwar_constants.dart). Only
+      // ctf_notification_radius_km is still read from app_config.
       final rows = await SupabaseService.instance.supabase
           .from('app_config')
           .select('key, value')
-          .inFilter('key', ['ctf_notification_radius_km', 'ctf_capture_threshold_m']);
+          .inFilter('key', ['ctf_notification_radius_km']);
+      // If the deprecated key arrives anyway (pre-existing DB rows), log and ignore.
       for (final row in (rows as List<dynamic>)) {
         final key = row['key'] as String?;
         final raw = row['value'] as String?;
+        if (key == 'ctf_capture_threshold_m') {
+          debugPrint('[CtfService] ctf_capture_threshold_m row ignored — threshold is now kProximityTriggerM (${kProximityTriggerM}m)');
+          continue;
+        }
         if (raw == null) continue;
         if (key == 'ctf_notification_radius_km') {
           _notifRadiusKm = double.tryParse(raw) ?? 100;
-        } else if (key == 'ctf_capture_threshold_m') {
-          _captureThresholdM = double.tryParse(raw) ?? 50.0;
         }
       }
     } catch (e) {
@@ -411,7 +428,7 @@ class CtfService {
   }
 
   /// Auto-capture: called on every GPS update from MapScreen.
-  /// For each active joined event, if the player is within [_captureThresholdM],
+  /// For each active joined event, if the player is within [kProximityTriggerM],
   /// calls claimWin automatically. Guard prevents duplicate calls per session.
   Future<void> checkCaptureProximity(double lat, double lng) async {
     final events = _lastActiveEvents;
@@ -421,15 +438,31 @@ class CtfService {
       final distM =
           _haversineKm(lat, lng, event.position.latitude, event.position.longitude) *
               1000;
-      if (distM <= _captureThresholdM) {
+      if (distM <= kProximityTriggerM) {
         _captureAttemptedIds.add(event.id); // add BEFORE await to prevent races
         debugPrint('[CtfService] Auto-capture attempt for ${event.id} at ${distM.toStringAsFixed(1)}m');
-        await claimWin(event.id, LatLng(lat, lng));
+        await _claimWinInternal(event.id, LatLng(lat, lng));
       }
     }
   }
 
-  double get captureThresholdM => _captureThresholdM;
+  double get captureThresholdM => kProximityTriggerM;
+
+  /// Internal dispatch: uses [claimWinForTesting] override in tests,
+  /// falls back to the real [claimWin] network call in production.
+  Future<bool> _claimWinInternal(String eventId, LatLng pos) {
+    final override = claimWinForTesting;
+    if (override != null) return override(eventId, pos);
+    return claimWin(eventId, pos);
+  }
+
+  // ── Test-only seams ──────────────────────────────────────────────────────────
+
+  /// Seeds [_lastActiveEvents] without a Realtime subscription.
+  @visibleForTesting
+  void injectLastActiveEventsForTesting(List<CtfEvent> events) {
+    _lastActiveEvents = events;
+  }
 
   Future<void> dispose() async {
     await _channel?.unsubscribe();
