@@ -33,7 +33,7 @@ class Challenge {
 
   factory Challenge.fromRow(Map<String, dynamic> j) => Challenge(
         id: j['id'] as String,
-        playerId: j['player_id'] as String,
+        playerId: j['user_id'] as String,
         status: j['status'] as String,
         challengeType: j['challenge_type'] as String,
         expiresAt: DateTime.parse(j['expires_at'] as String),
@@ -107,7 +107,7 @@ class SupabaseChallengesRepository implements ChallengesRepository {
       final rows = await _client
           .from('challenges')
           .select()
-          .eq('player_id', playerId)
+          .eq('user_id', playerId)
           .eq('status', 'open')
           .order('expires_at', ascending: true)
           .limit(1);
@@ -186,7 +186,7 @@ class SupabaseChallengesRepository implements ChallengesRepository {
           table: 'challenges',
           filter: PostgresChangeFilter(
             type: PostgresChangeFilterType.eq,
-            column: 'player_id',
+            column: 'user_id',
             value: playerId,
           ),
           callback: (_) => _fetchAndEmit(playerId),

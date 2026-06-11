@@ -27,7 +27,7 @@ class SuperpowerGrant {
 
   factory SuperpowerGrant.fromJson(Map<String, dynamic> j) => SuperpowerGrant(
         id: j['id'] as String,
-        playerId: j['player_id'] as String,
+        playerId: j['user_id'] as String,
         powerType: j['power_type'] as String,
         charges: (j['charges'] as num).toInt(),
         chargesUsed: (j['charges_used'] as num).toInt(),
@@ -151,7 +151,7 @@ class SupabaseSuperpowersRepository implements SuperpowersRepository {
   Stream<List<SuperpowerGrant>> watchActiveGrants(String playerId) => _client
       .from('superpower_grants')
       .stream(primaryKey: ['id'])
-      .eq('player_id', playerId)
+      .eq('user_id', playerId)
       .map((rows) => rows
           .map(SuperpowerGrant.fromJson)
           .where((g) => g.isActive)

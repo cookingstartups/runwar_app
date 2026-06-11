@@ -39,7 +39,7 @@ final dailyStreakProvider = FutureProvider.family<DailyStreak, String>(
     final row = await client
         .from('players')
         .select(kDailyStreakSelectString)
-        .eq('id', userId)
+        .eq('user_id', userId)
         .maybeSingle();
     if (row == null) {
       debugPrint('[dailyStreakProvider] no row for userId=$userId - check RLS on player_streaks/player_economy');

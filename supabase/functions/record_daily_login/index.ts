@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
     const { data: player, error: playerErr } = await supabase
       .from('player_streaks')
       .select('streak, longest_streak, freeze_tokens, freeze_refreshed_at, last_login_at, milestones_claimed')
-      .eq('player_id', playerId)
+      .eq('user_id', playerId)
       .maybeSingle();
 
     if (playerErr || !player) return err('player_streaks row not found for player', 404);
@@ -157,7 +157,7 @@ Deno.serve(async (req) => {
         if (powerConfig !== null) {
           await supabase.from('superpower_grants').insert({
             id: crypto.randomUUID(),
-            player_id: playerId,
+            user_id: playerId,
             power_type: powerConfig.type,
             charges: 1,
             charges_used: 0,
@@ -191,7 +191,7 @@ Deno.serve(async (req) => {
         milestones_claimed: milestonesClaimed,
         updated_at: new Date().toISOString(),
       })
-      .eq('player_id', playerId);
+      .eq('user_id', playerId);
 
     if (updateErr) return err(updateErr.message, 500);
 

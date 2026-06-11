@@ -11,7 +11,7 @@ import '../theme.dart';
 /// ListTile for a single referral kickback credit_transactions row.
 ///
 /// Expected map keys (from Supabase):
-///   - `metadata.invitee_id` (String) or falls back to `player_id`
+///   - `metadata.invitee_id` (String) or falls back to `user_id`
 ///   - `amount` (num)
 ///   - `created_at` (ISO-8601 String)
 class KickbackHistoryTile extends StatelessWidget {
@@ -26,8 +26,8 @@ class KickbackHistoryTile extends StatelessWidget {
       final id = meta['invitee_id'];
       if (id != null && id.toString().isNotEmpty) return id.toString();
     }
-    // Fallback to the transaction's own player_id
-    return entry['player_id']?.toString() ?? '—';
+    // Fallback to the transaction's own user_id
+    return entry['user_id']?.toString() ?? '—';
   }
 
   String get _dateLabel {

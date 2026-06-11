@@ -42,12 +42,12 @@ Deno.serve(async (req) => {
     // Fetch offer
     const { data: offer, error: offerErr } = await supabase
       .from('superpower_offers')
-      .select('id, player_id, offered_power_type, tier, cost_credits, status, expires_at, offer_type')
+      .select('id, user_id, offered_power_type, tier, cost_credits, status, expires_at, offer_type')
       .eq('id', offer_id)
       .maybeSingle();
 
     if (offerErr || !offer) return ok({ success: false, reason: 'offer_not_found' });
-    if (offer.player_id !== playerId) return ok({ success: false, reason: 'wrong_player' });
+    if (offer.user_id !== playerId) return ok({ success: false, reason: 'wrong_player' });
     if (offer.status !== 'pending') return ok({ success: false, reason: 'already_resolved' });
     if (new Date(offer.expires_at) <= new Date()) return ok({ success: false, reason: 'offer_expired' });
 
@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
     const { data: economy } = await supabase
       .from('player_economy')
       .select('credits')
-      .eq('player_id', playerId)
+      .eq('user_id', playerId)
       .maybeSingle();
 
     const currentCredits: number = economy?.credits ?? 0;
@@ -80,7 +80,7 @@ Deno.serve(async (req) => {
     const grantId = crypto.randomUUID();
     await supabase.from('superpower_grants').insert({
       id: grantId,
-      player_id: playerId,
+      user_id: playerId,
       power_type: offer.offered_power_type,
       charges: 1,
       charges_used: 0,

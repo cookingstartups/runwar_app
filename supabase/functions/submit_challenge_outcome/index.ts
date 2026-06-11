@@ -42,12 +42,12 @@ Deno.serve(async (req) => {
     // Fetch challenge — must belong to this player and be open
     const { data: challenge, error: challengeErr } = await supabase
       .from('challenges')
-      .select('id, player_id, status')
+      .select('id, user_id, status')
       .eq('id', challenge_id)
       .maybeSingle();
 
     if (challengeErr || !challenge) return ok({ error: 'challenge_not_found' });
-    if (challenge.player_id !== playerId) return ok({ error: 'wrong_player' });
+    if (challenge.user_id !== playerId) return ok({ error: 'wrong_player' });
     if (challenge.status !== 'open') return ok({ error: 'already_resolved' });
 
     // Update status
@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
       await supabase
         .from('players')
         .update({ is_flagged: false })
-        .eq('id', playerId);
+        .eq('user_id', playerId);
     }
 
     return ok({});

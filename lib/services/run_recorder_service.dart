@@ -121,7 +121,6 @@ class RunRecorderService {
       cb(sid, {
         'id': sid,
         'user_id': uid,
-        'player_id': uid,
         'city': activeCity,
         'started_at': _startedAt!.toIso8601String(),
         'status': 'active',
@@ -193,7 +192,7 @@ class RunRecorderService {
       if (gpsCb != null && sid != null) {
         gpsCb({
           'session_id': sid,
-          'player_id': uid,
+          'user_id': uid,
           'lat': pos.latitude,
           'lng': pos.longitude,
           'ts': pos.timestamp.toIso8601String(),
@@ -443,7 +442,6 @@ class RunRecorderService {
           runCb(legacySid, {
             'id': legacySid,
             'user_id': userId,
-            'player_id': userId,
             'city': activeCity,
             'started_at': _startedAt!.toIso8601String(),
             'status': 'active',
@@ -453,7 +451,7 @@ class RunRecorderService {
 
       // Replay all scratch rows into gps_samples outbox so they reach
       // the server even if they were not streamed before the crash.
-      // The unique index (session_id, ts, player_id) deduplicates server-side.
+      // The unique index (session_id, ts, user_id) deduplicates server-side.
       final gpsCb = onGpsFix;
       if (gpsCb != null) {
         final sid = _currentSessionId!;
@@ -462,7 +460,7 @@ class RunRecorderService {
           if (ts == null) continue;
           gpsCb({
             'session_id': sid,
-            'player_id': userId,
+            'user_id': userId,
             'lat': row['lat'] as double,
             'lng': row['lng'] as double,
             'ts': ts,
