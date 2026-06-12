@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -236,6 +237,51 @@ class _MapScreenState extends ConsumerState<MapScreen>
     }
     final slugsAsync = ref.watch(joinedCitySlugsProvider(userId));
     return (slugsAsync: slugsAsync, center: cityConfig.center);
+  }
+
+  Future<void> _simulateLaComaRun() async {
+    final recorder = RunRecorderService.instance;
+    if (recorder.stateNotifier.value != RecorderState.recording) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Start a run first')),
+      );
+      return;
+    }
+    final coords = [
+      (39.52600, -0.44550),
+      (39.52655, -0.44550),
+      (39.52710, -0.44550),
+      (39.52762, -0.44550),
+      (39.52762, -0.44510),
+      (39.52762, -0.44473),
+      (39.52710, -0.44473),
+      (39.52655, -0.44473),
+      (39.52600, -0.44473),
+      (39.52600, -0.44511),
+      (39.52600, -0.44540),
+      (39.52600, -0.44550),
+    ];
+    for (final (lat, lng) in coords) {
+      if (!mounted) return;
+      final pos = Position(
+        latitude: lat,
+        longitude: lng,
+        accuracy: 5.0,
+        altitude: 50.0,
+        altitudeAccuracy: 5.0,
+        heading: 0.0,
+        headingAccuracy: 5.0,
+        speed: 2.5,
+        speedAccuracy: 1.0,
+        timestamp: DateTime.now(),
+        isMocked: false,
+      );
+      debugPrint('[SIM] Injecting fix ($lat, $lng)');
+      // ignore: invalid_use_of_visible_for_testing_member
+      recorder.handlePositionForTesting(pos);
+      await Future.delayed(const Duration(seconds: 2));
+    }
   }
 
   @override
@@ -1121,6 +1167,18 @@ class _MapScreenState extends ConsumerState<MapScreen>
           right: 0,
           child: SuperpowerInventoryStrip(playerId: userId),
         ),
+        // Debug-only GPS simulation button.
+        if (kDebugMode)
+          Positioned(
+            bottom: 160,
+            right: 16,
+            child: FloatingActionButton.small(
+              heroTag: 'sim',
+              onPressed: _simulateLaComaRun,
+              backgroundColor: Colors.purple,
+              child: const Icon(Icons.science, size: 18),
+            ),
+          ),
         // error banner above map; does not block FAB or tiles.
         if (showError)
           Positioned(
