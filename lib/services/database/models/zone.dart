@@ -75,7 +75,7 @@ class Zone {
     }
 
     // Clamp influenceLevel to 1..15 (design.md §1).
-    final rawLevel = (row['score'] as num?)?.toInt() ?? 1;
+    final rawLevel = (row['influence_level'] as num?)?.toInt() ?? 1;
     final influenceLevel = rawLevel.clamp(1, 15);
 
     // Parse status — default to owned for unknown values.
