@@ -71,6 +71,10 @@ class RealtimeZonesService {
   /// Maps Supabase schema → shape expected by existing Flutter code.
   /// SQLite uses `influence` (double), `geom_json` (String).
   /// Supabase uses `influence_level` (int), `geom_json` (JSONB Map).
+  @visibleForTesting
+  Map<String, dynamic> normaliseForTest(Map<String, dynamic> r) =>
+      _normalise(r);
+
   Map<String, dynamic> _normalise(Map<String, dynamic> r) {
     final geomRaw = r['geom_json'];
     final geomStr = geomRaw is String ? geomRaw : jsonEncode(geomRaw);
@@ -80,7 +84,7 @@ class RealtimeZonesService {
       'owner_id': r['owner_id'] as String?,
       'city': r['city'] as String? ?? 'Valencia',
       'geom_json': geomStr,
-      'influence': ((r['score'] as num?) ?? 1).toDouble(),
+      'influence': ((r['influence_level'] as num?) ?? 1).toDouble(),
       'status': r['status'] as String? ?? 'owned',
       'shield_active': r['shield_active'] as bool? ?? false,
       'shield_expires_at': r['shield_expires_at'] as String?,
