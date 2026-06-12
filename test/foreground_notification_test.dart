@@ -37,12 +37,12 @@ void main() {
 
     // GIVEN the RunRecorderService exposes kNotificationChannelImportance
     // WHEN the constant is read
-    // THEN it equals "high" (case-insensitive sentinel for HIGH importance)
-    test('notification channel importance is "high"', () {
+    // THEN it equals "default" (DEFAULT importance prevents heads-up popup on update)
+    test('notification channel importance is "default"', () {
       expect(
         RunRecorderService.kNotificationChannelImportance,
-        equals('high'),
-        reason: 'Channel importance must be high; "low" or "LOW" hides the notification from the lock screen',
+        equals('default'),
+        reason: 'DEFAULT importance prevents the heads-up popup from interrupting gameplay on every tick update',
       );
     });
 
