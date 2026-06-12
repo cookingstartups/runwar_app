@@ -83,7 +83,7 @@ class RunRecorderService {
   @visibleForTesting
   static const Duration kForegroundTaskInterval = Duration(seconds: 15);
   @visibleForTesting
-  static const String kNotificationChannelImportance = 'high';
+  static const String kNotificationChannelImportance = 'default';
 
   void setActiveUser(String? userId) => _activeUserId = userId;
 
@@ -212,8 +212,8 @@ class RunRecorderService {
         channelId: 'runwar_run_tracking',
         channelName: 'Run Tracking',
         channelDescription: 'RunWar is recording your route.',
-        channelImportance: NotificationChannelImportance.HIGH,
-        priority: NotificationPriority.HIGH,
+        channelImportance: NotificationChannelImportance.DEFAULT,
+        priority: NotificationPriority.DEFAULT,
       ),
       iosNotificationOptions: const IOSNotificationOptions(
         showNotification: true,
