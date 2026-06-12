@@ -210,6 +210,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
           {
             'lasso_id': lassoId,
             'zone_id': outcome.affectedZoneId!,
+            'user_id': userId,
           },
           networkUp: networkUp,
         ));

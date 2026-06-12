@@ -273,10 +273,12 @@ class RunRecorderService {
     // is enqueued even if scratch deletion fails.
     final sid = _currentSessionId;
     final runCb = onRunUpdate;
-    if (runCb != null && sid != null) {
+    final uid = _activeUserId;
+    if (runCb != null && sid != null && uid != null) {
       runCb(sid, {
         'status': 'completed',
         'closed_at': _closedAt!.toIso8601String(),
+        'user_id': uid,
       }).catchError((_) {});
     }
     _currentSessionId = null;
@@ -284,7 +286,6 @@ class RunRecorderService {
     // is still using it. _clearTrackInternal runs on the NEXT startRun().
     // Scratch is cleared here so a future resumeFromScratch on a
     // killed-app path does not re-hydrate this finished session.
-    final uid = _activeUserId;
     if (uid != null) {
       try {
         await RunScratchStore.instance.deleteForUser(uid);
@@ -313,14 +314,15 @@ class RunRecorderService {
     // Write the cancelled status BEFORE clearing scratch.
     final sid = _currentSessionId;
     final runCb = onRunUpdate;
-    if (runCb != null && sid != null) {
+    final uid = _activeUserId;
+    if (runCb != null && sid != null && uid != null) {
       runCb(sid, {
         'status': 'cancelled',
         'closed_at': DateTime.now().toUtc().toIso8601String(),
+        'user_id': uid,
       }).catchError((_) {});
     }
     _currentSessionId = null;
-    final uid = _activeUserId;
     if (uid != null) {
       try {
         await RunScratchStore.instance.deleteForUser(uid);
@@ -460,6 +462,7 @@ class RunRecorderService {
           final ts = row['ts'] as String?;
           if (ts == null) continue;
           gpsCb({
+            'run_id': sid,
             'session_id': sid,
             'user_id': userId,
             'lat': row['lat'] as double,
