@@ -93,6 +93,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   StreamSubscription<Position>? _posSub;
   Position? _currentPosition;
   bool _centeredOnGps = false;
+  bool _simulating = false;
   late final AnimationController _terrainPulse;
 
   // Cached city name updated on every build; read at transition time by the
@@ -159,6 +160,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         ),
       ).listen((pos) {
         if (!mounted) return;
+        if (_simulating) return;
         setState(() => _currentPosition = pos);
         RealtimePresenceService.instance.updatePosition(LatLng(pos.latitude, pos.longitude));
         if (!_centeredOnGps) {
@@ -258,25 +260,30 @@ class _MapScreenState extends ConsumerState<MapScreen>
       (39.52610, -0.43900), // W step closing
       (39.52610, -0.43950), // close loop at SW corner
     ];
-    for (final (lat, lng) in coords) {
-      if (!mounted) return;
-      final pos = Position(
-        latitude: lat,
-        longitude: lng,
-        accuracy: 5.0,
-        altitude: 50.0,
-        altitudeAccuracy: 5.0,
-        heading: 0.0,
-        headingAccuracy: 5.0,
-        speed: 2.5,
-        speedAccuracy: 1.0,
-        timestamp: DateTime.now(),
-        isMocked: false,
-      );
-      debugPrint('[SIM] Injecting fix ($lat, $lng)');
-      // ignore: invalid_use_of_visible_for_testing_member
-      recorder.handlePositionForTesting(pos);
-      await Future.delayed(const Duration(seconds: 2));
+    setState(() => _simulating = true);
+    try {
+      for (final (lat, lng) in coords) {
+        if (!mounted) return;
+        final pos = Position(
+          latitude: lat,
+          longitude: lng,
+          accuracy: 5.0,
+          altitude: 50.0,
+          altitudeAccuracy: 5.0,
+          heading: 0.0,
+          headingAccuracy: 5.0,
+          speed: 2.5,
+          speedAccuracy: 1.0,
+          timestamp: DateTime.now(),
+          isMocked: false,
+        );
+        debugPrint('[SIM] Injecting fix ($lat, $lng)');
+        // ignore: invalid_use_of_visible_for_testing_member
+        recorder.handlePositionForTesting(pos);
+        await Future.delayed(const Duration(seconds: 2));
+      }
+    } finally {
+      if (mounted) setState(() => _simulating = false);
     }
   }
 
