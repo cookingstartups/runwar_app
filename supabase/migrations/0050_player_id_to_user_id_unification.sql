@@ -28,6 +28,7 @@ DROP FUNCTION IF EXISTS fn_players_create_child_rows() CASCADE;
 -- -------------------------------------------------------------------------
 
 DROP POLICY IF EXISTS dmp_own_all                  ON daily_mission_progress;
+DROP POLICY IF EXISTS dmp_select_own               ON daily_mission_progress;
 DROP POLICY IF EXISTS player_economy_select_own    ON player_economy;
 DROP POLICY IF EXISTS player_economy_insert_own    ON player_economy;
 DROP POLICY IF EXISTS player_economy_update_own    ON player_economy;
@@ -45,7 +46,13 @@ DROP POLICY IF EXISTS player_devices_insert_own    ON player_devices;
 DROP POLICY IF EXISTS player_devices_update_own    ON player_devices;
 DROP POLICY IF EXISTS "players insert own samples" ON gps_samples;
 DROP POLICY IF EXISTS "players select own samples" ON gps_samples;
+DROP POLICY IF EXISTS "service role full access"   ON gps_samples;
 DROP POLICY IF EXISTS credit_tx_own_read           ON credit_transactions;
+DROP POLICY IF EXISTS runs_self                    ON runs;
+DROP POLICY IF EXISTS gps_self                     ON gps_samples;
+DROP POLICY IF EXISTS sp_self                      ON superpower_grants;
+DROP POLICY IF EXISTS offers_own_read              ON superpower_offers;
+DROP POLICY IF EXISTS challenges_self_read         ON challenges;
 
 -- -------------------------------------------------------------------------
 -- (C) Drop indexes that name player_id explicitly
@@ -69,7 +76,11 @@ ALTER TABLE player_progress          RENAME COLUMN player_id TO user_id;
 ALTER TABLE player_streaks           RENAME COLUMN player_id TO user_id;
 ALTER TABLE player_trial             RENAME COLUMN player_id TO user_id;
 ALTER TABLE player_devices           RENAME COLUMN player_id TO user_id;
-ALTER TABLE daily_mission_progress   RENAME COLUMN player_id TO user_id;
+-- daily_mission_progress already has user_id (nullable) from a prior migration;
+-- backfill, constrain, then drop the legacy player_id instead of rename.
+UPDATE daily_mission_progress SET user_id = player_id WHERE user_id IS NULL;
+ALTER TABLE daily_mission_progress ALTER COLUMN user_id SET NOT NULL;
+ALTER TABLE daily_mission_progress DROP COLUMN player_id;
 ALTER TABLE anticheat_flags          RENAME COLUMN player_id TO user_id;
 ALTER TABLE suspicion_scores         RENAME COLUMN player_id TO user_id;
 ALTER TABLE superpower_grants        RENAME COLUMN player_id TO user_id;
@@ -78,6 +89,7 @@ ALTER TABLE behavioral_fingerprints  RENAME COLUMN player_id TO user_id;
 ALTER TABLE challenges               RENAME COLUMN player_id TO user_id;
 ALTER TABLE credit_transactions      RENAME COLUMN player_id TO user_id;
 ALTER TABLE gps_samples              RENAME COLUMN player_id TO user_id;
+ALTER TABLE ctf_participants         RENAME COLUMN player_id TO user_id;
 -- referrals: no rename -- uses invitee_id/inviter_id, no player_id column
 -- presences: no rename -- no DB table; Realtime Presence is a transient broadcast channel
 
@@ -102,6 +114,9 @@ CREATE POLICY dmp_own_all
   ON daily_mission_progress FOR ALL
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
+CREATE POLICY dmp_select_own
+  ON daily_mission_progress FOR SELECT
+  USING (user_id = auth.uid());
 
 CREATE POLICY player_economy_select_own
   ON player_economy FOR SELECT
@@ -182,6 +197,21 @@ CREATE POLICY "service role full access"
 
 CREATE POLICY credit_tx_own_read
   ON credit_transactions FOR SELECT
+  USING (user_id = auth.uid());
+CREATE POLICY runs_self
+  ON runs FOR ALL
+  USING (user_id = auth.uid());
+CREATE POLICY gps_self
+  ON gps_samples FOR ALL
+  USING (user_id = auth.uid());
+CREATE POLICY sp_self
+  ON superpower_grants FOR SELECT
+  USING (user_id = auth.uid());
+CREATE POLICY offers_own_read
+  ON superpower_offers FOR SELECT
+  USING (user_id = auth.uid());
+CREATE POLICY challenges_self_read
+  ON challenges FOR SELECT
   USING (user_id = auth.uid());
 
 -- -------------------------------------------------------------------------
