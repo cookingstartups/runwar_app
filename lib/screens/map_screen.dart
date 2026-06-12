@@ -249,18 +249,14 @@ class _MapScreenState extends ConsumerState<MapScreen>
       return;
     }
     final coords = [
-      (39.52600, -0.44550),
-      (39.52655, -0.44550),
-      (39.52710, -0.44550),
-      (39.52762, -0.44550),
-      (39.52762, -0.44510),
-      (39.52762, -0.44473),
-      (39.52710, -0.44473),
-      (39.52655, -0.44473),
-      (39.52600, -0.44473),
-      (39.52600, -0.44511),
-      (39.52600, -0.44540),
-      (39.52600, -0.44550),
+      (39.52610, -0.43950), // SW corner — off-screen start
+      (39.52690, -0.43950), // N step along western edge
+      (39.52770, -0.43950), // NW corner
+      (39.52770, -0.43840), // E step along northern edge
+      (39.52690, -0.43840), // S step along eastern edge
+      (39.52610, -0.43840), // SE corner
+      (39.52610, -0.43900), // W step closing
+      (39.52610, -0.43950), // close loop at SW corner
     ];
     for (final (lat, lng) in coords) {
       if (!mounted) return;
