@@ -191,6 +191,7 @@ class RunRecorderService {
       final gpsCb = onGpsFix;
       if (gpsCb != null && sid != null) {
         gpsCb({
+          'run_id': sid,
           'session_id': sid,
           'user_id': uid,
           'lat': pos.latitude,
