@@ -37,16 +37,7 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
     LatLng(39.46105166149929, -0.37637803708998985),
   ];
 
-  // Fortified polygon — the territory being reinforced.
-  static const _kDisputedCoords = [
-    LatLng(39.4616, -0.3768), // B — NW
-    LatLng(39.4616, -0.3752), // E — NE
-    LatLng(39.4604, -0.3760), // F — SE
-    LatLng(39.4611, -0.3764), // G — SW interior
-  ];
-
   List<List<Offset>> _inheritedPts = [];
-  List<Offset> _claimedChunk = [];
   List<Offset> _routePts = [];
   int _level = 1;
 
@@ -60,7 +51,6 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
       _inheritedPts = IntroZones.kS1All
           .map((block) => block.map(toScreen).toList())
           .toList();
-      _claimedChunk = _kDisputedCoords.map(toScreen).toList();
       _routePts = _kFortifyRoute.map(toScreen).toList();
     });
   }
@@ -122,7 +112,7 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4614, -0.3762),
+            center: const LatLng(39.4607, -0.3762),
             zoom: 16.0,
             onReady: _onMapReady,
           ),
@@ -146,7 +136,6 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
                     playerFade: _playerFadeCtrl.value,
                     accent: widget.accent,
                     inheritedPts: _inheritedPts,
-                    claimedChunk: _claimedChunk,
                     routePts: _routePts,
                     tailLengthPx: tailPx,
                   ),
@@ -170,7 +159,6 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
   @override
   final Color accent;
   final List<List<Offset>> inheritedPts;
-  final List<Offset> claimedChunk;
   final List<Offset> routePts;
   final double tailLengthPx;
 
@@ -180,30 +168,29 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.playerFade,
     required this.accent,
     required this.inheritedPts,
-    required this.claimedChunk,
     required this.routePts,
     required this.tailLengthPx,
   });
 
   static const int _kTotalLaps = 15;
 
-  Offset _chunkCentroid() {
-    if (claimedChunk.isEmpty) return Offset.zero;
+  Offset _routeCentroid() {
+    if (routePts.isEmpty) return Offset.zero;
     double sumX = 0, sumY = 0;
-    for (final pt in claimedChunk) {
+    for (final pt in routePts) {
       sumX += pt.dx;
       sumY += pt.dy;
     }
-    return Offset(sumX / claimedChunk.length, sumY / claimedChunk.length);
+    return Offset(sumX / routePts.length, sumY / routePts.length);
   }
 
   /// NW-most vertex: maximises (lat - lng) in LatLng space, which in screen
   /// space corresponds to the vertex that is most upper-left. We approximate
   /// this as minimising (dx + dy) in screen-space (smaller x+y = upper-left).
   Offset _nwVertex() {
-    if (claimedChunk.isEmpty) return Offset.zero;
-    Offset nw = claimedChunk[0];
-    for (final pt in claimedChunk) {
+    if (routePts.isEmpty) return Offset.zero;
+    Offset nw = routePts[0];
+    for (final pt in routePts) {
       if (pt.dx + pt.dy < nw.dx + nw.dy) nw = pt;
     }
     return nw;
@@ -251,14 +238,14 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (claimedChunk.isEmpty) return;
+    if (routePts.isEmpty) return;
 
     // 0. Inherited orange blocks — static base.
     drawInheritedBlocks(canvas, inheritedPts);
 
-    // 1. Claimed chunk — kSea fill. Opacity ramps with level 1→15.
-    final fillOpacity = 0.15 + (level / _kTotalLaps.toDouble()) * 0.65;
-    drawFillColor(canvas, claimedChunk, kSea, fillOpacity);
+    // 1. Fortified route polygon — kSea fill. Opacity ramps with level 1→15.
+    final fillOpacity = 0.20 + (level / _kTotalLaps.toDouble()) * 0.65;
+    drawFillColor(canvas, routePts, kSea, fillOpacity);
 
     // 2. Halo on route circuit — grows with level.
     if (routePts.length >= 2) {
@@ -280,9 +267,9 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     }
 
     // 3. NW influence level label — visible from t=0, updates each frame.
-    if (claimedChunk.isNotEmpty) {
+    if (routePts.isNotEmpty) {
       final nw = _nwVertex();
-      final centroid = _chunkCentroid();
+      final centroid = _routeCentroid();
       // Nudge 18% from NW corner toward centroid — guaranteed inside polygon.
       final labelPos = nw + (centroid - nw) * 0.18;
       final tp = TextPainter(
@@ -333,7 +320,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
 
     // 6. At max level (15): pulse ring + "FORTIFIED" label.
     if (level >= _kTotalLaps) {
-      final centroid = _chunkCentroid();
+      final centroid = _routeCentroid();
       _drawPulseRing(canvas, centroid, t, kSea);
 
       final fortOpacity = ((t * 4) % 1.0 < 0.5)
@@ -362,6 +349,5 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
       old.level != level ||
       old.playerFade != playerFade ||
       old.tailLengthPx != tailLengthPx ||
-      old.claimedChunk != claimedChunk ||
       old.routePts != routePts;
 }

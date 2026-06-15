@@ -68,10 +68,9 @@ String formatSqm(int sqm) =>
     sqm >= 1000 ? '${(sqm / 1000).toStringAsFixed(1)}k' : sqm.toString();
 
 TileLayer cartoDbDarkNoLabels(BuildContext context) => TileLayer(
-      urlTemplate:
-          'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
-      subdomains: const ['a', 'b', 'c', 'd'],
-      retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
+      urlTemplate: 'assets/intro_tiles/{z}/{x}/{y}.png',
+      tileProvider: AssetTileProvider(),
+      retinaMode: false,
       userAgentPackageName: 'app.runwar.runwar_app',
       keepBuffer: 4,
       panBuffer: 2,
@@ -114,11 +113,10 @@ Widget buildIntroMap({
           children: [
             if (maxZoom != null)
               TileLayer(
-                urlTemplate:
-                    'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
-                subdomains: const ['a', 'b', 'c', 'd'],
+                urlTemplate: 'assets/intro_tiles/{z}/{x}/{y}.png',
+                tileProvider: AssetTileProvider(),
                 maxZoom: maxZoom,
-                retinaMode: MediaQuery.of(ctx).devicePixelRatio > 1.5,
+                retinaMode: false,
                 userAgentPackageName: 'app.runwar.runwar_app',
                 keepBuffer: 4,
                 panBuffer: 2,

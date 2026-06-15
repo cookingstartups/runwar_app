@@ -122,7 +122,7 @@ class _IntroFlagDropMapState extends State<IntroFlagDropMap>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.47140, -0.36490),
+            center: const LatLng(39.47360, -0.36490),
             zoom: 16.0,
             onReady: _updatePoints,
           ),
