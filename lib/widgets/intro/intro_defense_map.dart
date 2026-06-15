@@ -33,15 +33,17 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  // Runner C (pink-red) — 6-point user-supplied GPS lasso.
-  // pt6 is near pt1 — natural lasso loop (polygon closed implicitly).
+  // Runner C (pink-red) — 5-point on-screen attacker beam.
+  // Short loop fully enclosing kS1Block1 so the disputed-area clip is non-degenerate.
+  // Starts west of the block (inside the viewport rect centered on 39.4650,-0.3756)
+  // and traces a tight ring around the block, total path under ~400 m.
+  // pt5 ≈ pt1 closes the loop.
   static const _kP3RouteA = [
-    LatLng(39.45707966941316,  -0.3754599919598242),  // pt1
-    LatLng(39.46089008704585,  -0.3784640659302574),  // pt2
-    LatLng(39.46161901273688,  -0.37852843894390953), // pt3
-    LatLng(39.46216570199534,  -0.37717660565721467), // pt4
-    LatLng(39.457740759441556, -0.3740613727413237),  // pt5
-    LatLng(39.4571367122464,   -0.3754323416117378),  // pt6 ≈ pt1
+    LatLng(39.4641, -0.3795), // pt1 — west edge, on-screen
+    LatLng(39.4660, -0.3790), // pt2 — north-west of block
+    LatLng(39.4663, -0.3760), // pt3 — north-east of block
+    LatLng(39.4645, -0.3755), // pt4 — south-east of block
+    LatLng(39.4641, -0.3795), // pt5 ≈ pt1 — close loop
   ];
 
   // Pink-red attacker color for player 3.
@@ -172,7 +174,7 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.460, -0.377),
+            center: const LatLng(39.4650, -0.3756),
             zoom: 16.0,
             onReady: _onMapReady,
           ),
@@ -185,9 +187,10 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
                 const earthCircumference = 2 * math.pi * 6378137.0;
                 final metersPerPx = (earthCircumference * math.cos(lat)) /
                     (256.0 * math.pow(2.0, zoom));
-                final tailPx = (_ctrl.value * kIntroRouteEstimatedMeters)
-                        .clamp(0.0, kCometTailMaxMeters) /
-                    metersPerPx;
+                final tailPx = ((_ctrl.value * kIntroRouteEstimatedMeters)
+                            .clamp(0.0, kCometTailMaxMeters) /
+                        metersPerPx) *
+                    2.0;
                 return CustomPaint(
                   painter: _IntroDefenseMapAPainter(
                     t: _ctrl.value,
@@ -330,12 +333,12 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
       )!;
       canvas.drawCircle(
         pos,
-        12,
+        16,
         Paint()
-          ..color = p3Color.withValues(alpha: 0.25)
+          ..color = p3Color.withValues(alpha: 0.35)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
       );
-      canvas.drawCircle(pos, 4.5, Paint()..color = p3Color);
+      canvas.drawCircle(pos, 5.5, Paint()..color = p3Color);
       canvas.drawCircle(
         pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.85),
       );

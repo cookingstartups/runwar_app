@@ -21,35 +21,35 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  // Attacker route — blue rival (kSea) runs a GPS loop around kS1Block1
-  // (user-supplied 2026-06-07). The 6 waypoints form a natural closed lasso:
-  // pt0 and pt5 are close together (NW of the block), pt2–pt4 wrap around the
-  // south and east sides. The last segment (pt4→pt5) closes the loop.
-  //   pt0: NW entry point (outside block, NW)
-  //   pt1: W side (outside block)
-  //   pt2: SW corner area (near block vertex B)
-  //   pt3: SE corner area (near block vertex A) — lasso crosses east edge
-  //   pt4: NE apex (outside block, north)
-  //   pt5: NW close (near pt0/pt1, closes the loop)
+  // Attacker route - blue rival (kSea) runs a tidy rectangular lasso around
+  // kS1Block1. The rectangle is centered on the kS1Block1 centroid and rotated
+  // to match the longest edge of kS1Block1 (A->B / C->D), which aligns with
+  // Ruzafa's Carrer de Sueca / Carrer de Cuba street grid (bearing approx
+  // 27.7 deg from east). Half-length along the long axis is 75 m and half-width
+  // along the perpendicular is 50 m, sized so all 4 vertices of kS1Block1 fall
+  // inside the rectangle (max projections were 61 m and 38 m respectively).
+  // 4 corners traversed in order (CW in screen space) + a closing point.
+  //   pt0: NE corner (long axis +, perpendicular +)
+  //   pt1: SE corner (long axis +, perpendicular -)
+  //   pt2: SW corner (long axis -, perpendicular -)
+  //   pt3: NW corner (long axis -, perpendicular +)
+  //   pt4: close (= pt0)
   static const _kAttackerRoute = [
-    LatLng(39.46337502964422,  -0.3800948489427782), // 0: NW entry
-    LatLng(39.46315967146378,  -0.3779061664786055), // 1: W side
-    LatLng(39.461536180656424, -0.376747452232867),  // 2: SW (near B)
-    LatLng(39.46206630426773,  -0.37556728031591113),// 3: SE (near A)
-    LatLng(39.46465059904969,  -0.3773482670269536), // 4: NE apex
-    LatLng(39.4630271430215,   -0.3780563701771271), // 5: NW close (≈ pt0)
+    LatLng(39.462831, -0.375844), // 0: NE corner
+    LatLng(39.462036, -0.375302), // 1: SE corner
+    LatLng(39.461408, -0.376846), // 2: SW corner
+    LatLng(39.462203, -0.377388), // 3: NW corner
+    LatLng(39.462831, -0.375844), // 4: close (= pt0)
   ];
 
-  // Lasso polygon — same 6 waypoints as the route. The route itself IS the
-  // lasso: pt5 closes back near pt0, forming a natural closed loop around
-  // kS1Block1. All 4 vertices of kS1Block1 fall inside this polygon.
+  // Lasso polygon - the 4 rectangle corners (no closing duplicate). All 4
+  // vertices of kS1Block1 fall inside this rectangle, so the disputed area
+  // (Sutherland-Hodgman fallback) is kS1Block1 itself.
   static const _kAttackerLasso = [
-    LatLng(39.46337502964422,  -0.3800948489427782), // pt0 — NW entry
-    LatLng(39.46315967146378,  -0.3779061664786055), // pt1 — W side
-    LatLng(39.461536180656424, -0.376747452232867),  // pt2 — SW (near B)
-    LatLng(39.46206630426773,  -0.37556728031591113),// pt3 — SE (near A)
-    LatLng(39.46465059904969,  -0.3773482670269536), // pt4 — NE apex
-    LatLng(39.4630271430215,   -0.3780563701771271), // pt5 — NW close
+    LatLng(39.462831, -0.375844), // pt0 - NE corner
+    LatLng(39.462036, -0.375302), // pt1 - SE corner
+    LatLng(39.461408, -0.376846), // pt2 - SW corner
+    LatLng(39.462203, -0.377388), // pt3 - NW corner
   ];
 
   // Disputed area — Sutherland-Hodgman intersection of _kAttackerLasso with
@@ -197,19 +197,21 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.tailLengthPx,
   });
 
-  // Timeline (route has 5 segments; close is at traveled == _kLassoCloseSegIdx == 4):
-  //   traveled 0→4   : attacker runs; lasso closes when traveled reaches 4
-  //   t 0.60–0.78    : disputed phase — fill cross-fades kAccent orange → amber
-  //   t 0.78–0.90    : border flash — dashed yellow/black alternating, fill stays amber
-  //   t 0.90–1.0     : claimed — fill + border lerp to kSea blue
-  //   t 0.88–1.00    : global fade
+  // Timeline (route has 4 segments; close is at traveled == _kLassoCloseSegIdx == 4):
+  //   traveled 0->4  : attacker runs the 4 rectangle edges; lasso closes when
+  //                    traveled reaches 4 (last segment returns to pt0)
+  //   t 0.60-0.78    : disputed phase - fill cross-fades kAccent orange -> amber
+  //   t 0.78-0.90    : border flash - dashed yellow/black alternating, fill stays amber
+  //   t 0.90-1.0     : claimed - fill + border lerp to kSea blue
+  //   t 0.88-1.00    : global fade
 
   // Route finishes drawing by t=0.70; remaining t budget used for post-close effects.
   static const double _kRouteCompleteT = 0.70;
 
   // Segment index in _kAttackerRoute where the path closes the loop.
-  // Formula: _kAttackerRoute.length - 2 (last segment closes back to pt1).
-  // For a 6-point route → 5 segments → close at segment 4 (pt4→pt5, pt5 ≈ pt1).
+  // Formula: _kAttackerRoute.length - 1 (last segment closes back to pt0).
+  // For a 5-point route (4 corners + close) -> 4 segments -> close at
+  // segment index 4 (pt3 -> pt4, pt4 == pt0).
   static const int _kLassoCloseSegIdx = 4;
 
   double _disputedOpacity(double traveled) {
@@ -288,7 +290,7 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
   void paint(Canvas canvas, Size size) {
     if (attackerRoute.isEmpty) return;
 
-    final segs = attackerRoute.length - 1; // 5 segments for 6-point route
+    final segs = attackerRoute.length - 1; // 4 segments for 5-point route
     final routeProgress = (t / _kRouteCompleteT).clamp(0.0, 1.0);
     final traveled = routeProgress * segs;
     final lassoIsClosed = traveled >= _kLassoCloseSegIdx;
@@ -511,6 +513,27 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
       }
       disputedCentroid =
           Offset(sumX / disputedArea.length, sumY / disputedArea.length);
+    }
+
+    // 4b. Expanding hex ring on capture - one ring lerps from 0 to 70 px
+    //     radius over pingT in [0, 1], alpha fades (1 - pingT) * 0.7, color
+    //     kSea, stroke width 2. Same gate as drawPings so it only fires on
+    //     a genuine dispute. Matches the production territory_overlay pattern.
+    if (pingT > 0 && pingT < 1.0 && hasGenuineDispute) {
+      final ringT = pingT.clamp(0.0, 1.0);
+      final ringRadius = ringT * 70.0;
+      final ringAlpha = ((1.0 - ringT) * 0.7 * fade).clamp(0.0, 1.0);
+      if (ringRadius > 0 && ringAlpha > 0) {
+        drawHexGlyph(
+          canvas,
+          disputedCentroid,
+          ringRadius,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0
+            ..color = kSea.withValues(alpha: ringAlpha),
+        );
+      }
     }
 
     // 5. "DISPUTED" label — t=0.62–0.75. Only on a genuine dispute.

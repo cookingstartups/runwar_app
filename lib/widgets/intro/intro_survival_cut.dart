@@ -17,15 +17,13 @@ import '../../theme.dart';
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const int _kRowCount = 11; // AC-2: 10–12 rows; 11 hits ~100 circles target
-const double _kTopWidthFrac = 0.80; // AC-2: top row spans 80 % of canvas width
-const double _kBotWidthFrac = 0.25; // AC-2: bottom row spans 25 % of canvas width
-const double _kCircleRadius = 5.0; // AC-3: circle radius in logical px
-const double _kStrokeWidth = 1.5; // AC-3: stroke width for empty circles
-const double _kJitterFrac = 0.3; // AC-2: ±row_spacing × 0.3 jitter
+const double _kTopWidthFrac = 0.80; // top row spans 80 % of canvas width
+const double _kBotWidthFrac = 0.80; // bottom row also spans 80 % (clean rectangle, not a funnel)
+const double _kCircleRadius = 5.0; // circle radius in logical px
+const double _kStrokeWidth = 1.5; // stroke width for empty circles
+const double _kJitterFrac = 0.0; // no jitter; dots sit on an exact grid
 const double _kRowTopPad = 24.0; // padding from canvas top edge
-const Color _kCutFlash = Color(0xFFFF3344); // AC-6: elimination red
-const Color _kCutGrey = Color(0xFF808080); // AC-3: cut final grey
-const double _kCutAlpha = 0.4; // AC-3: cut circle alpha
+const Color _kCutFlash = Color(0xFFFF3344); // elimination red flash
 
 // ── Data models ───────────────────────────────────────────────────────────────
 
@@ -113,8 +111,9 @@ class _IntroSurvivalCutState extends State<IntroSurvivalCut>
       final rowX0 = (W - rowWidth) / 2;
       final rowY = _kRowTopPad + r * rowSpacing;
 
-      // Number of circles proportional to row width
-      final circlesInRow = max(1, (rowWidth / (2 * _kCircleRadius * 2)).round());
+      // Number of circles proportional to row width. Pitch ~ circleRadius * 6.4
+      // keeps total dots in the 90-110 range across an 11-row uniform grid.
+      final circlesInRow = max(1, (rowWidth / (_kCircleRadius * 6.4)).round());
       final pitch = circlesInRow > 1 ? rowWidth / (circlesInRow - 1) : 0.0;
 
       for (int c = 0; c < circlesInRow; c++) {
@@ -194,7 +193,8 @@ class _IntroSurvivalCutState extends State<IntroSurvivalCut>
         .toList()
       ..sort((a, b) => b.base.dy.compareTo(a.base.dy)); // highest Y first (lowest on screen)
     if (candidates.isEmpty) return;
-    final n = max(1, (candidates.length * 0.10).round());
+    // At least 2 dots per cut cycle (3 when there is still plenty of room).
+    final n = min(candidates.length, max(2, (candidates.length * 0.10).round()));
     final victims = candidates.take(n).toList();
     final now = DateTime.now();
     for (final v in victims) {
@@ -207,15 +207,15 @@ class _IntroSurvivalCutState extends State<IntroSurvivalCut>
     for (final seat in _seats) {
       if (seat.cutFlashStart == null) continue;
       final ms = now.difference(seat.cutFlashStart!).inMilliseconds;
-      if (ms >= 400) {
-        // Phase 3: complete — transition to cut state
+      if (ms >= 600) {
+        // Phase 3 complete: seat is gone (cut + fully transparent).
         seat.state = _CircleState.cut;
         seat.cutFlashStart = null;
         seat.fillStart = null;
         seat.fillAlpha = 0.0;
       }
-      // Phase 1 (0–200 ms) and phase 2 (200–400 ms) rendering is handled
-      // by the painter using cutFlashStart timestamp directly.
+      // Phase 1 (0-200 ms red hold) and phase 2 (200-600 ms fade to transparent)
+      // rendering is handled by the painter using cutFlashStart timestamp directly.
     }
   }
 
@@ -356,22 +356,21 @@ class _SurvivalCutPainter extends CustomPainter {
       final seat = seats[i];
       final pos = swapOverrides[i] ?? seat.base;
 
-      // ── Cut-flash overrides all other states for animating circles ──────────
+      // Cut-flash overrides all other states for animating circles.
       if (seat.cutFlashStart != null) {
         final ms = now.difference(seat.cutFlashStart!).inMilliseconds;
         if (ms < 200) {
-          // Phase 1: solid red hold
+          // Phase 1: solid red hold.
           paint
             ..style = PaintingStyle.fill
             ..color = _kCutFlash;
         } else {
-          // Phase 2: fade red → grey, alpha 1.0 → 0.4
-          final frac = ((ms - 200) / 200.0).clamp(0.0, 1.0);
-          final col = Color.lerp(_kCutFlash, _kCutGrey, frac)!;
-          final alpha = 1.0 - (1.0 - _kCutAlpha) * frac;
+          // Phase 2 (200-600 ms): lerp red to fully transparent.
+          final frac = ((ms - 200) / 400.0).clamp(0.0, 1.0);
+          final col = Color.lerp(_kCutFlash, Colors.transparent, frac)!;
           paint
             ..style = PaintingStyle.fill
-            ..color = col.withValues(alpha: alpha);
+            ..color = col;
         }
         canvas.drawCircle(pos, _kCircleRadius, paint);
         continue;
@@ -402,10 +401,8 @@ class _SurvivalCutPainter extends CustomPainter {
           canvas.drawCircle(pos, _kCircleRadius, paint);
 
         case _CircleState.cut:
-          paint
-            ..style = PaintingStyle.fill
-            ..color = _kCutGrey.withValues(alpha: _kCutAlpha);
-          canvas.drawCircle(pos, _kCircleRadius, paint);
+          // Seat fully eliminated - draw nothing.
+          break;
       }
     }
   }
