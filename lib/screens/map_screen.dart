@@ -250,26 +250,26 @@ class _MapScreenState extends ConsumerState<MapScreen>
       );
       return;
     }
-    // Three adjacent lasso loops around Ruzafa/Ribera, Valencia
+    // Three adjacent lasso loops — real OSM nodes on C. de Cuba + C. de Sueca, Ruzafa Valencia
     final coords = [
-      // Loop 1 — NW Ruzafa block (C. de Cuba / C. de la Reina)
-      (39.4670, -0.3770),
-      (39.4670, -0.3750),
-      (39.4655, -0.3750),
-      (39.4655, -0.3770),
-      (39.4670, -0.3770), // close loop 1
-      // Loop 2 — SW Ruzafa block (C. de Sueca)
-      (39.4655, -0.3770),
-      (39.4655, -0.3750),
-      (39.4640, -0.3750),
-      (39.4640, -0.3770),
-      (39.4655, -0.3770), // close loop 2
-      // Loop 3 — East block (C. del Mestre Gozalbo / C. de Salamanca)
-      (39.4670, -0.3750),
-      (39.4670, -0.3730),
-      (39.4655, -0.3730),
-      (39.4655, -0.3750),
-      (39.4670, -0.3750), // close loop 3
+      // Loop 1 — NW block (Cuba NW ↔ Sueca NW via cross streets)
+      (39.4630, -0.3778), // Cuba NW start
+      (39.4635, -0.3765), // cross E → Sueca NW
+      (39.4626, -0.3759), // Sueca heading SE
+      (39.4622, -0.3772), // cross W → Cuba mid
+      (39.4630, -0.3778), // close loop 1
+      // Loop 2 — middle block (Cuba mid ↔ Sueca mid)
+      (39.4622, -0.3772), // transition — Cuba mid
+      (39.4626, -0.3759), // cross E → Sueca
+      (39.4615, -0.3752), // Sueca mid heading SE
+      (39.4611, -0.3764), // cross W → Cuba mid
+      (39.4622, -0.3772), // close loop 2
+      // Loop 3 — SE block (Cuba SE ↔ Sueca SE)
+      (39.4611, -0.3764), // transition — Cuba mid
+      (39.4615, -0.3752), // cross E → Sueca
+      (39.4603, -0.3743), // Sueca SE
+      (39.4598, -0.3755), // cross W → Cuba SE
+      (39.4611, -0.3764), // close loop 3
     ];
     setState(() => _simulating = true);
     try {
