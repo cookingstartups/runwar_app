@@ -128,8 +128,14 @@ class _CitiesSelectionScreenState
     );
   }
 
+  bool get _canProceed =>
+      _selected.isNotEmpty || (_otherCity?.isNotEmpty ?? false);
+
+  int get _totalSelected =>
+      _selected.length + ((_otherCity?.isNotEmpty ?? false) ? 1 : 0);
+
   Future<void> _joinWar(String userId) async {
-    if (_selected.isEmpty) return;
+    if (!_canProceed) return;
     setState(() => _submitting = true);
     try {
       // Save "other city" interest to prefs so the team can review it.
@@ -285,12 +291,12 @@ class _CitiesSelectionScreenState
                       border: Border(top: BorderSide(color: kBorder)),
                     ),
                     child: ValenciaButton(
-                      label: _selected.isEmpty
-                          ? 'SELECT A CITY'
-                          : 'JOIN THE WAR · ${_selected.length} ${_selected.length == 1 ? "CITY" : "CITIES"}',
+                      label: _canProceed
+                          ? 'JOIN THE WAR · ${_totalSelected} ${_totalSelected == 1 ? "CITY" : "CITIES"}'
+                          : 'SELECT A CITY',
                       onPressed:
-                          _selected.isEmpty ? null : () => _joinWar(userId),
-                      enabled: _selected.isNotEmpty,
+                          _canProceed ? () => _joinWar(userId) : null,
+                      enabled: _canProceed,
                       loading: _submitting,
                     ),
                   ),
@@ -306,12 +312,6 @@ class _CitiesSelectionScreenState
 
   Widget _buildGrid(List<CityEntry> all) {
     final filtered = _applyFilters(all);
-    if (filtered.isEmpty) {
-      return Center(
-        child: Text('No cities match.',
-            style: GoogleFonts.inter(color: kFgMuted)),
-      );
-    }
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -320,6 +320,7 @@ class _CitiesSelectionScreenState
         crossAxisSpacing: 14,
         mainAxisSpacing: 14,
       ),
+      // Always include the OTHER CITY card even when the filtered list is empty.
       itemCount: filtered.length + 1,
       itemBuilder: (_, i) {
         // Last slot — "other city" card
