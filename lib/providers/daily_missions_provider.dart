@@ -26,7 +26,7 @@ final todaysMissionsProvider =
 
 @visibleForTesting
 const String kDailyStreakSelectString =
-    'id, '
+    'user_id, '
     'player_streaks(streak, longest_streak, last_login_at, milestones_claimed), '
     'player_economy(subscription_tier)';
 
