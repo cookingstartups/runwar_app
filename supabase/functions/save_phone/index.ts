@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
     const { error: updateErr } = await supabase
       .from('players')
       .update({ phone })
-      .eq('id', user.id);
+      .eq('user_id', user.id);
 
     if (updateErr) return err(`DB error: ${updateErr.message}`, 500);
 

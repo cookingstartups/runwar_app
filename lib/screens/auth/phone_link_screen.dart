@@ -80,13 +80,14 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
 
     return Scaffold(
       backgroundColor: kBg,
+      resizeToAvoidBottomInset: true,
       body: Stack(
         fit: StackFit.expand,
         children: [
           SafeArea(
             child: FadeTransition(
               opacity: fade,
-              child: Padding(
+              child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 28, vertical: 24),
                 child: Column(
@@ -158,7 +159,7 @@ class _PhoneLinkScreenState extends ConsumerState<PhoneLinkScreen>
                         onCountryChanged: (_) {},
                       ),
                     ),
-                    const Spacer(),
+                    const SizedBox(height: 40),
                     ValenciaButton(
                       label: 'CONTINUE',
                       onPressed: _valid ? _continue : null,
