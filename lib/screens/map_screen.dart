@@ -250,26 +250,26 @@ class _MapScreenState extends ConsumerState<MapScreen>
       );
       return;
     }
-    // Three adjacent lasso loops — real OSM nodes on C. de Cuba + C. de Sueca, Ruzafa Valencia
+    // Three adjacent lasso loops — real OSM nodes in Ribeira, Galicia (A Coruña)
     final coords = [
-      // Loop 1 — NW block (Cuba NW ↔ Sueca NW via cross streets)
-      (39.4630, -0.3778), // Cuba NW start
-      (39.4635, -0.3765), // cross E → Sueca NW
-      (39.4626, -0.3759), // Sueca heading SE
-      (39.4622, -0.3772), // cross W → Cuba mid
-      (39.4630, -0.3778), // close loop 1
-      // Loop 2 — middle block (Cuba mid ↔ Sueca mid)
-      (39.4622, -0.3772), // transition — Cuba mid
-      (39.4626, -0.3759), // cross E → Sueca
-      (39.4615, -0.3752), // Sueca mid heading SE
-      (39.4611, -0.3764), // cross W → Cuba mid
-      (39.4622, -0.3772), // close loop 2
-      // Loop 3 — SE block (Cuba SE ↔ Sueca SE)
-      (39.4611, -0.3764), // transition — Cuba mid
-      (39.4615, -0.3752), // cross E → Sueca
-      (39.4603, -0.3743), // Sueca SE
-      (39.4598, -0.3755), // cross W → Cuba SE
-      (39.4611, -0.3764), // close loop 3
+      // Loop 1 — Malecón west block
+      (42.5544, -8.9893), // Malecón W start
+      (42.5549, -8.9903), // Malecón E
+      (42.5553, -8.9907), // Malecón NE
+      (42.5536, -8.9897), // Manzanares junction
+      (42.5544, -8.9893), // close loop 1
+      // Loop 2 — Manzanares central
+      (42.5536, -8.9897), // Manzanares N
+      (42.5526, -8.9888), // Manzanares mid
+      (42.5510, -8.9861), // Manzanares S
+      (42.5525, -8.9874), // del Touro mid
+      (42.5536, -8.9897), // close loop 2
+      // Loop 3 — del Touro SE
+      (42.5525, -8.9874), // del Touro N
+      (42.5510, -8.9861), // del Touro mid
+      (42.5505, -8.9858), // del Touro S
+      (42.5515, -8.9865), // return N
+      (42.5525, -8.9874), // close loop 3
     ];
     setState(() => _simulating = true);
     try {
