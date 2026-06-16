@@ -241,7 +241,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     return (slugsAsync: slugsAsync, center: cityConfig.center);
   }
 
-  Future<void> _simulateLaComaRun() async {
+  Future<void> _simulateRibeiraRun() async {
     final recorder = RunRecorderService.instance;
     if (recorder.stateNotifier.value != RecorderState.recording) {
       if (!mounted) return;
@@ -250,15 +250,26 @@ class _MapScreenState extends ConsumerState<MapScreen>
       );
       return;
     }
+    // Three adjacent lasso loops around Ruzafa/Ribera, Valencia
     final coords = [
-      (39.52610, -0.43950), // SW corner — off-screen start
-      (39.52690, -0.43950), // N step along western edge
-      (39.52770, -0.43950), // NW corner
-      (39.52770, -0.43840), // E step along northern edge
-      (39.52690, -0.43840), // S step along eastern edge
-      (39.52610, -0.43840), // SE corner
-      (39.52610, -0.43900), // W step closing
-      (39.52610, -0.43950), // close loop at SW corner
+      // Loop 1 — NW Ruzafa block (C. de Cuba / C. de la Reina)
+      (39.4670, -0.3770),
+      (39.4670, -0.3750),
+      (39.4655, -0.3750),
+      (39.4655, -0.3770),
+      (39.4670, -0.3770), // close loop 1
+      // Loop 2 — SW Ruzafa block (C. de Sueca)
+      (39.4655, -0.3770),
+      (39.4655, -0.3750),
+      (39.4640, -0.3750),
+      (39.4640, -0.3770),
+      (39.4655, -0.3770), // close loop 2
+      // Loop 3 — East block (C. del Mestre Gozalbo / C. de Salamanca)
+      (39.4670, -0.3750),
+      (39.4670, -0.3730),
+      (39.4655, -0.3730),
+      (39.4655, -0.3750),
+      (39.4670, -0.3750), // close loop 3
     ];
     setState(() => _simulating = true);
     try {
@@ -1177,7 +1188,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
             right: 16,
             child: FloatingActionButton.small(
               heroTag: 'sim',
-              onPressed: _simulateLaComaRun,
+              onPressed: _simulateRibeiraRun,
               backgroundColor: Colors.purple,
               child: const Icon(Icons.science, size: 18),
             ),
