@@ -44,7 +44,7 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# AIOS internal — never commit
+# local tooling artifacts - never commit
 .agents/
 SESSION_STATE.md
 skills-lock.json
