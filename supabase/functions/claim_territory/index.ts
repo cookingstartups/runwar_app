@@ -46,6 +46,21 @@ function uuid() {
   return crypto.randomUUID();
 }
 
+// Return the ring with its first point appended if it is not already closed.
+function closedRing(ring: number[][]): number[][] {
+  if (ring.length === 0) return ring;
+  const [fx, fy] = ring[0];
+  const [lx, ly] = ring[ring.length - 1];
+  return fx === lx && fy === ly ? ring : [...ring, [fx, fy]];
+}
+
+// Build a PostGIS WKT POLYGON from a [lng, lat][] ring. Auto-closes the ring.
+function toWkt(ring: number[][]): string {
+  const closed = closedRing(ring);
+  const pairs = closed.map(([lng, lat]) => `${lng} ${lat}`).join(', ');
+  return `SRID=4326;POLYGON((${pairs}))`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -74,12 +89,17 @@ Deno.serve(async (req) => {
     const coords: number[][] = track.coordinates;
     if (coords.length < 3) return err('Track too short');
 
-    // Speed gate — reject any segment faster than 12 m/s (~43 km/h)
+    // Data-sanity cap (NOT anti-cheat): reject a single hop far beyond any plausible
+    // GPS gap so an obviously-corrupt track can't produce a garbage polygon. Real runs
+    // decimate to a >=50 m point spacing and legitimate GPS dropouts routinely reach
+    // ~250 m, so this cap is deliberately generous. Real speed/teleport anti-cheat is
+    // owned by the separate anti-cheat pipeline, not by this gate.
     for (let i = 1; i < coords.length; i++) {
       const [lng1, lat1] = coords[i - 1];
       const [lng2, lat2] = coords[i];
-      const dist = haversineM(lat1, lng1, lat2, lng2);
-      if (dist > 60) return ok({ result: 'failed', reason: 'speed_violation' });
+      if (haversineM(lat1, lng1, lat2, lng2) > 2000) {
+        return ok({ result: 'failed', reason: 'corrupt_track' });
+      }
     }
 
     // Total track length gate — must be at least 200 m
@@ -152,20 +172,25 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Insert new zone for this player
+    // Insert new zone for this player. `geom` is NOT NULL on the base table, so it
+    // must be populated (the ring is auto-closed for a valid polygon); `geom_json`
+    // uses the same closed ring so the rendered polygon matches.
     const newId = uuid();
     const now = new Date().toISOString();
-    await supabase.from('zones').insert({
+    const ring = closedRing(coords); // [lng, lat] pairs, closed
+    const { error: insertErr } = await supabase.from('zones').insert({
       id: newId,
       owner_id: playerId,
       city,
-      geom_json: JSON.stringify({ type: 'Polygon', coordinates: [coords] }),
+      geom: toWkt(ring),
+      geom_json: JSON.stringify({ type: 'Polygon', coordinates: [ring] }),
       influence: 1,
       status: 'owned',
       contested_by_id: null,
       created_at: now,
       updated_at: now,
     });
+    if (insertErr) return err(`Zone insert failed: ${insertErr.message}`, 500);
 
     if (conqueredId) {
       return ok({ result: 'conquered', zone_id: newId, dispute_resolved: disputeResolved });
