@@ -4,26 +4,32 @@
 // Exported computeZoneMerges(zones, thresholdM) is called by index.ts's thin
 // orchestration layer after loading a single owner's same-city zones.
 //
-// Three-tier contiguity contract:
-//   Tier 1 - touching/overlap, or a hairline gap <= 5 m (jitter epsilon):
-//            one zones row, geometry = true boundary-respecting polygon
-//            union, morphological closing permitted only at the 5 m scale.
-//   Tier 2 - edge-to-edge gap strictly between 5 m and the configured merge
-//            threshold (thresholdM; 25 m in production, kProximityTriggerM):
-//            still one zones row (same identity, oldest id survives), but
-//            geometry is a MultiPolygon of both original outlines, with no
-//            bridging/closing at this scale.
-//   Tier 3 - gap beyond thresholdM: no merge, zones stay separate rows.
+// Single-rule contiguity contract:
+//   Same-owner zones whose boundaries come within thresholdM (25 m in
+//   production, matching kProximityTriggerM) of each other merge into ONE
+//   zones row with ONE continuous Polygon. The identity test (which zones
+//   become one row, including transitively across a chain) and the closing
+//   radius (how far the seal reaches) are both governed by thresholdM: every
+//   member of a merge group is dilated by thresholdM / 2, the dilated shapes
+//   are unioned, and the union is eroded back by the same thresholdM / 2 -
+//   a morphological closing that seals gaps up to thresholdM between
+//   boundaries that are actually that close, while leaving wider notches
+//   uncaptured (no convex hull, no unconditional bridging).
+//   Beyond thresholdM: no merge, zones stay separate rows.
 //
-// Buffers (turf.buffer) are used ONLY for the isWithin distance/adjacency
-// tests at both budgets. The geometry that gets stored is always built from
-// the original, un-buffered rings, or from a bounded dilate-union-erode
-// closing that ends up back at the same scale it started from. No buffered
-// shape is ever the value written into a MergeGroup's geometry field.
+// Buffers (turf.buffer) are used for BOTH the isWithin distance/adjacency
+// test that decides group membership AND the closing operation itself
+// (dilate -> union -> erode, all at the thresholdM scale). The dilated
+// shapes are NEVER what gets stored - only the eroded-back result (or the
+// original ring, for a zone with no merge partner) is written into a
+// MergeGroup's geometry field.
 
 import { union } from 'https://esm.sh/@turf/union@7';
 import { buffer } from 'https://esm.sh/@turf/buffer@7';
+import { area as turfArea } from 'https://esm.sh/@turf/area@7';
 import { booleanIntersects } from 'https://esm.sh/@turf/boolean-intersects@7';
+import { booleanPointInPolygon } from 'https://esm.sh/@turf/boolean-point-in-polygon@7';
+import { pointOnFeature } from 'https://esm.sh/@turf/point-on-feature@7';
 import { polygon as turfPolygon, featureCollection } from 'https://esm.sh/@turf/helpers@7';
 
 // Turf's own d.ts generics vary in arity across published versions of the
@@ -57,13 +63,6 @@ export interface MergeGroup {
     | { type: 'MultiPolygon'; coordinates: number[][][][] };
 }
 
-// Tier 1 jitter epsilon: 5 meters total, an INTERNAL constant, not a second
-// parameter to computeZoneMerges. Split across both polygons (2.5 m dilation
-// each via turf.buffer) so the total closing distance covered is the full
-// 5 m budget, not 5 m applied to one side only.
-const kJitterEpsilonMeters = 5;
-const kHalfJitterKm = (kJitterEpsilonMeters / 2) / 1000;
-
 // Return the ring with its first point appended if it is not already closed.
 function closedRing(ring: number[][]): number[][] {
   if (ring.length === 0) return ring;
@@ -78,10 +77,8 @@ function toTurfPolygon(ring: number[][]): TurfFeature<PolygonGeom> {
 
 // Distance/adjacency test ONLY - buffers here decide whether two polygons
 // are "within budgetMeters" of each other; the buffered shapes themselves
-// are NEVER what gets stored. Used at TWO different budgets:
-// kJitterEpsilonMeters (5 m, Tier 1 vs Tier 2 boundary, internal) and
-// thresholdM (the outer merge/no-merge boundary, a parameter; 25 m in
-// production, matching kProximityTriggerM).
+// are NEVER what gets stored. Called with thresholdM both to build the
+// merge groups and, via halfThresholdKm below, to size the closing radius.
 function isWithin(a: TurfFeature<PolygonGeom>, b: TurfFeature<PolygonGeom>, budgetMeters: number): boolean {
   const halfKm = (budgetMeters / 2) / 1000;
   const bufferedA = buffer(a, halfKm, { units: 'kilometers' });
@@ -95,30 +92,75 @@ function unionAll(polys: TurfFeature[]): TurfFeature | null {
   return union(featureCollection(polys));
 }
 
-// True union for a Tier-1 sub-cluster. Two-attempt strategy:
+// Largest-area ring inside a MultiPolygon feature, wrapped back into a
+// standalone Polygon feature.
+function largestRing(multi: TurfFeature<MultiPolygonGeom>): TurfFeature<PolygonGeom> {
+  let best = multi.geometry.coordinates[0];
+  let bestArea = -1;
+  for (const coords of multi.geometry.coordinates) {
+    const candidate = turfPolygon(coords);
+    const a = turfArea(candidate);
+    if (a > bestArea) {
+      bestArea = a;
+      best = coords;
+    }
+  }
+  return turfPolygon(best);
+}
+
+// Numeric-noise fallback for when the erode step returns a MultiPolygon
+// instead of one continuous ring (can happen when the union of dilated
+// shapes has a neck exactly at the closing radius, so floating-point noise
+// pinches it during erosion). Never silently drop a real member's geometry:
+// pick the fragment that contains every member's own representative point
+// first; only fall back to the largest-area fragment (which still contains
+// the bulk of the merged group) if no single fragment contains them all.
+function pickContainingFragment(
+  multi: TurfFeature<MultiPolygonGeom>,
+  members: TurfFeature<PolygonGeom>[],
+): TurfFeature<PolygonGeom> {
+  const fragments = multi.geometry.coordinates.map((coords) => turfPolygon(coords));
+  const representativePoints = members.map((m) => pointOnFeature(m));
+
+  const containingAll = fragments.find((frag) =>
+    representativePoints.every((pt) => booleanPointInPolygon(pt, frag))
+  );
+  if (containingAll) return containingAll;
+
+  return largestRing(multi);
+}
+
+// True union for a merge group. Two-attempt strategy:
 //   1. Exact union of the ORIGINAL, un-buffered polygons - the ideal path
 //      whenever the zones already truly touch or overlap (no dilation, no
 //      corner rounding, byte-exact boundary union).
-//   2. If (1) is not a single Polygon (a genuine sub-5m gap exists within
-//      this Tier-1 sub-cluster), fall back to a morphological closing:
-//      dilate every member by the SAME half-epsilon isWithin() uses at the
-//      5 m budget, union the dilated shapes, then erode back by the same
-//      half-epsilon. It never runs across a Tier-2 (beyond the 5 m jitter
-//      epsilon but within thresholdM) gap; those pairs
-//      are never in the same Tier-1 sub-cluster to begin with.
+//   2. If (1) is not a single Polygon (a genuine gap exists somewhere in
+//      this group, up to thresholdM since that is what put them in the same
+//      group), fall back to a morphological closing: dilate every member by
+//      halfThresholdKm (thresholdM / 2), union the dilated shapes, then
+//      erode back by the same halfThresholdKm. Gaps up to thresholdM between
+//      boundaries that are actually that close get sealed; nothing wider
+//      does, since the dilation on each side only reaches thresholdM / 2.
 // Returns null only if Turf's union call itself fails outright.
-function trueUnion(polys: TurfFeature<PolygonGeom>[]): TurfFeature | null {
+function trueUnion(polys: TurfFeature<PolygonGeom>[], halfThresholdKm: number): TurfFeature | null {
   const exact = unionAll(polys);
   if (exact && exact.geometry.type === 'Polygon') return exact;
 
-  const dilated = polys.map((p) => buffer(p, kHalfJitterKm, { units: 'kilometers' }));
+  const dilated = polys
+    .map((p) => buffer(p, halfThresholdKm, { units: 'kilometers' }))
+    .filter((f): f is TurfFeature<Geom> => f !== undefined);
+  if (dilated.length !== polys.length) return exact; // a dilation failed outright - surface whatever (1) produced
   const closedRaw = unionAll(dilated);
   if (!closedRaw) return exact; // no bridging possible either - surface whatever (1) produced
-  const closed = buffer(closedRaw, -kHalfJitterKm, { units: 'kilometers' });
-  return closed && closed.geometry.type === 'Polygon' ? closed : exact;
+
+  const eroded = buffer(closedRaw, -halfThresholdKm, { units: 'kilometers' });
+  if (!eroded) return exact;
+  if (eroded.geometry.type === 'Polygon') return eroded;
+
+  return pickContainingFragment(eroded as TurfFeature<MultiPolygonGeom>, polys);
 }
 
-// Plain union-find (no distance test baked in - reused at both budgets).
+// Plain union-find (no distance test baked in).
 function unionFindGroups(n: number, isLinked: (i: number, j: number) => boolean): number[][] {
   const parent = Array.from({ length: n }, (_, i) => i);
   function find(i: number): number {
@@ -152,14 +194,16 @@ function unionFindGroups(n: number, isLinked: (i: number, j: number) => boolean)
 export function computeZoneMerges(zones: ZoneInput[], thresholdM: number): MergeGroup[] {
   const sorted = [...zones].sort((a, b) => a.createdAt.localeCompare(b.createdAt)); // oldest first survives
   const features = sorted.map((z) => toTurfPolygon(z.ring));
+  const halfThresholdKm = (thresholdM / 2) / 1000;
 
-  // OUTER pass: identity. Which zones become ONE row? Governed by the
-  // `thresholdM` parameter (25 m in production, matching kProximityTriggerM).
-  const outerGroups = unionFindGroups(sorted.length, (i, j) => isWithin(features[i], features[j], thresholdM));
+  // Which zones become ONE row, including transitively across a chain -
+  // governed by the single `thresholdM` parameter (25 m in production,
+  // matching kProximityTriggerM).
+  const groups = unionFindGroups(sorted.length, (i, j) => isWithin(features[i], features[j], thresholdM));
 
   const result: MergeGroup[] = [];
-  for (const idxs of outerGroups) {
-    if (idxs.length < 2) continue; // Tier 3: nothing to merge, group dropped entirely
+  for (const idxs of groups) {
+    if (idxs.length < 2) continue; // gap beyond thresholdM: nothing to merge, group dropped entirely
 
     // idxs are indices into `sorted` (already oldest-first), so idxs[0] is
     // the oldest member of this connected component - the survivor, even
@@ -167,36 +211,12 @@ export function computeZoneMerges(zones: ZoneInput[], thresholdM: number): Merge
     const groupIdxsAsc = [...idxs].sort((a, b) => a - b);
     const survivorIdx = groupIdxsAsc[0];
     const absorbedIds = groupIdxsAsc.slice(1).map((i) => sorted[i].id);
+    const members = groupIdxsAsc.map((i) => features[i]) as TurfFeature<PolygonGeom>[];
 
-    // INNER pass, restricted to this group only: geometry shape. The fixed
-    // 5 m jitter epsilon, NOT the thresholdM parameter - Tier 1 vs Tier 2.
-    const innerGroups = unionFindGroups(
-      groupIdxsAsc.length,
-      (a, b) => isWithin(features[groupIdxsAsc[a]], features[groupIdxsAsc[b]], kJitterEpsilonMeters),
-    );
-
-    const pieces: TurfFeature[] = [];
-    for (const innerIdxs of innerGroups) {
-      const members = innerIdxs.map((k) => features[groupIdxsAsc[k]]);
-      if (members.length === 1) {
-        pieces.push(members[0]); // untouched original outline - no closing applied to a lone member
-      } else {
-        const closed = trueUnion(members as TurfFeature<PolygonGeom>[]);
-        pieces.push(closed ?? unionAll(members)!); // trueUnion() only returns null on a hard Turf failure
-      }
-    }
-
-    const geometry = pieces.length === 1
-      ? (pieces[0].geometry as { type: 'Polygon'; coordinates: number[][][] })
-      : {
-        type: 'MultiPolygon' as const,
-        // Tier 2: concatenate each piece's ORIGINAL outer ring
-        // unchanged. No union, no closing, no buffer geometry ever appears
-        // here - this is the "no bridging" requirement, structurally.
-        coordinates: pieces.flatMap((p) =>
-          p.geometry.type === 'Polygon' ? [p.geometry.coordinates] : p.geometry.coordinates
-        ),
-      };
+    // trueUnion() only returns null on a hard Turf failure; unionAll(members)
+    // is the same-shape fallback in that case.
+    const sealed = trueUnion(members, halfThresholdKm) ?? unionAll(members)!;
+    const geometry = sealed.geometry as { type: 'Polygon'; coordinates: number[][][] };
 
     result.push({ survivorId: sorted[survivorIdx].id, absorbedIds, geometry });
   }
