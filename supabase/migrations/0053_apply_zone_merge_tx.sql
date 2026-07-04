@@ -1,4 +1,4 @@
--- RunWar — Migration 53
+-- RunWar - Migration 53
 -- Atomic stored procedure for the claim_territory adjacent-zone merge path.
 -- Wraps the survivor aggregate UPDATE and every absorbed-row DELETE in a
 -- single transaction so a crash mid-merge can never leave a stale absorbed
@@ -6,7 +6,7 @@
 --
 -- This function was originally drafted in runwar_database (migration 0031)
 -- but that repo's migration history is not the one actually deployed against
--- the live project (glwsmxjptgmxaiyvdqzp) — runwar_app/supabase/migrations
+-- the live project (glwsmxjptgmxaiyvdqzp) - runwar_app/supabase/migrations
 -- is. Moved here so it is deployable. Column types were re-verified directly
 -- against the live table (information_schema.columns) rather than assumed
 -- from either repo's migration text: zones.id and zones.owner_id are UUID

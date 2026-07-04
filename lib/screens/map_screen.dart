@@ -100,7 +100,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   late final AnimationController _terrainPulse;
 
   // Logs only the first camera-projection failure per session (cheap,
-  // no spam) — this loop samples every 8px along every unified-owned-zone
+  // no spam) - this loop samples every 8px along every unified-owned-zone
   // contour, so a persistently-not-ready camera would otherwise flood logs.
   bool _cameraProjectionErrorLogged = false;
 

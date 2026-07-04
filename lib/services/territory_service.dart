@@ -99,7 +99,7 @@ class TerritoryService {
       // failure. FunctionException (thrown by the Supabase functions client
       // for any non-2xx response) always carries a `status` field; a true
       // connectivity failure (timeout, DNS, socket) does not. Read it
-      // dynamically rather than importing supabase_flutter's type here —
+      // dynamically rather than importing supabase_flutter's type here -
       // this file stays the one permitted Edge Function invocation site
       // without becoming a second DatabaseService-style import boundary.
       int? status;
@@ -570,7 +570,7 @@ class TerritoryService {
   /// both `Polygon` (the single-rule adjacent-zone merge contract's only
   /// output shape, design.md Section 4) and `MultiPolygon` (legacy/fallback
   /// only - never produced by the current merge algorithm) shapes. Returns
-  /// an empty list on any parse failure or malformed ring — never throws.
+  /// an empty list on any parse failure or malformed ring - never throws.
   static List<List<LatLng>> _parseOutlines(String geomJson) {
     try {
       final d = jsonDecode(geomJson);
@@ -608,7 +608,7 @@ class TerritoryService {
 
   /// Backward-compatible single-ring accessor. For a `MultiPolygon` (a
   /// legacy or fallback shape only - the single-rule merge contract never
-  /// produces one), returns only the FIRST member outline — call sites that
+  /// produces one), returns only the FIRST member outline - call sites that
   /// need every outline of a multi-outline zone must use [_parseOutlines]
   /// directly (design.md Section 4/Consequences #3 flags the remaining
   /// single-ring call sites in this file, e.g. the rival-overlap scan, as a

@@ -1,4 +1,4 @@
--- RunWar — Migration 54
+-- RunWar - Migration 54
 -- Harmless safety widen: relax zones.geom from GEOMETRY(Polygon,4326) to a
 -- generic GEOMETRY(Geometry,4326) so the column can hold a non-Polygon shape
 -- if one is ever produced or ingested, without requiring a further schema
@@ -6,7 +6,7 @@
 --
 -- This is NOT required by the adjacent-zone merge feature itself. Under the
 -- single-rule merge contract (design.md, 2026-07-04), computeZoneMerges
--- always returns a single, continuous Polygon — the exact union where
+-- always returns a single, continuous Polygon - the exact union where
 -- sources already touch/overlap, or a bounded 12.5 m-radius morphological
 -- closing where a real sub-25 m gap exists. There is no MultiPolygon output
 -- path in the current algorithm; a MultiPolygon value would only ever be a
@@ -15,7 +15,7 @@
 --
 -- This migration was originally drafted in runwar_database (migration 0030)
 -- but that repo's migration history is not the one actually deployed against
--- the live project (glwsmxjptgmxaiyvdqzp) — runwar_app/supabase/migrations
+-- the live project (glwsmxjptgmxaiyvdqzp) - runwar_app/supabase/migrations
 -- is. Moved here so it is deployable.
 --
 -- Resilience: the live column may already be a generic Geometry type via

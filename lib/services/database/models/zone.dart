@@ -30,7 +30,7 @@ class Zone {
   final int influenceLevel;
   final ZoneStatus status;
 
-  /// Primary outer ring in lat/lng order — for a `Polygon` zone (the only
+  /// Primary outer ring in lat/lng order - for a `Polygon` zone (the only
   /// shape the single-rule adjacent-zone merge contract produces, design.md
   /// Section 4) this is its only outline; for a legacy or fallback
   /// `MultiPolygon` zone this is the FIRST member outline only. Existing
