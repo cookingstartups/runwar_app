@@ -1,4 +1,15 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// Type-only import here (erased at compile time); the runtime binding is
+// loaded lazily below, strictly inside the `if (!disputedId)` guard, so the
+// merge routine can never execute on a disputed outcome.
+import type { ZoneInput } from './merge_geometry.ts';
+
+// Zone-unify edge-to-edge threshold, matching kProximityTriggerM (the same
+// 25 m radius used for loop-closure proximity triggering). A same-owner,
+// same-city zone within this distance is still plausibly the same continuous
+// run and merges into one zone identity (Tier 1/Tier 2); beyond it, zones
+// stay separate rows (Tier 3).
+const kMergeThresholdMeters = 25;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -55,10 +66,47 @@ function closedRing(ring: number[][]): number[][] {
 }
 
 // Build a PostGIS WKT POLYGON from a [lng, lat][] ring. Auto-closes the ring.
-function toWkt(ring: number[][]): string {
+function ringToWktBody(ring: number[][]): string {
   const closed = closedRing(ring);
-  const pairs = closed.map(([lng, lat]) => `${lng} ${lat}`).join(', ');
-  return `SRID=4326;POLYGON((${pairs}))`;
+  return `(${closed.map(([lng, lat]) => `${lng} ${lat}`).join(', ')})`;
+}
+
+// Build a PostGIS WKT geometry literal from either a plain ring (Polygon,
+// pre-merge insert shape) or a merge-result geometry object (Polygon or
+// MultiPolygon, per the three-tier merge contract). Branches on `geometry.type`
+// so a Tier-2 MultiPolygon merge result stays representable in the widened
+// `zones.geom GEOMETRY(Geometry,4326)` column.
+function toWkt(
+  input: number[][] | { type: 'Polygon'; coordinates: number[][][] } | {
+    type: 'MultiPolygon';
+    coordinates: number[][][][];
+  },
+): string {
+  if (Array.isArray(input)) {
+    return `SRID=4326;POLYGON(${ringToWktBody(input)})`;
+  }
+  if (input.type === 'Polygon') {
+    return `SRID=4326;POLYGON(${ringToWktBody(input.coordinates[0])})`;
+  }
+  const polys = input.coordinates.map((poly) => `(${ringToWktBody(poly[0])})`).join(', ');
+  return `SRID=4326;MULTIPOLYGON(${polys})`;
+}
+
+// A zone's geom_json may be a Polygon (never merged) or a MultiPolygon (a
+// prior Tier-2 merge survivor). Returns every member outline as its own ring
+// so callers (rival-scan, merge-candidate loading) can test each outline
+// independently instead of misreading a MultiPolygon's nested ring array as
+// a flat point list.
+function outlinesOf(geom: { type?: string; coordinates?: unknown } | null | undefined): number[][][] {
+  if (!geom) return [];
+  if (geom.type === 'MultiPolygon') {
+    return (geom.coordinates as number[][][][]).map((poly) => poly[0]);
+  }
+  if (geom.type === 'Polygon') {
+    const coords = geom.coordinates as number[][][];
+    return coords[0] ? [coords[0]] : [];
+  }
+  return [];
 }
 
 Deno.serve(async (req) => {
@@ -125,19 +173,24 @@ Deno.serve(async (req) => {
     let disputeResolved = false;
 
     for (const zone of zones) {
-      let ring: number[][];
+      let outlines: number[][][];
       try {
         const geom = typeof zone.geom_json === 'string'
           ? JSON.parse(zone.geom_json)
           : zone.geom_json;
-        ring = geom?.coordinates?.[0] ?? [];
+        // MultiPolygon-aware: a prior Tier-2 merge survivor stores 2+ member
+        // outlines. Each one is tested independently below (OR-combined) so
+        // an overlap against ANY member outline is detected, not just the
+        // first one misread as a flat ring.
+        outlines = outlinesOf(geom).filter((r) => r.length >= 3);
       } catch { continue; }
-      if (ring.length < 3) continue;
+      if (outlines.length === 0) continue;
 
-      // Check if any rival ring point falls inside our new polygon
+      // Check if any rival ring point falls inside our new polygon, and vice
+      // versa, across EVERY member outline of this zone's geometry.
       const isRival = zone.owner_id !== playerId;
-      const anyRivalPointInside = ring.some(([x, y]) => pointInRing(x, y, newRing));
-      const anyNewPointInside = newRing.some(([x, y]) => pointInRing(x, y, ring));
+      const anyRivalPointInside = outlines.some((ring) => ring.some(([x, y]) => pointInRing(x, y, newRing)));
+      const anyNewPointInside = outlines.some((ring) => newRing.some(([x, y]) => pointInRing(x, y, ring)));
 
       if (isRival) {
         if (anyRivalPointInside) {
@@ -192,13 +245,99 @@ Deno.serve(async (req) => {
     });
     if (insertErr) return err(`Zone insert failed: ${insertErr.message}`, 500);
 
+    // Merge only for claimed/conquered outcomes - disputed is excluded even
+    // though a new owned row for `playerId` was just inserted.
+    let finalZoneId = newId;
+    let merged = false;
+    let absorbedZoneIds: string[] = [];
+    let zoneGeomJson = JSON.stringify({ type: 'Polygon', coordinates: [ring] });
+
+    if (!disputedId) {
+      const { computeZoneMerges } = await import('./merge_geometry.ts');
+      const { data: candidateRows } = await supabase
+        .from('zones')
+        .select('id, geom_json, created_at, influence')
+        .eq('owner_id', playerId)
+        .eq('city', city)
+        .eq('status', 'owned')
+        .order('created_at', { ascending: true });
+
+      const influenceById = new Map<string, number>();
+      const inputs: ZoneInput[] = (candidateRows ?? [])
+        .map((r) => {
+          influenceById.set(r.id as string, (r.influence as number | null) ?? 1);
+          const geom = typeof r.geom_json === 'string' ? JSON.parse(r.geom_json) : r.geom_json;
+          // A survivor of a prior Tier-2 merge stores 2+ member outlines; feed
+          // each one back in as its own ZoneInput ring (same db row id) so a
+          // later claim can still test contiguity against each piece
+          // independently. computeZoneMerges naturally dedupes them back into
+          // one group since they were never actually apart.
+          return outlinesOf(geom).map((r2) => ({
+            id: r.id as string,
+            ring: r2,
+            createdAt: r.created_at as string,
+          }));
+        })
+        .flat();
+
+      const groups = computeZoneMerges(inputs, kMergeThresholdMeters);
+      const group = groups.find((g) => g.survivorId === newId || g.absorbedIds.includes(newId));
+
+      if (group) {
+        const uniqueAbsorbedIds = [...new Set(group.absorbedIds)];
+        // No history kept on unification: aggregate additive fields into the
+        // survivor, then delete the absorbed rows outright. No lineage-tracking
+        // column is written; exactly one row remains per unified territory.
+        // The survivor's created_at (oldest in the group) is left untouched.
+        const survivorInfluence = (influenceById.get(group.survivorId) ?? 1) +
+          uniqueAbsorbedIds.reduce((sum, id) => sum + (influenceById.get(id) ?? 1), 0);
+
+        zoneGeomJson = JSON.stringify(group.geometry);
+        finalZoneId = group.survivorId;
+        merged = true;
+        absorbedZoneIds = uniqueAbsorbedIds;
+
+        await supabase.from('zones').update({
+          geom_json: zoneGeomJson,
+          geom: toWkt(group.geometry),
+          influence: survivorInfluence,
+          updated_at: now,
+        }).eq('id', group.survivorId);
+
+        for (const absorbedId of uniqueAbsorbedIds) {
+          await supabase.from('zones').delete().eq('id', absorbedId);
+        }
+      }
+    }
+
     if (conqueredId) {
-      return ok({ result: 'conquered', zone_id: newId, dispute_resolved: disputeResolved });
+      return ok({
+        result: 'conquered',
+        zone_id: finalZoneId,
+        dispute_resolved: disputeResolved,
+        merged,
+        absorbed_zone_ids: absorbedZoneIds,
+        zone_geom_json: zoneGeomJson,
+      });
     }
     if (disputedId) {
-      return ok({ result: 'disputed', zone_id: disputedId, dispute_resolved: false });
+      return ok({
+        result: 'disputed',
+        zone_id: disputedId,
+        dispute_resolved: false,
+        merged: false,
+        absorbed_zone_ids: [],
+        zone_geom_json: zoneGeomJson,
+      });
     }
-    return ok({ result: 'claimed', zone_id: newId, dispute_resolved: disputeResolved });
+    return ok({
+      result: 'claimed',
+      zone_id: finalZoneId,
+      dispute_resolved: disputeResolved,
+      merged,
+      absorbed_zone_ids: absorbedZoneIds,
+      zone_geom_json: zoneGeomJson,
+    });
 
   } catch (e) {
     return err((e as Error).message, 500);

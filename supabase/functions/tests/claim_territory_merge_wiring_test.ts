@@ -51,3 +51,17 @@ Deno.test('R2 response contract: claimed/conquered responses expose merged, abso
   assert(src.includes('absorbed_zone_ids'), 'Response must include the new `absorbed_zone_ids` field');
   assert(src.includes('zone_geom_json'), 'Response must include the new `zone_geom_json` field');
 });
+
+Deno.test('Unification keeps no history: absorbed zone rows are deleted, not lineage-tracked', () => {
+  const src = readSrc();
+  assert(src.includes("from('zones').delete()"),
+    'The merge path must delete absorbed rows outright once merged into the survivor');
+  assert(!src.includes('parent_id'),
+    'No parent_id lineage write is permitted - unification keeps no history, exactly one row survives');
+});
+
+Deno.test('Unification aggregates additive fields into the survivor', () => {
+  const src = readSrc();
+  assert(src.includes('survivorInfluence') && src.includes('influence: survivorInfluence'),
+    'The survivor row update must aggregate influence (sum across the merged group), not just copy one member\'s value');
+});
