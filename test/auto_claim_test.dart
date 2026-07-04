@@ -90,6 +90,23 @@ class _AutoClaimCapture {
 }
 
 // ---------------------------------------------------------------------------
+// Stub for the NEW onGateRejected callback (design.md section 1). Records
+// every (reason, details) pair passed by _scanForAutoClaim's two early-return
+// branches. RunRecorderService currently has neither the GateRejectionReason
+// enum nor the onGateRejected field, so every test in Group 7 below fails to
+// compile ("member not found") until the implementation lands.
+// ---------------------------------------------------------------------------
+
+class _GateRejectionCapture {
+  final List<({GateRejectionReason reason, Map<String, dynamic> details})>
+      captured = [];
+
+  Future<void> call(GateRejectionReason reason, Map<String, dynamic> details) async {
+    captured.add((reason: reason, details: details));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -461,6 +478,95 @@ void main() {
 
       expect(svc.loopStartTrailIndexForTesting, greaterThan(indexBefore),
           reason: 'loopStartTrailIndex must advance even after a failed claim to prevent re-firing');
+    });
+  });
+
+  // =========================================================================
+  // Group 7: Gate rejection observability (R1-AC1, R1-AC2, R1-AC3)
+  // =========================================================================
+
+  group('gate rejection observability - area floor and session elapsed', () {
+    late RunRecorderService svc;
+    late _AutoClaimCapture claimCapture;
+    late _GateRejectionCapture rejectionCapture;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      claimCapture = _AutoClaimCapture();
+      rejectionCapture = _GateRejectionCapture();
+      svc.onAutoClaim = claimCapture.call;
+      svc.onGateRejected = rejectionCapture.call;
+    });
+
+    tearDown(() {
+      svc.reset();
+    });
+
+    // R1-AC1: area-floor gate rejection is observable
+    test('area-floor rejection fires onGateRejected with the computed area and dispatches no claim', () async {
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
+      svc.injectState(RecorderState.recording);
+
+      svc.injectTrackForTesting(_buildMicroCrossPath());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty,
+          reason: 'Area-floor rejection must not dispatch a claim (unchanged)');
+      expect(rejectionCapture.captured, hasLength(1),
+          reason: 'Area-floor rejection must fire onGateRejected exactly once');
+      expect(rejectionCapture.captured.first.reason, GateRejectionReason.areaFloor);
+      expect(rejectionCapture.captured.first.details['area_sqm'], isNotNull,
+          reason: 'Rejection details must carry the computed area value for diagnostics');
+    });
+
+    // R1-AC2: session-elapsed gate rejection is observable
+    test('session-elapsed rejection fires onGateRejected with elapsed seconds and dispatches no claim', () async {
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 25)));
+      svc.injectState(RecorderState.recording);
+
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty,
+          reason: 'Session-elapsed rejection must not dispatch a claim (unchanged)');
+      expect(rejectionCapture.captured, hasLength(1),
+          reason: 'Session-elapsed rejection must fire onGateRejected exactly once');
+      expect(rejectionCapture.captured.first.reason, GateRejectionReason.sessionElapsed);
+      expect(rejectionCapture.captured.first.details['elapsed_sec'], isNotNull,
+          reason: 'Rejection details must carry the elapsed-seconds value for diagnostics');
+    });
+
+    // R1-AC3: gate feedback must not fire on a successful claim path
+    test('a successful claim fires onAutoClaim and never onGateRejected', () async {
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
+      svc.injectState(RecorderState.recording);
+
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, hasLength(1),
+          reason: 'A qualifying loop must dispatch exactly one claim (unchanged)');
+      expect(rejectionCapture.captured, isEmpty,
+          reason: 'onGateRejected must never fire on the successful claim path');
+    });
+
+    // R1 edge case: both gates would trip - area floor short-circuits first,
+    // so only the area-floor rejection fires (never both).
+    test('when both gates would trip, only the area-floor rejection fires', () async {
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 10)));
+      svc.injectState(RecorderState.recording);
+
+      svc.injectTrackForTesting(_buildMicroCrossPath());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(rejectionCapture.captured, hasLength(1),
+          reason: 'Only one rejection reason must fire when both gates would trip');
+      expect(rejectionCapture.captured.first.reason, GateRejectionReason.areaFloor,
+          reason: 'Area-floor check runs first and short-circuits before the session-elapsed check');
     });
   });
 }
