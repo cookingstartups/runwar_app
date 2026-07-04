@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -96,7 +95,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
   StreamSubscription<Position>? _posSub;
   Position? _currentPosition;
   bool _centeredOnGps = false;
-  bool _simulating = false;
   late final AnimationController _terrainPulse;
 
   // Logs only the first camera-projection failure per session (cheap,
@@ -177,7 +175,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
         ),
       ).listen((pos) {
         if (!mounted) return;
-        if (_simulating) return;
         setState(() => _currentPosition = pos);
         RealtimePresenceService.instance.updatePosition(LatLng(pos.latitude, pos.longitude));
         if (!_centeredOnGps) {
@@ -257,63 +254,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
     }
     final slugsAsync = ref.watch(joinedCitySlugsProvider(userId));
     return (slugsAsync: slugsAsync, center: cityConfig.center);
-  }
-
-  Future<void> _simulateRibeiraRun() async {
-    final recorder = RunRecorderService.instance;
-    if (recorder.stateNotifier.value != RecorderState.recording) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Start a run first')),
-      );
-      return;
-    }
-    // Three adjacent lasso loops — real OSM nodes in Ribeira, Galicia (A Coruña)
-    final coords = [
-      // Loop 1 — Malecón west block
-      (42.5544, -8.9893), // Malecón W start
-      (42.5549, -8.9903), // Malecón E
-      (42.5553, -8.9907), // Malecón NE
-      (42.5536, -8.9897), // Manzanares junction
-      (42.5544, -8.9893), // close loop 1
-      // Loop 2 — Manzanares central
-      (42.5536, -8.9897), // Manzanares N
-      (42.5526, -8.9888), // Manzanares mid
-      (42.5510, -8.9861), // Manzanares S
-      (42.5525, -8.9874), // del Touro mid
-      (42.5536, -8.9897), // close loop 2
-      // Loop 3 — del Touro SE
-      (42.5525, -8.9874), // del Touro N
-      (42.5510, -8.9861), // del Touro mid
-      (42.5505, -8.9858), // del Touro S
-      (42.5515, -8.9865), // return N
-      (42.5525, -8.9874), // close loop 3
-    ];
-    setState(() => _simulating = true);
-    try {
-      for (final (lat, lng) in coords) {
-        if (!mounted) return;
-        final pos = Position(
-          latitude: lat,
-          longitude: lng,
-          accuracy: 5.0,
-          altitude: 50.0,
-          altitudeAccuracy: 5.0,
-          heading: 0.0,
-          headingAccuracy: 5.0,
-          speed: 2.5,
-          speedAccuracy: 1.0,
-          timestamp: DateTime.now(),
-          isMocked: false,
-        );
-        debugPrint('[SIM] Injecting fix ($lat, $lng)');
-        // ignore: invalid_use_of_visible_for_testing_member
-        recorder.handlePositionForTesting(pos);
-        await Future.delayed(const Duration(seconds: 2));
-      }
-    } finally {
-      if (mounted) setState(() => _simulating = false);
-    }
   }
 
   @override
@@ -1242,18 +1182,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
           right: 0,
           child: SuperpowerInventoryStrip(playerId: userId),
         ),
-        // Debug-only GPS simulation button.
-        if (kDebugMode)
-          Positioned(
-            bottom: 160,
-            right: 16,
-            child: FloatingActionButton.small(
-              heroTag: 'sim',
-              onPressed: _simulateRibeiraRun,
-              backgroundColor: Colors.purple,
-              child: const Icon(Icons.science, size: 18),
-            ),
-          ),
         // error banner above map; does not block FAB or tiles.
         if (showError)
           Positioned(
