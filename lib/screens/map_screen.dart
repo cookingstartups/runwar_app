@@ -99,6 +99,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
   bool _simulating = false;
   late final AnimationController _terrainPulse;
 
+  // Logs only the first camera-projection failure per session (cheap,
+  // no spam) — this loop samples every 8px along every unified-owned-zone
+  // contour, so a persistently-not-ready camera would otherwise flood logs.
+  bool _cameraProjectionErrorLogged = false;
+
   // Cached city name updated on every build; read at transition time by the
   // stream handler so the auto-claim handler always receives the current value.
   String? _currentCity;
@@ -639,8 +644,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
         try {
           final result = await ref.read(zonesRepositoryProvider).fetchByCity(city);
           zonesBefore = result.valueOr(const <Zone>[]);
-        } catch (e) {
-          debugPrint('[MapScreen] zonesProvider fallback fetch failed: $e');
+        } catch (e, st) {
+          ErrorLogService.logClientError(
+            provider: '_onAutoClaimOutcome.zonesProvider_fallback_fetch',
+            error: e,
+            stackTrace: st,
+            retryCount: 0,
+          );
           zonesBefore = const <Zone>[]; // documented degrade - not a spec violation
         }
         if (!mounted) return; // re-check after the await
@@ -1424,8 +1434,20 @@ class _MapScreenState extends ConsumerState<MapScreen>
             try {
               contourPts.add(cam.pointToLatLng(
                   math.Point(tangent.position.dx, tangent.position.dy)));
-            } catch (_) {
-              // Camera not ready — skip this sample point.
+            } catch (e, st) {
+              // Camera not ready - skip this sample point. Log only the
+              // first occurrence per session so a persistently-not-ready
+              // camera cannot flood logs (this loop samples every 8px along
+              // every unified-owned-zone contour).
+              if (!_cameraProjectionErrorLogged) {
+                _cameraProjectionErrorLogged = true;
+                ErrorLogService.logClientError(
+                  provider: '_buildUnifiedOwnedPolygons.camera_projection',
+                  error: e,
+                  stackTrace: st,
+                  retryCount: 0,
+                );
+              }
             }
           }
           if (contourPts.length >= 3) {

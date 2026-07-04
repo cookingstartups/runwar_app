@@ -6,6 +6,7 @@ import 'database_service.dart';
 import 'zones_service.dart';
 import 'supabase_service.dart';
 import 'telemetry_service.dart';
+import 'error_log_service.dart';
 import '../config/supabase_config.dart';
 
 enum TerritoryResult { claimed, conquered, disputed, failed }
@@ -92,8 +93,47 @@ class TerritoryService {
         disputeResolved: disputeResolved,
         reason: reason,
       );
-    } catch (e) {
-      debugPrint('[TerritoryService] claimViaEdgeFunction error: $e');
+    } catch (e, st) {
+      // Distinguish a real edge-function error response (e.g. a merge
+      // failure returned as a 5xx) from a genuine network-unreachable
+      // failure. FunctionException (thrown by the Supabase functions client
+      // for any non-2xx response) always carries a `status` field; a true
+      // connectivity failure (timeout, DNS, socket) does not. Read it
+      // dynamically rather than importing supabase_flutter's type here —
+      // this file stays the one permitted Edge Function invocation site
+      // without becoming a second DatabaseService-style import boundary.
+      int? status;
+      dynamic details;
+      try {
+        status = (e as dynamic).status as int?;
+        details = (e as dynamic).details;
+      } catch (_) {
+        status = null;
+        details = null;
+      }
+
+      ErrorLogService.logClientError(
+        provider: 'claimViaEdgeFunction',
+        error: 'status=$status details=$details error=$e',
+        stackTrace: st,
+        retryCount: 0,
+      );
+
+      if (status != null) {
+        // The edge function responded, but with an error (e.g. the merge
+        // step failed server-side). Surface a failed outcome instead of
+        // silently falling back to the offline path, which would evaluate
+        // the claim locally and mask the server-side merge failure.
+        return ClaimOutcome(
+          TerritoryResult.failed,
+          null,
+          reason: 'edge_function_error_$status',
+        );
+      }
+
+      // No status means the request never got a response at all (network
+      // unreachable, timeout, etc.) - fall back to the offline path as
+      // designed.
       return null;
     }
   }
@@ -388,9 +428,10 @@ class TerritoryService {
   /// a bbox-proximity union-find + convex-hull merge, both of which are
   /// rejected by the corrected spec (a convex hull can silently grant ground
   /// the player never ran, and ~166 m bbox proximity is not real contiguity).
-  /// Porting the server's true two-tier polygon-union algorithm to pure Dart
-  /// for this rarely-hit offline-only path was judged not worth the new
-  /// surface area (design.md Section 3b rationale).
+  /// Porting the server's true single-rule polygon-union algorithm (exact
+  /// union sealed by a bounded morphological closing) to pure Dart for this
+  /// rarely-hit offline-only path was judged not worth the new surface area
+  /// (design.md Section 3b rationale).
   ///
   /// Contiguous same-owner zones created while offline now simply remain
   /// independent rows locally. The next ONLINE claim's server-side merge
@@ -526,9 +567,10 @@ class TerritoryService {
   }
 
   /// Extracts one outline ring per member polygon from [geomJson]. Handles
-  /// both `Polygon` (single ring) and `MultiPolygon` (Tier-2 merge output,
-  /// design.md Section 4) shapes. Returns an empty list on any parse failure
-  /// or malformed ring — never throws.
+  /// both `Polygon` (the single-rule adjacent-zone merge contract's only
+  /// output shape, design.md Section 4) and `MultiPolygon` (legacy/fallback
+  /// only - never produced by the current merge algorithm) shapes. Returns
+  /// an empty list on any parse failure or malformed ring — never throws.
   static List<List<LatLng>> _parseOutlines(String geomJson) {
     try {
       final d = jsonDecode(geomJson);
@@ -564,12 +606,14 @@ class TerritoryService {
     }
   }
 
-  /// Backward-compatible single-ring accessor. For a `MultiPolygon`, returns
-  /// only the FIRST member outline — call sites that need every outline of a
-  /// Tier-2-merged zone must use [_parseOutlines] directly (design.md Section
-  /// 4/Consequences #3 flags the remaining single-ring call sites in this
-  /// file, e.g. the rival-overlap scan, as a known, lower-severity gap left
-  /// for a future cycle rather than a hard rejection).
+  /// Backward-compatible single-ring accessor. For a `MultiPolygon` (a
+  /// legacy or fallback shape only - the single-rule merge contract never
+  /// produces one), returns only the FIRST member outline — call sites that
+  /// need every outline of a multi-outline zone must use [_parseOutlines]
+  /// directly (design.md Section 4/Consequences #3 flags the remaining
+  /// single-ring call sites in this file, e.g. the rival-overlap scan, as a
+  /// known, lower-severity gap left for a future cycle rather than a hard
+  /// rejection).
   static List<LatLng>? _parseRing(String geomJson) {
     final outlines = _parseOutlines(geomJson);
     return outlines.isEmpty ? null : outlines.first;

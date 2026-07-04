@@ -30,12 +30,13 @@ class Zone {
   final int influenceLevel;
   final ZoneStatus status;
 
-  /// Primary outer ring in lat/lng order — for a `Polygon` zone this is its
-  /// only outline; for a `MultiPolygon` zone (a Tier-2 server merge,
-  /// design.md Section 4) this is the FIRST member outline only. Existing
+  /// Primary outer ring in lat/lng order — for a `Polygon` zone (the only
+  /// shape the single-rule adjacent-zone merge contract produces, design.md
+  /// Section 4) this is its only outline; for a legacy or fallback
+  /// `MultiPolygon` zone this is the FIRST member outline only. Existing
   /// single-ring consumers (tap hit-test, fog centroid, area calc) keep
   /// reading this field unchanged. Callers that must see every outline of a
-  /// Tier-2-merged zone (e.g. map_screen's render-time union) should read
+  /// multi-outline zone (e.g. map_screen's render-time union) should read
   /// [outlines] instead.
   final List<LatLng> points;
 
@@ -58,8 +59,10 @@ class Zone {
   ///   id, owner_id, city, influence_level, status, geom_json
   ///
   /// [geom_json] may arrive as a JSON string OR as a Map (Supabase JSONB).
-  /// Both forms are handled here. Handles both `Polygon` (single ring) and
-  /// `MultiPolygon` (design.md Section 4 Tier-2 merge output) shapes.
+  /// Both forms are handled here. Handles both `Polygon` (the single-rule
+  /// adjacent-zone merge contract's only output shape, design.md Section 4)
+  /// and `MultiPolygon` (legacy/fallback only - never produced by the
+  /// current merge algorithm) shapes.
   factory Zone.fromGeoJsonRow(Map<String, dynamic> row) {
     // Parse geom_json — Supabase may send JSONB as Map or as a String.
     final geomRaw = row['geom_json'];
