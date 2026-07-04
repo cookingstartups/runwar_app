@@ -24,7 +24,8 @@ class ClaimOutcome {
 
   /// Underlying failure reason (server `reason` field, e.g. `too_short`,
   /// `corrupt_track`, or a local exception's message) — carried for
-  /// diagnostics on a `failed` outcome (R4-AC4). Null for non-failed
+  /// diagnostics on a `failed` outcome (surfacing the failure reason to the
+  /// player). Null for non-failed
   /// outcomes and for legacy call sites that do not supply one.
   final String? reason;
 }
@@ -423,7 +424,7 @@ class TerritoryService {
 
   // ── Zone merging ──────────────────────────────────────────────────────────
 
-  /// R2-AC6 interim decision (design.md Section 3b, option 2 - recommended):
+  /// Interim decision on skipping local zone merging (design.md Section 3b, option 2 - recommended):
   /// the offline fallback no longer performs a local merge. This used to run
   /// a bbox-proximity union-find + convex-hull merge, both of which are
   /// rejected by the corrected spec (a convex hull can silently grant ground
@@ -436,7 +437,7 @@ class TerritoryService {
   /// Contiguous same-owner zones created while offline now simply remain
   /// independent rows locally. The next ONLINE claim's server-side merge
   /// (`claim_territory`) performs a full rescan of the owner's zones in the
-  /// city and reconciles them (R2-AC3). In the meantime, the player-visible
+  /// city and reconciles them (full re-scan reconciliation). In the meantime, the player-visible
   /// territory still looks unified because the render-time union
   /// (`map_screen.dart`'s `_buildUnifiedOwnedPolygons` / R3) is independent
   /// of database row count by design.

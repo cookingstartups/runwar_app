@@ -210,14 +210,14 @@ class RunRecorderService {
           'ts': pos.timestamp.toIso8601String(),
           'speed_ms': pos.speed,
           'is_mocked': pos.isMocked,
-        }).catchError((e) {
+        }).catchError((e, st) {
           // Fire-and-forget stays non-blocking - the GPS loop must never
           // stall on a write failure - but the failure is now observable
           // instead of silently disappearing.
           ErrorLogService.logClientError(
             provider: 'run_recorder_service.onGpsFix',
             error: e,
-            stackTrace: StackTrace.current,
+            stackTrace: st,
             retryCount: 0,
           );
         });

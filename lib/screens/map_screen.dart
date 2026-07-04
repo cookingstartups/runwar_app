@@ -592,7 +592,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  /// Distinct snackbar copy per claim outcome (R4-AC3 disputed regression-lock).
+  /// Distinct snackbar copy per claim outcome (guards against regressing the disputed-outcome message).
   /// Positioned ahead of _onAutoClaimOutcome (its only call site) so the
   /// `TerritoryResult.disputed` branch reads immediately after the first
   /// `_showResultSnack(` occurrence in this file.
@@ -639,7 +639,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       if (zonesAsync.hasValue) {
         zonesBefore = zonesAsync.value!;
       } else {
-        // R4-AC1: the provider has not emitted its first snapshot yet -
+        // Cold-start fallback: the provider has not emitted its first snapshot yet -
         // fetch directly instead of silently substituting an empty list.
         try {
           final result = await ref.read(zonesRepositoryProvider).fetchByCity(city);
@@ -1367,7 +1367,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
 
   /// Groups same-owner `owned` zones into one Path.combine union per group
   /// and converts each resulting screen-space contour back into a
-  /// flutter_map [Polygon] (R3-AC1/AC2). A group of size 1 skips the union
+  /// flutter_map [Polygon] (the render-time zone union and its single-zone fast path). A group of size 1 skips the union
   /// (fast path, identical output to the pre-R3 per-zone render). A group
   /// whose Path.combine union yields disjoint contours (e.g. a member zone
   /// carries MultiPolygon-shaped source geometry, design.md Section 4/
@@ -1412,7 +1412,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         // Union every outline of every zone in this group as its own
         // disjoint subpath (design.md Section 4/Consequences #4). A zone
         // whose own geometry is already a MultiPolygon (a Tier-2 server
-        // merge - R2-AC7) contributes one subpath per member outline, with
+        // merge) contributes one subpath per member outline, with
         // NO bridging between them; Path.combine(PathOperation.union, ...)
         // composes disjoint contours correctly on its own, so this only
         // requires feeding it every outline instead of assuming one per zone.
@@ -1753,13 +1753,13 @@ Color _hexToColor(String hex) {
 // proximity-trigger radius - rather than the server merge's separate 5 m
 // jitter epsilon (design.md Section 4's Tier-1/Tier-2 boundary). A gap up to
 // this size is still plausibly the same continuous claim run (the server's
-// Tier-2 rule reaches the same one-identity conclusion at this radius, per
-// R2-AC7), so the steady-state render shows it as one shape even though the
+// Tier-2 rule reaches the same one-identity conclusion at this radius), so
+// the steady-state render shows it as one shape even though the
 // stored geometry for a Tier-2 pair remains an unbridged MultiPolygon with
 // no filled area added between the two outlines - see
 // _buildUnifiedOwnedPolygons's per-outline subpath handling below. Disputed
 // zones are never considered here (filtered out before grouping) so they
-// can never bridge two owned zones into one render group (R3-AC1 invariant).
+// can never bridge two owned zones into one render group (the persistent render union invariant).
 const double _kRenderUnionEpsilonM = kProximityTriggerM;
 
 /// Bounding box for a polygon ring, in lat/lng degrees.
@@ -1799,7 +1799,7 @@ double _bboxGapM(
 /// Union-find grouping of the OWNED subset of [zones] by real contiguity
 /// (touching, or within [_kRenderUnionEpsilonM]). Disputed zones are
 /// filtered out before grouping starts, so they can never join a group or
-/// bridge two owned zones together (R3-AC1 invariant, R3-AC3 edge case).
+/// bridge two owned zones together (the persistent render union invariant, and the disputed-zone exclusion edge case).
 List<List<Zone>> _groupAdjacentZonesImpl(List<Zone> zones) {
   final owned = zones.where((z) => z.status == ZoneStatus.owned).toList();
   if (owned.isEmpty) return const [];
@@ -1840,7 +1840,7 @@ List<List<Zone>> _groupAdjacentZonesImpl(List<Zone> zones) {
 
 /// Test-only seam (mirrors run_recorder_service.dart's `...ForTesting`
 /// convention) so widget/unit tests can assert the adjacency grouping
-/// independent of rendering (design.md Section 5, R3-AC1/AC3).
+/// independent of rendering (design.md Section 5, the persistent render union and its disputed-zone exclusion edge case).
 @visibleForTesting
 List<List<Zone>> groupAdjacentZonesForTesting(List<Zone> zones) =>
     _groupAdjacentZonesImpl(zones);
