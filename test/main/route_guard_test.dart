@@ -36,8 +36,14 @@ import 'package:runwar_app/screens/splash_screen.dart';
 
 // Destination screens — for routing assertions.
 import 'package:runwar_app/screens/auth/login_screen.dart';
+import 'package:runwar_app/screens/auth/cities_selection_screen.dart';
 import 'package:runwar_app/screens/intro_screen.dart';
 import 'package:runwar_app/screens/main_shell.dart';
+import 'package:runwar_app/screens/permission_priming_screen.dart';
+
+// Permission priming gate — does not exist yet (RED).
+import 'package:runwar_app/providers/permission_priming_provider.dart';
+import 'package:runwar_app/services/permission_service.dart' show PermKind;
 
 // AuthService — needed to construct AuthNotifier stubs.
 import 'package:runwar_app/services/auth_service.dart';
@@ -316,6 +322,81 @@ void main() {
             'Expected one of: !showcaseSeen, showcaseSeen==false, '
             'or a ternary where IntroScreen is the false (else) branch.',
       );
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // AC-2  Permission priming gate — shown after phone-link, before cities
+  // ──────────────────────────────────────────────────────────────────────────
+  group('AC-2: permission priming gate renders before the cities gate when permissions are missing',
+      () {
+    // GIVEN phone-link gate has passed AND permissionPrimingMissingProvider
+    //   resolves with at least one missing permission
+    // WHEN _RouteGuard.build() evaluates the gate order
+    // THEN PermissionPrimingScreen is shown, not CitiesSelectionScreen
+    testWidgets(
+        'shows PermissionPrimingScreen when permissions are missing, even if cities are joined',
+        (tester) async {
+      const userId = 'user-abc-123';
+      await tester.pumpWidget(_scope([
+        authProvider.overrideWith((ref) => _AuthedAuthNotifier()),
+        _showcaseSeenOverride,
+        ..._allUserProvidersCleared(userId),
+        permissionPrimingMissingProvider
+            .overrideWith((ref) async => const [PermKind.location]),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byType(PermissionPrimingScreen), findsOneWidget,
+          reason: 'Priming gate must render before the cities gate when permissions are missing');
+      expect(find.byType(CitiesSelectionScreen), findsNothing,
+          reason: 'Cities gate must not be reached until priming is done');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // AC-3  Permission priming gate — skipped entirely when nothing is missing
+  // ──────────────────────────────────────────────────────────────────────────
+  group('AC-3: permission priming gate is skipped when the live check shows nothing missing',
+      () {
+    // GIVEN permissionPrimingMissingProvider resolves to an empty list
+    // WHEN _RouteGuard.build() evaluates the gate order
+    // THEN the user proceeds directly to the next applicable gate
+    //   AND PermissionPrimingScreen is never rendered
+    testWidgets(
+        'routes directly to CitiesSelectionScreen; PermissionPrimingScreen never renders',
+        (tester) async {
+      const userId = 'user-abc-123';
+      await tester.pumpWidget(_scope([
+        authProvider.overrideWith((ref) => _AuthedAuthNotifier()),
+        _showcaseSeenOverride,
+        hasPhoneProvider(userId).overrideWith((ref) async => true),
+        joinedCitySlugsProvider(userId).overrideWith((ref) async => <String>[]),
+        profileGateProvider(userId).overrideWith((ref) async => {
+              'username': 'alice',
+              'invited_at': '2025-01-01T00:00:00Z',
+            }),
+        missionStatusProvider(userId).overrideWith(
+          (ref) async => MissionStatus(
+            firstMissionCompletedAt: null,
+            firstAttackCompletedAt: DateTime.fromMillisecondsSinceEpoch(1),
+            zoneCount: 1,
+          ),
+        ),
+        trialStatusProvider(userId).overrideWith(
+          (ref) async =>
+              const TrialStatus(started: false, daysRemaining: 14, streak: 0),
+        ),
+        permissionPrimingMissingProvider.overrideWith((ref) async => const []),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byType(CitiesSelectionScreen), findsOneWidget,
+          reason: 'User must proceed to the cities gate when nothing is missing');
+      expect(find.byType(PermissionPrimingScreen), findsNothing,
+          reason: 'PermissionPrimingScreen must never render when auto-heal finds nothing missing');
     });
   });
 
