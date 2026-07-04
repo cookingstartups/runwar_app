@@ -3,16 +3,15 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // loaded lazily below, strictly inside the `if (!disputedId)` guard, so the
 // merge routine can never execute on a disputed outcome.
 import type { ZoneInput } from './merge_geometry.ts';
-// Area of the merged geometry is always recomputed from the union/MultiPolygon
-// result, never summed from source zones (overlapping/adjacent source zones
-// would double-count their shared area if simply added together).
+// Area of the merged geometry is always recomputed from the merge result,
+// never summed from source zones (overlapping/adjacent source zones would
+// double-count their shared area if simply added together).
 import { area as turfArea } from 'https://esm.sh/@turf/area@7';
 
 // Zone-unify edge-to-edge threshold, matching kProximityTriggerM (the same
 // 25 m radius used for loop-closure proximity triggering). A same-owner,
-// same-city zone within this distance is still plausibly the same continuous
-// run and merges into one zone identity (Tier 1/Tier 2); beyond it, zones
-// stay separate rows (Tier 3).
+// same-city zone within this distance merges into one continuous zone
+// (sealed via morphological closing); beyond it, zones stay separate rows.
 const kMergeThresholdMeters = 25;
 
 const corsHeaders = {
@@ -76,10 +75,11 @@ function ringToWktBody(ring: number[][]): string {
 }
 
 // Build a PostGIS WKT geometry literal from either a plain ring (Polygon,
-// pre-merge insert shape) or a merge-result geometry object (Polygon or
-// MultiPolygon, per the three-tier merge contract). Branches on `geometry.type`
-// so a Tier-2 MultiPolygon merge result stays representable in the widened
-// `zones.geom GEOMETRY(Geometry,4326)` column.
+// pre-merge insert shape) or a merge-result geometry object. The merge
+// contract always produces a single continuous Polygon; the MultiPolygon
+// branch is kept only so the widened `zones.geom GEOMETRY(Geometry,4326)`
+// column can still represent an already-stored legacy row or the rare
+// hard-failure fallback in merge_geometry.ts's trueUnion.
 function toWkt(
   input: number[][] | { type: 'Polygon'; coordinates: number[][][] } | {
     type: 'MultiPolygon';
@@ -96,8 +96,9 @@ function toWkt(
   return `SRID=4326;MULTIPOLYGON(${polys})`;
 }
 
-// A zone's geom_json may be a Polygon (never merged) or a MultiPolygon (a
-// prior Tier-2 merge survivor). Returns every member outline as its own ring
+// A zone's geom_json is normally a Polygon (the single-rule merge contract
+// never produces a MultiPolygon); a MultiPolygon is only a legacy or
+// hard-failure-fallback shape. Returns every member outline as its own ring
 // so callers (rival-scan, merge-candidate loading) can test each outline
 // independently instead of misreading a MultiPolygon's nested ring array as
 // a flat point list.
@@ -182,10 +183,10 @@ Deno.serve(async (req) => {
         const geom = typeof zone.geom_json === 'string'
           ? JSON.parse(zone.geom_json)
           : zone.geom_json;
-        // MultiPolygon-aware: a prior Tier-2 merge survivor stores 2+ member
-        // outlines. Each one is tested independently below (OR-combined) so
-        // an overlap against ANY member outline is detected, not just the
-        // first one misread as a flat ring.
+        // MultiPolygon-aware defensively: a legacy or fallback multi-outline
+        // zone stores 2+ member outlines. Each one is tested independently
+        // below (OR-combined) so an overlap against ANY member outline is
+        // detected, not just the first one misread as a flat ring.
         outlines = outlinesOf(geom).filter((r) => r.length >= 3);
       } catch { continue; }
       if (outlines.length === 0) continue;
@@ -283,9 +284,9 @@ Deno.serve(async (req) => {
           shieldActiveById.set(r.id as string, (r.shield_active as boolean | null) ?? false);
           shieldExpiresAtById.set(r.id as string, (r.shield_expires_at as string | null) ?? null);
           const geom = typeof r.geom_json === 'string' ? JSON.parse(r.geom_json) : r.geom_json;
-          // A survivor of a prior Tier-2 merge stores 2+ member outlines; feed
-          // each one back in as its own ZoneInput ring (same db row id) so a
-          // later claim can still test contiguity against each piece
+          // A legacy or fallback multi-outline zone stores 2+ member outlines;
+          // feed each one back in as its own ZoneInput ring (same db row id)
+          // so a later claim can still test contiguity against each piece
           // independently. computeZoneMerges naturally dedupes them back into
           // one group since they were never actually apart.
           return outlinesOf(geom).map((r2) => ({
@@ -351,8 +352,8 @@ Deno.serve(async (req) => {
           : shieldExpiresAtById.get(group.survivorId) ?? null;
 
         // area_m2: ALWAYS recomputed from the merged geometry (turf area on
-        // the union/MultiPolygon result). Never sum source areas - overlapping
-        // or adjacent zones would double-count shared area.
+        // the merge result). Never sum source areas - overlapping or
+        // adjacent zones would double-count shared area.
         const survivorAreaM2 = turfArea(group.geometry);
 
         zoneGeomJson = JSON.stringify(group.geometry);
