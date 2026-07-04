@@ -34,6 +34,12 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     svc.trackVersion.addListener(_onTrackVersion);
     // Register the auto-claim callback.
     svc.onAutoClaim = _handleAutoClaim;
+    // Register the gate-rejection callback (R1) — mirrors onAutoClaim's pattern.
+    svc.onGateRejected = (reason, details) async {
+      if (!_gateRejectionController.isClosed) {
+        _gateRejectionController.add((reason: reason, details: details));
+      }
+    };
     // Wire real-time GPS streaming: each spacing-filtered fix goes to gps_samples.
     svc.onGpsFix = (sample) async {
       final up =
@@ -66,6 +72,15 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   /// triggering and mission hook invocation.
   Stream<({ClaimOutcome outcome, List<LatLng> polygon})> get autoClaimOutcomes =>
       _autoClaimOutcomeController.stream;
+
+  final _gateRejectionController =
+      StreamController<({GateRejectionReason reason, Map<String, dynamic> details})>.broadcast();
+
+  /// Stream of silent auto-claim gate rejections (area floor / session
+  /// elapsed). MapScreen listens on this to surface a distinct toast per
+  /// gate (R1).
+  Stream<({GateRejectionReason reason, Map<String, dynamic> details})> get gateRejections =>
+      _gateRejectionController.stream;
 
   void _onServiceState() {
     state = RunRecorderService.instance.stateNotifier.value;
@@ -118,7 +133,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
       );
       if (!_autoClaimOutcomeController.isClosed) {
         _autoClaimOutcomeController.add(
-          (outcome: const ClaimOutcome(TerritoryResult.failed, null), polygon: capturedPolygon),
+          (outcome: const ClaimOutcome(TerritoryResult.failed, null, reason: 'no_user_id'), polygon: capturedPolygon),
         );
       }
       return;
@@ -134,7 +149,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
       );
       if (!_autoClaimOutcomeController.isClosed) {
         _autoClaimOutcomeController.add(
-          (outcome: const ClaimOutcome(TerritoryResult.failed, null), polygon: capturedPolygon),
+          (outcome: const ClaimOutcome(TerritoryResult.failed, null, reason: 'no_joined_city'), polygon: capturedPolygon),
         );
       }
       return;
@@ -150,7 +165,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     } catch (e, st) {
       if (!_autoClaimOutcomeController.isClosed) {
         _autoClaimOutcomeController.add((
-          outcome: const ClaimOutcome(TerritoryResult.failed, null),
+          outcome: ClaimOutcome(TerritoryResult.failed, null, reason: e.toString()),
           polygon: capturedPolygon,
         ));
       }
@@ -234,9 +249,11 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   @override
   void dispose() {
     RunRecorderService.instance.onAutoClaim = null;
+    RunRecorderService.instance.onGateRejected = null;
     RunRecorderService.instance.stateNotifier.removeListener(_onServiceState);
     RunRecorderService.instance.trackVersion.removeListener(_onTrackVersion);
     _autoClaimOutcomeController.close();
+    _gateRejectionController.close();
     super.dispose();
   }
 }

@@ -1,5 +1,9 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../providers/connectivity_provider.dart';
+import '../services/outbox_aware_writer.dart';
 import '../services/run_recovery_service.dart';
 import '../services/run_recorder_service.dart';
 import '../providers/run_recorder_provider.dart';
@@ -51,6 +55,22 @@ class _RecoveryGateState extends ConsumerState<RecoveryGate> {
   }
 
   Future<void> _onDiscard() async {
+    final sessionId = _orphan?.sessionId;
+    if (sessionId != null) {
+      final networkUp =
+          ref.read(connectivityProvider).whenData((v) => v).valueOrNull ?? false;
+      // Mirrors cancelRun()'s write shape (run_recorder_service.dart) so the
+      // server-side runs row is closed instead of left orphaned as 'active'.
+      unawaited(OutboxAwareWriter.instance.writeRunUpdate(
+        sessionId,
+        {
+          'status': 'cancelled',
+          'closed_at': DateTime.now().toUtc().toIso8601String(),
+          'user_id': widget.userId,
+        },
+        networkUp: networkUp,
+      ));
+    }
     await RunRecorderService.instance.clearScratch(widget.userId);
     if (mounted) {
       setState(() => _decisionMade = true);

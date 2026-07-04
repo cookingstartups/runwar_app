@@ -13,8 +13,10 @@ import '../providers/profile_provider.dart';
 import '../utils/string_utils.dart';
 import '../providers/runs_provider.dart';
 import '../providers/zones_provider.dart';
+import '../providers/zones_repository_provider.dart';
 import '../providers/run_recorder_provider.dart';
 import '../providers/app_config_provider.dart';
+import '../services/error_log_service.dart';
 import '../services/run_recorder_service.dart';
 import '../services/battery_optimization_service.dart';
 import '../widgets/battery_warning_banner.dart';
@@ -28,6 +30,7 @@ import '../services/supabase_service.dart';
 import '../services/territory_service.dart';
 import '../services/tile_cache_service.dart';
 import '../services/trial_service.dart';
+import '../utils/runwar_constants.dart';
 import '../services/database/models/zone.dart';
 import '../services/database/models/city_config.dart';
 import '../widgets/attack_sheet.dart';
@@ -96,10 +99,17 @@ class _MapScreenState extends ConsumerState<MapScreen>
   bool _simulating = false;
   late final AnimationController _terrainPulse;
 
+  // Logs only the first camera-projection failure per session (cheap,
+  // no spam) - this loop samples every 8px along every unified-owned-zone
+  // contour, so a persistently-not-ready camera would otherwise flood logs.
+  bool _cameraProjectionErrorLogged = false;
+
   // Cached city name updated on every build; read at transition time by the
   // stream handler so the auto-claim handler always receives the current value.
   String? _currentCity;
   StreamSubscription<({ClaimOutcome outcome, List<LatLng> polygon})>? _autoClaimSub;
+  StreamSubscription<({GateRejectionReason reason, Map<String, dynamic> details})>?
+      _gateRejectionSub;
 
   // ── Expand & Unify overlay state ──────────────────────────────────────────
   AnimationController? _euController;
@@ -127,6 +137,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
         .read(runRecorderProvider.notifier)
         .autoClaimOutcomes
         .listen(_onAutoClaimOutcome);
+
+    // Subscribe to silent gate-rejection feedback (R1) alongside the
+    // auto-claim outcome stream, same initState-registration rationale.
+    _gateRejectionSub = ref
+        .read(runRecorderProvider.notifier)
+        .gateRejections
+        .listen(_onGateRejected);
 
     SuperpowerService.instance.onShieldEarned = (grant) {
       if (mounted) _showShieldEarnedModal(grant);
@@ -179,6 +196,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   @override
   void dispose() {
     _autoClaimSub?.cancel();
+    _gateRejectionSub?.cancel();
     SuperpowerService.instance.onShieldEarned = null;
     _terrainPulse.dispose();
     _euController?.dispose();
@@ -561,11 +579,38 @@ class _MapScreenState extends ConsumerState<MapScreen>
     });
   }
 
+  /// Handles a silent auto-claim gate rejection (R1) — surfaces a distinct,
+  /// non-blocking toast per gate. Never fires on the successful claim path
+  /// (enforced upstream in RunRecorderService._scanForAutoClaim).
+  void _onGateRejected(
+      ({GateRejectionReason reason, Map<String, dynamic> details}) ev) {
+    if (!mounted) return;
+    final msg = switch (ev.reason) {
+      GateRejectionReason.areaFloor => 'Loop too small - min 200 m²',
+      GateRejectionReason.sessionElapsed => 'Keep running - claims unlock after 1 min',
+    };
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// Distinct snackbar copy per claim outcome (guards against regressing the disputed-outcome message).
+  /// Positioned ahead of _onAutoClaimOutcome (its only call site) so the
+  /// `TerritoryResult.disputed` branch reads immediately after the first
+  /// `_showResultSnack(` occurrence in this file.
+  void _showResultSnack(BuildContext context, ClaimOutcome outcome) {
+    final msg = switch (outcome.result) {
+      TerritoryResult.claimed => 'Territory claimed!',
+      TerritoryResult.conquered => 'Zone conquered!',
+      TerritoryResult.disputed => 'Zone disputed!',
+      TerritoryResult.failed => 'Could not claim zone — try again',
+    };
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
   /// Handles an auto-claim outcome emitted by RunRecorderNotifier.autoClaimOutcomes.
   /// Triggers E&U animation, mission hooks, and result snack.
   /// The recorder remains in `recording` state throughout this handler.
-  void _onAutoClaimOutcome(
-      ({ClaimOutcome outcome, List<LatLng> polygon}) ev) {
+  Future<void> _onAutoClaimOutcome(
+      ({ClaimOutcome outcome, List<LatLng> polygon}) ev) async {
     if (!mounted) return;
     final outcome = ev.outcome;
     final polygon = ev.polygon;
@@ -574,6 +619,12 @@ class _MapScreenState extends ConsumerState<MapScreen>
     final city = _currentCity ?? '';
 
     if (outcome.result == TerritoryResult.failed) {
+      ErrorLogService.logClientError(
+        provider: '_onAutoClaimOutcome.failed',
+        error: 'claim failed: reason=${outcome.reason ?? "unknown"}',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Claim failed - try again')),
       );
@@ -583,7 +634,27 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // E&U animation: use the captured polygon (not raw _track).
     if (outcome.result == TerritoryResult.claimed ||
         outcome.result == TerritoryResult.conquered) {
-      final zonesBefore = ref.read(zonesProvider(city)).valueOrNull ?? const [];
+      List<Zone> zonesBefore;
+      final zonesAsync = ref.read(zonesProvider(city));
+      if (zonesAsync.hasValue) {
+        zonesBefore = zonesAsync.value!;
+      } else {
+        // Cold-start fallback: the provider has not emitted its first snapshot yet -
+        // fetch directly instead of silently substituting an empty list.
+        try {
+          final result = await ref.read(zonesRepositoryProvider).fetchByCity(city);
+          zonesBefore = result.valueOr(const <Zone>[]);
+        } catch (e, st) {
+          ErrorLogService.logClientError(
+            provider: '_onAutoClaimOutcome.zonesProvider_fallback_fetch',
+            error: e,
+            stackTrace: st,
+            retryCount: 0,
+          );
+          zonesBefore = const <Zone>[]; // documented degrade - not a spec violation
+        }
+        if (!mounted) return; // re-check after the await
+      }
       final priorZoneScreenPts = zonesBefore
           .where((z) => z.ownerId == userId)
           .map((z) => _projectToScreen(z.points))
@@ -768,16 +839,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
       MaterialPageRoute<void>(builder: (_) => const MainShell()),
       (_) => false,
     );
-  }
-
-  void _showResultSnack(BuildContext context, ClaimOutcome outcome) {
-    final msg = switch (outcome.result) {
-      TerritoryResult.claimed => 'Territory claimed!',
-      TerritoryResult.conquered => 'Zone conquered!',
-      TerritoryResult.disputed => 'Zone disputed!',
-      TerritoryResult.failed => 'Could not claim zone — try again',
-    };
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   Widget _buildMap(
@@ -1281,31 +1342,14 @@ class _MapScreenState extends ConsumerState<MapScreen>
   }
 
   /// Builds the main polygon layer.
-  /// Owned zones: fill opacity and stroke width scale with influence (1–15).
-  /// Disputed zones: amber at fixed 15% fill regardless of influence.
+  /// Owned zones render as one unified shape per same-owner adjacency group
+  /// (R3 - no visible internal seam between adjacent same-owner zones).
+  /// Disputed zones: amber at fixed 15% fill regardless of influence,
+  /// always rendered independently (never part of an owned union group).
   List<Polygon> _buildPolygons(List<Zone> zones, double pulse) {
-    final out = <Polygon>[];
+    final out = <Polygon>[..._buildUnifiedOwnedPolygons(zones, pulse)];
     for (final z in zones) {
-      if (z.status == ZoneStatus.owned) {
-        final ownerProfile =
-            ref.watch(profileCacheProvider(z.ownerId)).valueOrNull;
-        final ownerColor =
-            _hexToColor(ownerProfile?['color']?.toString() ?? '#FF7A00');
-        final level = z.influenceLevel.clamp(1, 15);
-        // Fill breathes between 75% and 100% of base alpha (intro-slide glow).
-        final baseAlpha = 0.0633 * level;
-        final fillAlpha = baseAlpha * (0.75 + 0.25 * pulse);
-        final strokeWidth = 1.0 + (level / 15.0) * 2.0;
-        final borderAlpha = 0.60 + 0.40 * pulse; // stroke pulses 60% → 100%
-        out.add(Polygon(
-          points: z.points,
-          isFilled: true,
-          color: ownerColor.withValues(alpha: fillAlpha),
-          borderColor: ownerColor.withValues(alpha: borderAlpha),
-          borderStrokeWidth: strokeWidth,
-          isDotted: false,
-        ));
-      } else if (z.status == ZoneStatus.disputed) {
+      if (z.status == ZoneStatus.disputed) {
         final fillAlpha = 0.10 + pulse * 0.08; // 10% → 18%
         final borderAlpha = 0.50 + 0.30 * pulse;
         out.add(Polygon(
@@ -1316,6 +1360,107 @@ class _MapScreenState extends ConsumerState<MapScreen>
           borderStrokeWidth: 1.5,
           isDotted: true,
         ));
+      }
+    }
+    return out;
+  }
+
+  /// Groups same-owner `owned` zones into one Path.combine union per group
+  /// and converts each resulting screen-space contour back into a
+  /// flutter_map [Polygon] (the render-time zone union and its single-zone fast path). A group of size 1 skips the union
+  /// (fast path, identical output to the pre-R3 per-zone render). A group
+  /// whose Path.combine union yields disjoint contours (e.g. a member zone
+  /// carries MultiPolygon-shaped source geometry, design.md Section 4/
+  /// Consequences #4) emits one flutter_map Polygon per contour — this is
+  /// the natural, unmodified behavior of iterating `Path.computeMetrics()`,
+  /// no special-casing required.
+  List<Polygon> _buildUnifiedOwnedPolygons(List<Zone> zones, double pulse) {
+    final out = <Polygon>[];
+    final owned = zones.where((z) => z.status == ZoneStatus.owned).toList();
+    if (owned.isEmpty) return out;
+
+    final byOwner = <String, List<Zone>>{};
+    for (final z in owned) {
+      byOwner.putIfAbsent(z.ownerId, () => []).add(z);
+    }
+
+    for (final entry in byOwner.entries) {
+      final ownerId = entry.key;
+      final ownerProfile = ref.watch(profileCacheProvider(ownerId)).valueOrNull;
+      final ownerColor = _hexToColor(ownerProfile?['color']?.toString() ?? '#FF7A00');
+
+      final groups = _groupAdjacentZonesImpl(entry.value);
+      for (final group in groups) {
+        final level = group.map((z) => z.influenceLevel).reduce(math.max).clamp(1, 15);
+        final baseAlpha = 0.0633 * level;
+        final fillAlpha = baseAlpha * (0.75 + 0.25 * pulse);
+        final strokeWidth = 1.0 + (level / 15.0) * 2.0;
+        final borderAlpha = 0.60 + 0.40 * pulse;
+
+        if (group.length == 1 && group.first.outlines.length <= 1) {
+          out.add(Polygon(
+            points: group.first.points,
+            isFilled: true,
+            color: ownerColor.withValues(alpha: fillAlpha),
+            borderColor: ownerColor.withValues(alpha: borderAlpha),
+            borderStrokeWidth: strokeWidth,
+            isDotted: false,
+          ));
+          continue;
+        }
+
+        // Union every outline of every zone in this group as its own
+        // disjoint subpath (design.md Section 4/Consequences #4). A zone
+        // whose own geometry is already a MultiPolygon (a Tier-2 server
+        // merge) contributes one subpath per member outline, with
+        // NO bridging between them; Path.combine(PathOperation.union, ...)
+        // composes disjoint contours correctly on its own, so this only
+        // requires feeding it every outline instead of assuming one per zone.
+        final cam = _mapController.camera;
+        var unified = Path();
+        for (final z in group) {
+          for (final outline in z.outlines) {
+            final screenPts = _projectToScreen(outline);
+            if (screenPts.isEmpty) continue;
+            unified = Path.combine(PathOperation.union, unified, _makePoly(screenPts));
+          }
+        }
+        for (final metric in unified.computeMetrics()) {
+          final contourPts = <LatLng>[];
+          const step = 8.0; // px sampling step along the contour
+          for (double d = 0; d < metric.length; d += step) {
+            final tangent = metric.getTangentForOffset(d);
+            if (tangent == null) continue;
+            try {
+              contourPts.add(cam.pointToLatLng(
+                  math.Point(tangent.position.dx, tangent.position.dy)));
+            } catch (e, st) {
+              // Camera not ready - skip this sample point. Log only the
+              // first occurrence per session so a persistently-not-ready
+              // camera cannot flood logs (this loop samples every 8px along
+              // every unified-owned-zone contour).
+              if (!_cameraProjectionErrorLogged) {
+                _cameraProjectionErrorLogged = true;
+                ErrorLogService.logClientError(
+                  provider: '_buildUnifiedOwnedPolygons.camera_projection',
+                  error: e,
+                  stackTrace: st,
+                  retryCount: 0,
+                );
+              }
+            }
+          }
+          if (contourPts.length >= 3) {
+            out.add(Polygon(
+              points: contourPts,
+              isFilled: true,
+              color: ownerColor.withValues(alpha: fillAlpha),
+              borderColor: ownerColor.withValues(alpha: borderAlpha),
+              borderStrokeWidth: strokeWidth,
+              isDotted: false,
+            ));
+          }
+        }
       }
     }
     return out;
@@ -1596,6 +1741,109 @@ Color _hexToColor(String hex) {
     return kAccent;
   }
 }
+
+// ── Render-time zone adjacency grouping (R3) ────────────────────────────────
+//
+// Groups same-owner OWNED zones that are actually contiguous (edge-to-edge
+// distance within the threshold below) so _buildUnifiedOwnedPolygons can
+// render them as one Path.combine union with no visible internal seam.
+//
+// The threshold intentionally matches kProximityTriggerM
+// (lib/utils/runwar_constants.dart) - the app's existing loop-closure
+// proximity-trigger radius - rather than the server merge's separate 5 m
+// jitter epsilon (design.md Section 4's Tier-1/Tier-2 boundary). A gap up to
+// this size is still plausibly the same continuous claim run (the server's
+// Tier-2 rule reaches the same one-identity conclusion at this radius), so
+// the steady-state render shows it as one shape even though the
+// stored geometry for a Tier-2 pair remains an unbridged MultiPolygon with
+// no filled area added between the two outlines - see
+// _buildUnifiedOwnedPolygons's per-outline subpath handling below. Disputed
+// zones are never considered here (filtered out before grouping) so they
+// can never bridge two owned zones into one render group (the persistent render union invariant).
+const double _kRenderUnionEpsilonM = kProximityTriggerM;
+
+/// Bounding box for a polygon ring, in lat/lng degrees.
+({double minLat, double maxLat, double minLng, double maxLng}) _bboxOfPoints(
+    List<LatLng> pts) {
+  var nLat = pts.first.latitude, xLat = pts.first.latitude;
+  var nLng = pts.first.longitude, xLng = pts.first.longitude;
+  for (final p in pts) {
+    if (p.latitude < nLat) nLat = p.latitude;
+    if (p.latitude > xLat) xLat = p.latitude;
+    if (p.longitude < nLng) nLng = p.longitude;
+    if (p.longitude > xLng) xLng = p.longitude;
+  }
+  return (minLat: nLat, maxLat: xLat, minLng: nLng, maxLng: xLng);
+}
+
+/// Approximate edge-to-edge gap in metres between two zone bounding boxes.
+/// Zero when the boxes overlap or touch on a given axis. Good enough as a
+/// render-time contiguity pre-filter (not used for any stored geometry).
+double _bboxGapM(
+  ({double minLat, double maxLat, double minLng, double maxLng}) a,
+  ({double minLat, double maxLat, double minLng, double maxLng}) b,
+) {
+  final latGapDeg = a.maxLat < b.minLat
+      ? b.minLat - a.maxLat
+      : (b.maxLat < a.minLat ? a.minLat - b.maxLat : 0.0);
+  final lngGapDeg = a.maxLng < b.minLng
+      ? b.minLng - a.maxLng
+      : (b.maxLng < a.minLng ? a.minLng - b.maxLng : 0.0);
+  final midLat =
+      (a.minLat + a.maxLat + b.minLat + b.maxLat) / 4 * math.pi / 180;
+  final latGapM = latGapDeg * 110540.0;
+  final lngGapM = lngGapDeg * 111320.0 * math.cos(midLat);
+  return math.sqrt(latGapM * latGapM + lngGapM * lngGapM);
+}
+
+/// Union-find grouping of the OWNED subset of [zones] by real contiguity
+/// (touching, or within [_kRenderUnionEpsilonM]). Disputed zones are
+/// filtered out before grouping starts, so they can never join a group or
+/// bridge two owned zones together (the persistent render union invariant, and the disputed-zone exclusion edge case).
+List<List<Zone>> _groupAdjacentZonesImpl(List<Zone> zones) {
+  final owned = zones.where((z) => z.status == ZoneStatus.owned).toList();
+  if (owned.isEmpty) return const [];
+
+  // Bbox spans EVERY outline of a zone (not just the first) so a
+  // MultiPolygon-shaped zone's adjacency test considers its full extent,
+  // not merely its first member outline.
+  final bboxes =
+      owned.map((z) => _bboxOfPoints(z.outlines.expand((o) => o).toList())).toList();
+  final parent = List<int>.generate(owned.length, (i) => i);
+  int find(int i) {
+    while (parent[i] != i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+    }
+    return i;
+  }
+
+  void union(int a, int b) {
+    final ra = find(a), rb = find(b);
+    if (ra != rb) parent[ra] = rb;
+  }
+
+  for (var i = 0; i < owned.length; i++) {
+    for (var j = i + 1; j < owned.length; j++) {
+      if (_bboxGapM(bboxes[i], bboxes[j]) <= _kRenderUnionEpsilonM) {
+        union(i, j);
+      }
+    }
+  }
+
+  final groups = <int, List<Zone>>{};
+  for (var i = 0; i < owned.length; i++) {
+    groups.putIfAbsent(find(i), () => []).add(owned[i]);
+  }
+  return groups.values.toList();
+}
+
+/// Test-only seam (mirrors run_recorder_service.dart's `...ForTesting`
+/// convention) so widget/unit tests can assert the adjacency grouping
+/// independent of rendering (design.md Section 5, the persistent render union and its disputed-zone exclusion edge case).
+@visibleForTesting
+List<List<Zone>> groupAdjacentZonesForTesting(List<Zone> zones) =>
+    _groupAdjacentZonesImpl(zones);
 
 // ── Fog visibility helpers ───────────────────────────────────────────────────
 
