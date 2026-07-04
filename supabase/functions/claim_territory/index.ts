@@ -3,6 +3,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // loaded lazily below, strictly inside the `if (!disputedId)` guard, so the
 // merge routine can never execute on a disputed outcome.
 import type { ZoneInput } from './merge_geometry.ts';
+// Area of the merged geometry is always recomputed from the union/MultiPolygon
+// result, never summed from source zones (overlapping/adjacent source zones
+// would double-count their shared area if simply added together).
+import { area as turfArea } from 'https://esm.sh/@turf/area@7';
 
 // Zone-unify edge-to-edge threshold, matching kProximityTriggerM (the same
 // 25 m radius used for loop-closure proximity triggering). A same-owner,
@@ -256,16 +260,28 @@ Deno.serve(async (req) => {
       const { computeZoneMerges } = await import('./merge_geometry.ts');
       const { data: candidateRows } = await supabase
         .from('zones')
-        .select('id, geom_json, created_at, influence')
+        .select(
+          'id, geom_json, created_at, influence, influence_level, credits_earned, last_active_at, shield_active, shield_expires_at',
+        )
         .eq('owner_id', playerId)
         .eq('city', city)
         .eq('status', 'owned')
         .order('created_at', { ascending: true });
 
       const influenceById = new Map<string, number>();
+      const influenceLevelById = new Map<string, number>();
+      const creditsEarnedById = new Map<string, number>();
+      const lastActiveAtById = new Map<string, string | null>();
+      const shieldActiveById = new Map<string, boolean>();
+      const shieldExpiresAtById = new Map<string, string | null>();
       const inputs: ZoneInput[] = (candidateRows ?? [])
         .map((r) => {
           influenceById.set(r.id as string, (r.influence as number | null) ?? 1);
+          influenceLevelById.set(r.id as string, (r.influence_level as number | null) ?? 1);
+          creditsEarnedById.set(r.id as string, (r.credits_earned as number | null) ?? 0);
+          lastActiveAtById.set(r.id as string, (r.last_active_at as string | null) ?? null);
+          shieldActiveById.set(r.id as string, (r.shield_active as boolean | null) ?? false);
+          shieldExpiresAtById.set(r.id as string, (r.shield_expires_at as string | null) ?? null);
           const geom = typeof r.geom_json === 'string' ? JSON.parse(r.geom_json) : r.geom_json;
           // A survivor of a prior Tier-2 merge stores 2+ member outlines; feed
           // each one back in as its own ZoneInput ring (same db row id) so a
@@ -292,21 +308,79 @@ Deno.serve(async (req) => {
         const survivorInfluence = (influenceById.get(group.survivorId) ?? 1) +
           uniqueAbsorbedIds.reduce((sum, id) => sum + (influenceById.get(id) ?? 1), 0);
 
+        const groupIds = [group.survivorId, ...uniqueAbsorbedIds];
+
+        // influence_level: MAX across the group, never summed. Merging never
+        // grants a free fortification level - the survivor inherits the
+        // highest level already earned by any member, capped at 15 by the
+        // column's own CHECK constraint (a MAX of already-valid values can
+        // never exceed that cap by construction).
+        const survivorInfluenceLevel = groupIds.reduce(
+          (max, id) => Math.max(max, influenceLevelById.get(id) ?? 1),
+          1,
+        );
+
+        // credits_earned: additive, same rationale as influence above.
+        const survivorCreditsEarned = groupIds.reduce(
+          (sum, id) => sum + (creditsEarnedById.get(id) ?? 0),
+          0,
+        );
+
+        // last_active_at: most-recent activity across the merged group, not
+        // just the survivor's own value.
+        const survivorLastActiveAt = groupIds.reduce<string | null>((max, id) => {
+          const v = lastActiveAtById.get(id) ?? null;
+          if (!v) return max;
+          if (!max || v > max) return v;
+          return max;
+        }, null);
+
+        // shield_active: the merged zone is shielded if ANY group member was
+        // shielded; when so, shield_expires_at is the latest expiry among the
+        // shielded members. Otherwise keep the survivor's own (non-shielding)
+        // value untouched.
+        const anyShieldActive = groupIds.some((id) => shieldActiveById.get(id) === true);
+        const survivorShieldExpiresAt = anyShieldActive
+          ? groupIds.reduce<string | null>((max, id) => {
+            if (!shieldActiveById.get(id)) return max;
+            const v = shieldExpiresAtById.get(id) ?? null;
+            if (!v) return max;
+            if (!max || v > max) return v;
+            return max;
+          }, null)
+          : shieldExpiresAtById.get(group.survivorId) ?? null;
+
+        // area_m2: ALWAYS recomputed from the merged geometry (turf area on
+        // the union/MultiPolygon result). Never sum source areas - overlapping
+        // or adjacent zones would double-count shared area.
+        const survivorAreaM2 = turfArea(group.geometry);
+
         zoneGeomJson = JSON.stringify(group.geometry);
         finalZoneId = group.survivorId;
         merged = true;
         absorbedZoneIds = uniqueAbsorbedIds;
 
-        await supabase.from('zones').update({
-          geom_json: zoneGeomJson,
-          geom: toWkt(group.geometry),
-          influence: survivorInfluence,
-          updated_at: now,
-        }).eq('id', group.survivorId);
-
-        for (const absorbedId of uniqueAbsorbedIds) {
-          await supabase.from('zones').delete().eq('id', absorbedId);
-        }
+        // Atomic write: the survivor aggregate UPDATE and every absorbed-row
+        // DELETE happen inside a single Postgres transaction via the
+        // apply_zone_merge RPC, so a crash mid-merge can never leave a stale
+        // absorbed row alongside an already-updated survivor (or vice versa).
+        // No history is kept: absorbed rows are deleted outright inside the
+        // RPC, no lineage-tracking column is written.
+        const { error: mergeErr } = await supabase.rpc('apply_zone_merge', {
+          p_survivor_id: group.survivorId,
+          p_absorbed_ids: uniqueAbsorbedIds,
+          p_geom_wkt: toWkt(group.geometry),
+          p_geom_json: zoneGeomJson,
+          p_influence: survivorInfluence,
+          p_influence_level: survivorInfluenceLevel,
+          p_credits_earned: survivorCreditsEarned,
+          p_last_active_at: survivorLastActiveAt,
+          p_shield_active: anyShieldActive,
+          p_shield_expires_at: survivorShieldExpiresAt,
+          p_area_m2: survivorAreaM2,
+          p_updated_at: now,
+        });
+        if (mergeErr) return err(`Zone merge failed: ${mergeErr.message}`, 500);
       }
     }
 
