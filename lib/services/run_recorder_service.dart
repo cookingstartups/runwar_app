@@ -14,6 +14,11 @@ import '../utils/runwar_constants.dart';
 
 enum RecorderState { idle, recording }
 
+/// Reason an auto-claim scan silently rejected a detected loop closure.
+/// Surfaced via [RunRecorderService.onGateRejected] so the UI layer can
+/// give the operator distinct, non-blocking feedback per gate (R1).
+enum GateRejectionReason { areaFloor, sessionElapsed }
+
 class RunRecorderService {
   RunRecorderService._();
   static final RunRecorderService instance = RunRecorderService._();
@@ -52,6 +57,12 @@ class RunRecorderService {
   // Callback invoked when an auto-claim should fire. Set by the provider
   // during construction; the service does not import the provider layer.
   Future<void> Function(List<LatLng> capturedPolygon)? onAutoClaim;
+
+  // Callback invoked when an auto-claim scan silently rejects a detected loop
+  // closure at the area-floor or session-elapsed gate. Set by the provider
+  // during construction, same pattern as onAutoClaim.
+  Future<void> Function(GateRejectionReason reason, Map<String, dynamic> details)?
+      onGateRejected;
 
   // Callback invoked for each spacing-filtered GPS fix so the provider layer
   // can stream it to gps_samples via OutboxAwareWriter without this service
@@ -198,7 +209,7 @@ class RunRecorderService {
           'lng': pos.longitude,
           'ts': pos.timestamp.toIso8601String(),
           'speed_ms': pos.speed,
-          'is_mocked': false,
+          'is_mocked': pos.isMocked,
         }).catchError((_) {});
       }
     }
@@ -362,6 +373,13 @@ class RunRecorderService {
     final areaSqm = polygonArea(polygon) * 1e6;
     if (areaSqm < _minCapturedAreaSqm) {
       _loopStartTrailIndex = _track.length; // skip this crossing forever
+      ErrorLogService.logClientError(
+        provider: '_scanForAutoClaim.area_floor_gate',
+        error: 'rejected: area=${areaSqm.toStringAsFixed(1)}sqm floor=$_minCapturedAreaSqm',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+      onGateRejected?.call(GateRejectionReason.areaFloor, {'area_sqm': areaSqm});
       return;
     }
 
@@ -371,6 +389,15 @@ class RunRecorderService {
         DateTime.now().difference(start).inSeconds < _minSessionElapsedSec) {
       // Leave _loopStartTrailIndex unchanged so this crossing re-evaluates
       // on the next fix once the 60-second wall-clock threshold passes.
+      final elapsedSec =
+          start == null ? -1 : DateTime.now().difference(start).inSeconds;
+      ErrorLogService.logClientError(
+        provider: '_scanForAutoClaim.session_elapsed_gate',
+        error: 'rejected: elapsed=${elapsedSec}s floor=$_minSessionElapsedSec',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+      onGateRejected?.call(GateRejectionReason.sessionElapsed, {'elapsed_sec': elapsedSec});
       return;
     }
 
@@ -590,6 +617,7 @@ class RunRecorderService {
     activeCity = '';
     stateNotifier.value = RecorderState.idle;
     onAutoClaim = null;
+    onGateRejected = null;
     onGpsFix = null;
     onRunUpdate = null;
   }

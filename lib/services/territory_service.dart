@@ -12,7 +12,7 @@ enum TerritoryResult { claimed, conquered, disputed, failed }
 
 class ClaimOutcome {
   const ClaimOutcome(this.result, this.affectedZoneId,
-      {this.disputeResolved = false});
+      {this.disputeResolved = false, this.reason});
   final TerritoryResult result;
   final String? affectedZoneId;
 
@@ -20,6 +20,12 @@ class ClaimOutcome {
   /// Parsed from claim_territory Edge fn response field `dispute_resolved`.
   /// Defaults to false for all existing call sites.
   final bool disputeResolved;
+
+  /// Underlying failure reason (server `reason` field, e.g. `too_short`,
+  /// `corrupt_track`, or a local exception's message) — carried for
+  /// diagnostics on a `failed` outcome (R4-AC4). Null for non-failed
+  /// outcomes and for legacy call sites that do not supply one.
+  final String? reason;
 }
 
 class TerritoryService {
@@ -62,6 +68,18 @@ class TerritoryService {
       final result = data['result'] as String?;
       final zoneId = data['zone_id'] as String?;
       final disputeResolved = data['dispute_resolved'] as bool? ?? false;
+      final reason = data['reason'] as String?;
+
+      // Defensive parse only — no current consumer needs these this cycle
+      // (design.md Q1/Section 3). The zones table / Realtime stream is what
+      // the client relies on to observe a merged row; `zonesProvider(city)`
+      // is invalidated by the caller after every non-failed claim, which is
+      // a full re-fetch and therefore already reflects server-side deletes
+      // of absorbed zone rows without any separate client-side cache to evict.
+      final merged = data['merged'] as bool? ?? false;
+      final absorbedZoneIds =
+          (data['absorbed_zone_ids'] as List?)?.cast<String>() ?? const <String>[];
+      debugPrint('[TerritoryService] claim merged=$merged absorbed=${absorbedZoneIds.length}');
 
       return ClaimOutcome(
         switch (result) {
@@ -72,6 +90,7 @@ class TerritoryService {
         },
         zoneId,
         disputeResolved: disputeResolved,
+        reason: reason,
       );
     } catch (e) {
       debugPrint('[TerritoryService] claimViaEdgeFunction error: $e');
@@ -96,7 +115,7 @@ class TerritoryService {
     List<LatLng> track,
   ) async {
     if (track.length < 3) {
-      return const ClaimOutcome(TerritoryResult.failed, null);
+      return const ClaimOutcome(TerritoryResult.failed, null, reason: 'too_short');
     }
 
     final rivals = await ZonesService.instance.fetchZonesByCity(city);
@@ -364,95 +383,24 @@ class TerritoryService {
 
   // ── Zone merging ──────────────────────────────────────────────────────────
 
+  /// R2-AC6 interim decision (design.md Section 3b, option 2 - recommended):
+  /// the offline fallback no longer performs a local merge. This used to run
+  /// a bbox-proximity union-find + convex-hull merge, both of which are
+  /// rejected by the corrected spec (a convex hull can silently grant ground
+  /// the player never ran, and ~166 m bbox proximity is not real contiguity).
+  /// Porting the server's true two-tier polygon-union algorithm to pure Dart
+  /// for this rarely-hit offline-only path was judged not worth the new
+  /// surface area (design.md Section 3b rationale).
+  ///
+  /// Contiguous same-owner zones created while offline now simply remain
+  /// independent rows locally. The next ONLINE claim's server-side merge
+  /// (`claim_territory`) performs a full rescan of the owner's zones in the
+  /// city and reconciles them (R2-AC3). In the meantime, the player-visible
+  /// territory still looks unified because the render-time union
+  /// (`map_screen.dart`'s `_buildUnifiedOwnedPolygons` / R3) is independent
+  /// of database row count by design.
   Future<void> _mergeAdjacentZones(String userId, String city) async {
-    final ds = DatabaseService.instance;
-    final ownedRows = await ds.getOwnedZonesByUser(userId, city);
-    if (ownedRows.length < 2) return;
-
-    final zones = <({
-      String id,
-      List<LatLng> pts,
-      double inf,
-      double minLat,
-      double maxLat,
-      double minLng,
-      double maxLng
-    })>[];
-    for (final r in ownedRows) {
-      final pts = _parseRing(r['geom_json'] as String);
-      if (pts == null || pts.length < 3) continue;
-      final bb = _bbox(pts);
-      zones.add((
-        id: r['id'] as String,
-        pts: pts,
-        inf: (r['influence'] as num?)?.toDouble() ?? 1.0,
-        minLat: bb.minLat,
-        maxLat: bb.maxLat,
-        minLng: bb.minLng,
-        maxLng: bb.maxLng,
-      ));
-    }
-    if (zones.length < 2) return;
-
-    const kProximityDeg = 0.0015;
-    final parent = List<int>.generate(zones.length, (i) => i);
-
-    int find(int i) {
-      while (parent[i] != i) {
-        parent[i] = parent[parent[i]];
-        i = parent[i];
-      }
-      return i;
-    }
-
-    void union(int a, int b) {
-      final ra = find(a), rb = find(b);
-      if (ra != rb) parent[ra] = rb;
-    }
-
-    for (var i = 0; i < zones.length; i++) {
-      for (var j = i + 1; j < zones.length; j++) {
-        final a = zones[i], b = zones[j];
-        final touching = !(a.maxLat + kProximityDeg < b.minLat ||
-            a.minLat - kProximityDeg > b.maxLat ||
-            a.maxLng + kProximityDeg < b.minLng ||
-            a.minLng - kProximityDeg > b.maxLng);
-        if (touching) union(i, j);
-      }
-    }
-
-    final groups = <int, List<int>>{};
-    for (var i = 0; i < zones.length; i++) {
-      groups.putIfAbsent(find(i), () => []).add(i);
-    }
-
-    final nowIso = DateTime.now().toUtc().toIso8601String();
-
-    for (final group in groups.values) {
-      if (group.length < 2) continue;
-
-      final allPts = <LatLng>[];
-      var totalInf = 0.0;
-      for (final idx in group) {
-        allPts.addAll(zones[idx].pts);
-        totalInf += zones[idx].inf;
-      }
-      final avgInf = (totalInf / group.length).clamp(1.0, 15.0);
-      final hull = _convexHull(allPts);
-      if (hull.length < 3) continue;
-
-      final keepId = zones[group.first].id;
-      for (final idx in group.skip(1)) {
-        await ds.deleteZone(zones[idx].id);
-      }
-      await ds.updateZone(keepId, {
-        'geom_json': _encodePolygon(hull),
-        'influence': avgInf,
-        'updated_at': nowIso,
-      });
-      debugPrint(
-          '[Territory] merged ${group.length} zones for $userId → hull ${hull.length} pts, inf $avgInf');
-    }
+    // Intentionally a no-op — see doc comment above.
   }
 
   // ── Sutherland-Hodgman polygon clipping ──────────────────────────────────
@@ -577,24 +525,54 @@ class TerritoryService {
     });
   }
 
-  static List<LatLng>? _parseRing(String geomJson) {
+  /// Extracts one outline ring per member polygon from [geomJson]. Handles
+  /// both `Polygon` (single ring) and `MultiPolygon` (Tier-2 merge output,
+  /// design.md Section 4) shapes. Returns an empty list on any parse failure
+  /// or malformed ring — never throws.
+  static List<List<LatLng>> _parseOutlines(String geomJson) {
     try {
       final d = jsonDecode(geomJson);
-      if (d is! Map) return null;
-      if (d['type'] != 'Polygon') return null;
+      if (d is! Map) return const [];
       final coords = d['coordinates'];
-      if (coords is! List || coords.isEmpty) return null;
-      final ring = coords[0];
-      if (ring is! List || ring.length < 3) return null;
-      final out = <LatLng>[];
-      for (final pt in ring) {
-        if (pt is! List || pt.length < 2) return null;
-        out.add(LatLng((pt[1] as num).toDouble(), (pt[0] as num).toDouble()));
+      if (coords is! List || coords.isEmpty) return const [];
+
+      List<LatLng>? ringFrom(dynamic rawRing) {
+        if (rawRing is! List || rawRing.length < 3) return null;
+        final out = <LatLng>[];
+        for (final pt in rawRing) {
+          if (pt is! List || pt.length < 2) return null;
+          out.add(LatLng((pt[1] as num).toDouble(), (pt[0] as num).toDouble()));
+        }
+        return out;
       }
-      return out;
+
+      if (d['type'] == 'MultiPolygon') {
+        final outlines = <List<LatLng>>[];
+        for (final poly in coords) {
+          if (poly is! List || poly.isEmpty) continue;
+          final ring = ringFrom(poly[0]);
+          if (ring != null) outlines.add(ring);
+        }
+        return outlines;
+      }
+
+      // Polygon (default/legacy) — single outer ring at coordinates[0].
+      final ring = ringFrom(coords[0]);
+      return ring == null ? const [] : [ring];
     } catch (_) {
-      return null;
+      return const [];
     }
+  }
+
+  /// Backward-compatible single-ring accessor. For a `MultiPolygon`, returns
+  /// only the FIRST member outline — call sites that need every outline of a
+  /// Tier-2-merged zone must use [_parseOutlines] directly (design.md Section
+  /// 4/Consequences #3 flags the remaining single-ring call sites in this
+  /// file, e.g. the rival-overlap scan, as a known, lower-severity gap left
+  /// for a future cycle rather than a hard rejection).
+  static List<LatLng>? _parseRing(String geomJson) {
+    final outlines = _parseOutlines(geomJson);
+    return outlines.isEmpty ? null : outlines.first;
   }
 
   static ({double minLat, double maxLat, double minLng, double maxLng}) _bbox(
