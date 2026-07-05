@@ -5,8 +5,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme.dart';
 import '../providers/showcase_provider.dart';
+import '../widgets/intro/intro_hero_photo.dart';
 import '../widgets/intro/intro_loot_drop_map.dart';
-import '../widgets/intro/intro_survival_cut.dart';
+import '../widgets/intro/intro_purge_leaderboard.dart';
 import '../widgets/intro_map_animations.dart';
 import '../widgets/pulse_ring.dart';
 import '../widgets/tag_chip.dart';
@@ -158,9 +159,9 @@ Widget _buildAnimWidget(_Anim anim, Color accent) => switch (anim) {
       _Anim.fortify        => IntroFortifyMap(accent: accent),
       _Anim.defense        => IntroDefenseMap(accent: accent),
       _Anim.defenseA       => IntroDefenseMapA(accent: accent),
-      _Anim.physicalEvents => IntroPhysicalEventsMap(accent: accent),
+      _Anim.physicalEvents => const IntroHeroPhoto(),
       _Anim.lootDrop       => const IntroLootDropMap(),
-      _Anim.survivalCut    => const IntroSurvivalCut(),
+      _Anim.survivalCut    => const IntroPurgeLeaderboard(),
       _Anim.none           => const SizedBox.shrink(),
     };
 

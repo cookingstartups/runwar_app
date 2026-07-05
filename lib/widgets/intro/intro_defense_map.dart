@@ -179,6 +179,16 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
     return Offset(sx / pts.length, sy / pts.length);
   }
 
+  /// The persistent shield badge pins to the block's top-right vertex (the
+  /// screen point with the smallest dy, i.e. the topmost corner of the
+  /// captured polygon) rather than the map, mirroring the reference scene
+  /// where the shield icon locks onto the zone's top-right corner and stays
+  /// there for the rest of the loop.
+  Offset _topRightVertex(List<Offset> pts) {
+    if (pts.isEmpty) return Offset.zero;
+    return pts.reduce((a, b) => a.dy <= b.dy ? a : b);
+  }
+
   Path _makePoly(List<Offset> pts) {
     if (pts.isEmpty) return Path();
     final p = Path()..moveTo(pts[0].dx, pts[0].dy);
@@ -370,7 +380,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
 
       drawHexGlyph(
         canvas,
-        blockPoly.first,
+        _topRightVertex(blockPoly),
         9,
         Paint()
           ..color = kSea.withValues(alpha: 0.9)
