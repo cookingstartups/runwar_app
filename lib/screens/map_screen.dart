@@ -18,7 +18,9 @@ import '../providers/app_config_provider.dart';
 import '../services/error_log_service.dart';
 import '../services/run_recorder_service.dart';
 import '../services/battery_optimization_service.dart';
+import '../services/permission_service.dart';
 import '../widgets/battery_warning_banner.dart';
+import '../widgets/location_denied_gate.dart';
 import '../widgets/territory_overlay_painter.dart';
 import '../widgets/intro/intro_helpers.dart' show sharedEdgePolylines, formatSqm;
 import '../geo/lasso.dart' show polygonArea;
@@ -95,6 +97,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
   StreamSubscription<Position>? _posSub;
   Position? _currentPosition;
   bool _centeredOnGps = false;
+  // Revoked-after-priming late guard: true when PermissionService's live
+  // recheck (in _initLocation) shows location is no longer granted.
+  bool _locationRevoked = false;
   late final AnimationController _terrainPulse;
 
   // Logs only the first camera-projection failure per session (cheap,
@@ -161,33 +166,36 @@ class _MapScreenState extends ConsumerState<MapScreen>
     });
   }
 
+  /// Location is no longer requested here. The priming screen is the
+  /// single place the OS dialog fires; this is a no-op-if-granted late
+  /// guard that only starts the position stream when PermissionService
+  /// already reports location as granted, or flags the revoked-after-priming
+  /// hard gate (build() renders [LocationDeniedGate] when [_locationRevoked]).
   Future<void> _initLocation() async {
-    LocationPermission perm = await Geolocator.checkPermission();
-    if (perm == LocationPermission.denied) {
-      perm = await Geolocator.requestPermission();
-    }
+    final granted = await PermissionService.instance.isLocationGranted();
     if (!mounted) return;
-    if (perm == LocationPermission.whileInUse ||
-        perm == LocationPermission.always) {
-      _posSub = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-        ),
-      ).listen((pos) {
-        if (!mounted) return;
-        setState(() => _currentPosition = pos);
-        RealtimePresenceService.instance.updatePosition(LatLng(pos.latitude, pos.longitude));
-        if (!_centeredOnGps) {
-          _centeredOnGps = true;
-          _mapController.move(
-            LatLng(pos.latitude, pos.longitude),
-            _kInitialZoom,
-          );
-        }
-        CtfService.instance.checkCaptureProximity(pos.latitude, pos.longitude);
-      });
+    if (!granted) {
+      setState(() => _locationRevoked = true);
+      return;
     }
-    // denied / deniedForever / unableToDetermine → no stream, no dot, no SnackBar
+    setState(() => _locationRevoked = false);
+    _posSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+      ),
+    ).listen((pos) {
+      if (!mounted) return;
+      setState(() => _currentPosition = pos);
+      RealtimePresenceService.instance.updatePosition(LatLng(pos.latitude, pos.longitude));
+      if (!_centeredOnGps) {
+        _centeredOnGps = true;
+        _mapController.move(
+          LatLng(pos.latitude, pos.longitude),
+          _kInitialZoom,
+        );
+      }
+      CtfService.instance.checkCaptureProximity(pos.latitude, pos.longitude);
+    });
   }
 
   @override
@@ -327,7 +335,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
 
     return Scaffold(
       backgroundColor: kBg,
-      body: body,
+      body: _locationRevoked
+          ? LocationDeniedGate(
+              onGranted: () => setState(() => _locationRevoked = false),
+            )
+          : body,
       floatingActionButton: _buildFab(context, city),
     );
   }

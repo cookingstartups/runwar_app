@@ -39,6 +39,9 @@ import 'services/run_recovery_service.dart';
 import 'screens/recovery_gate.dart';
 import 'providers/showcase_provider.dart';
 import 'widgets/offline_overlay.dart';
+import 'providers/permission_priming_provider.dart';
+import 'screens/permission_priming_screen.dart';
+import 'services/permission_service.dart' show PermKind;
 
 /// Runs the daily trial tick then returns current trial status.
 /// Re-evaluated on app foreground via _RouteGuard's WidgetsBindingObserver.
@@ -142,6 +145,7 @@ class RunWarApp extends StatelessWidget {
 /// Gate order:
 ///   user == null          → LoginScreen / IntroScreen
 ///   no phone linked       → PhoneLinkScreen
+///   permissions missing   → PermissionPrimingScreen
 ///   no cities joined      → CitiesSelectionScreen
 ///   profile == null       → LoginScreen (re-auth)
 ///   invited_at == null    → JoinWarConfirmationScreen (waitlisted)
@@ -315,6 +319,9 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
     final trialAsync = userId != null
         ? ref.watch(trialStatusProvider(userId))
         : null;
+    final primingMissingAsync = userId != null
+        ? ref.watch(permissionPrimingMissingProvider)
+        : null;
 
     // ── Aggregate loading state ───────────────────────────────────────────
     final authLoading = authState.isLoading;
@@ -325,7 +332,8 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
                 joinedAsync!.isLoading ||
                 profileAsync!.isLoading ||
                 missionAsync!.isLoading ||
-                trialAsync!.isLoading));
+                trialAsync!.isLoading ||
+                primingMissingAsync!.isLoading));
 
     // ── Error detection — collect the first error during boot ─────────────
     if (!_bootComplete) {
@@ -338,6 +346,7 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
         profileAsync: profileAsync,
         missionAsync: missionAsync,
         trialAsync: trialAsync,
+        primingMissingAsync: primingMissingAsync,
       );
     }
 
@@ -373,6 +382,12 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
 
     // Gate 1: phone linked?
     if (!(hasPhoneAsync?.value ?? true)) return const PhoneLinkScreen();
+
+    // Gate 1.5: permission priming (location, notifications, battery).
+    final primingMissing = primingMissingAsync?.value ?? const [];
+    if (primingMissing.isNotEmpty) {
+      return PermissionPrimingScreen(missing: primingMissing);
+    }
 
     // Gate 2: any cities joined?
     if ((joinedAsync?.value ?? []).isEmpty) return const CitiesSelectionScreen();
@@ -425,6 +440,7 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
     required AsyncValue<Map<String, dynamic>?>? profileAsync,
     required AsyncValue<MissionStatus?>? missionAsync,
     required AsyncValue<TrialStatus>? trialAsync,
+    required AsyncValue<List<PermKind>>? primingMissingAsync,
   }) {
     final currentUserId = userId;
 
@@ -494,6 +510,15 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
         currentUserId,
       );
     }
+
+    if (primingMissingAsync != null && primingMissingAsync.hasError) {
+      _recordError(
+        'permissionPrimingMissingProvider',
+        primingMissingAsync.error!,
+        primingMissingAsync.stackTrace ?? StackTrace.empty,
+        currentUserId,
+      );
+    }
   }
 
   // ── Overlay builder ──────────────────────────────────────────────────────
@@ -543,6 +568,8 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
         if (userId != null) ref.invalidate(missionStatusProvider(userId));
       case 'trialStatusProvider':
         if (userId != null) ref.invalidate(trialStatusProvider(userId));
+      case 'permissionPrimingMissingProvider':
+        ref.invalidate(permissionPrimingMissingProvider);
     }
   }
 
@@ -562,6 +589,8 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
         return 'MISSION STATUS FAILED';
       case 'trialStatusProvider':
         return 'TRIAL STATUS FAILED';
+      case 'permissionPrimingMissingProvider':
+        return 'PERMISSION CHECK FAILED';
       default:
         return '${providerName.toUpperCase()} FAILED';
     }

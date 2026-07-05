@@ -10,6 +10,7 @@ import '../services/supabase_service.dart';
 import '../services/superpower_service.dart';
 import '../services/outbox_aware_writer.dart';
 import '../services/error_log_service.dart';
+import '../services/permission_service.dart';
 import '../utils/string_utils.dart';
 import 'auth_provider.dart';
 import 'cities_provider.dart';
@@ -235,7 +236,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
       unawaited(SuperpowerService.instance.checkAndEarn(runId: runId));
       if (outcome.result == TerritoryResult.disputed) {
         // Fire-and-forget - never propagates to caller.
-        unawaited(_NotificationGateway.fireDispute(city));
+        unawaited(NotificationGateway.fireDispute(city));
       }
       _ref.invalidate(zonesProvider(city));
       _ref.invalidate(userRunPointsProvider((userId: userId, city: city)));
@@ -273,11 +274,13 @@ String _uuidV4() {
 
 // ── Notification gateway ──────────────────────────────────────────────────────
 
-class _NotificationGateway {
+/// Promoted from a file-private class to a small public surface so
+/// PermissionService can reuse [requestPermission] instead of duplicating it
+/// (design.md §API Contracts).
+class NotificationGateway {
   static final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   static bool _initialized = false;
-  static bool? _permissionGranted; // null = not yet asked
 
   static const _channelId = 'runwar_disputes';
   static const _channelName = 'Zone Disputes';
@@ -311,29 +314,37 @@ class _NotificationGateway {
     }
   }
 
-  /// Fire a dispute notification. Requests permission lazily on first call.
-  /// Fire-and-forget - never throws.
+  /// Requests local-notification permission. Extracted from fireDispute's
+  /// inline request block so PermissionService can call it independently of
+  /// firing a notification, from the PermissionPrimingScreen's Notifications
+  /// card CTA. Never throws - returns false on any failure.
+  static Future<bool> requestPermission() async {
+    try {
+      final androidImpl = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      final iosImpl = _plugin
+          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
+      if (androidImpl != null) {
+        return await androidImpl.requestNotificationsPermission() ?? false;
+      } else if (iosImpl != null) {
+        return await iosImpl.requestPermissions(
+                alert: true, badge: false, sound: false) ??
+            false;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[NotificationGateway] requestPermission failed: $e');
+      return false;
+    }
+  }
+
+  /// Fire a dispute notification. Fire-and-forget - never throws. Permission
+  /// is no longer requested here - PermissionService is the single owner of
+  /// that decision, resolved during the priming flow.
   static Future<void> fireDispute(String city) async {
     if (!_initialized) return;
     try {
-      if (_permissionGranted == null) {
-        final androidImpl = _plugin.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-        final iosImpl = _plugin
-            .resolvePlatformSpecificImplementation<
-                IOSFlutterLocalNotificationsPlugin>();
-        if (androidImpl != null) {
-          _permissionGranted =
-              await androidImpl.requestNotificationsPermission() ?? false;
-        } else if (iosImpl != null) {
-          _permissionGranted = await iosImpl.requestPermissions(
-                  alert: true, badge: false, sound: false) ??
-              false;
-        } else {
-          _permissionGranted = false;
-        }
-      }
-      if (_permissionGranted != true) return;
+      if (!await PermissionService.instance.isNotificationsGranted()) return;
 
       await _plugin.show(
         0,
@@ -357,5 +368,5 @@ class _NotificationGateway {
 }
 
 /// Public entry point for flutter_local_notifications initialisation.
-/// Called from main() before runApp(). Keeps _NotificationGateway file-private.
-Future<void> initLocalNotifications() => _NotificationGateway.init();
+/// Called from main() before runApp().
+Future<void> initLocalNotifications() => NotificationGateway.init();
