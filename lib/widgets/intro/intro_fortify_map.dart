@@ -1,13 +1,17 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import '../../theme.dart';
 import 'intro_helpers.dart';
 
 // ---------------------------------------------------------------------------
-// 5. IntroFortifyMap — fortify animation: runner loops the claimed chunk (slide 4)
-// 15 loops over 7.5 s, level 1→15; player fades at end, polygon + label persist.
+// 4. IntroFortifyMap — 3 re-laps of the shared block, ARMOR 1->2->3 (slide 4).
+//    8s total loop, ~2.7s per lap. Traces IntroZones.kS1Block1 directly
+//    (continuity with slides 2/3 — R-13), replacing the old bespoke
+//    old bespoke 6-waypoint route that pointed at an unrelated location.
+//    Lap/badge/border are derived as a pure function of the controller
+//    value inside AnimatedBuilder.builder — no addListener/setState
+//    anti-pattern (protocol rule 1; design.md).
 // ---------------------------------------------------------------------------
 class IntroFortifyMap extends StatefulWidget {
   final Color accent;
@@ -18,28 +22,11 @@ class IntroFortifyMap extends StatefulWidget {
 
 class _IntroFortifyMapState extends State<IntroFortifyMap>
     with TickerProviderStateMixin, IntroMapMixin<IntroFortifyMap> {
-  /// Main animation: 15 loops in 7.5 s.
   late final AnimationController _ctrl;
-
-  /// Widget fade-in on first appearance (200 ms, delayed 400 ms).
   late final AnimationController _fadeCtrl;
-
-  /// Player-dot fade-out triggered when _ctrl completes (300 ms).
-  late final AnimationController _playerFadeCtrl;
-
-  // ── Fortify route — 6 real-GPS waypoints, closed loop ─────────────────────
-  static const _kFortifyRoute = [
-    LatLng(39.46123804583449, -0.3765349555679282),
-    LatLng(39.46103302303833, -0.376402178394288),
-    LatLng(39.461582855538815, -0.3752071838315262),
-    LatLng(39.46262659342135, -0.37593142296047277),
-    LatLng(39.46213268369572, -0.3771747001318311),
-    LatLng(39.46105166149929, -0.37637803708998985),
-  ];
 
   List<List<Offset>> _inheritedPts = [];
   List<Offset> _routePts = [];
-  int _level = 1;
 
   void _onMapReady() {
     final cam = mapCtrl.camera;
@@ -47,56 +34,31 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
       final p = cam.latLngToScreenPoint(ll);
       return Offset(p.x.toDouble(), p.y.toDouble());
     }
+
     markMapReady(() {
       _inheritedPts = IntroZones.kS1All
           .map((block) => block.map(toScreen).toList())
           .toList();
-      _routePts = _kFortifyRoute.map(toScreen).toList();
+      _routePts = IntroZones.kS1Block1.map(toScreen).toList();
     });
-  }
-
-  void _onTick() {
-    final newLevel = (((_ctrl.value * 15).floor() + 1).clamp(1, 15));
-    if (newLevel != _level) {
-      setState(() => _level = newLevel);
-    }
   }
 
   @override
   void initState() {
     super.initState();
-
     _fadeCtrl = AnimationController(vsync: this, duration: kIntroFadeDuration);
-    _playerFadeCtrl =
-        AnimationController(vsync: this, duration: const Duration(milliseconds: 300));
-
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 7500),
+      duration: const Duration(milliseconds: 8000),
     );
-
-    // Widget fade-in.
     Future.delayed(kIntroFadeDelay, () {
       if (mounted) _fadeCtrl.forward();
     });
-
-    // Level updates on each animation tick.
-    _ctrl.addListener(_onTick);
-
-    // When the 15-loop animation finishes, start the player-dot fade-out.
-    _ctrl.addStatusListener((status) {
-      if (status == AnimationStatus.completed) {
-        if (mounted) _playerFadeCtrl.forward();
-      }
-    });
-
     loopController(_ctrl, mounted: () => mounted);
   }
 
   @override
   void dispose() {
-    _ctrl.removeListener(_onTick);
-    _playerFadeCtrl.dispose();
     _fadeCtrl.dispose();
     _ctrl.dispose();
     disposeMapCtrl();
@@ -112,28 +74,29 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4607, -0.3762),
-            zoom: 16.0,
+            center: IntroContinuity.kMapCenter,
+            zoom: IntroContinuity.kMapZoom,
             onReady: _onMapReady,
           ),
           if (mapReady)
             AnimatedBuilder(
-              animation: Listenable.merge([_ctrl, _playerFadeCtrl]),
+              animation: _ctrl,
               builder: (_, __) {
                 final zoom = mapCtrl.camera.zoom;
                 final lat = mapCtrl.camera.center.latitudeInRad;
                 const earthCircumference = 2 * math.pi * 6378137.0;
                 final metersPerPx = (earthCircumference * math.cos(lat)) /
                     (256.0 * math.pow(2.0, zoom));
-                final tailPx =
-                    (_ctrl.value * kIntroRouteEstimatedMeters)
-                            .clamp(0.0, kCometTailMaxMeters) /
-                        metersPerPx;
+                final tailPx = (_ctrl.value * kIntroRouteEstimatedMeters)
+                        .clamp(0.0, kCometTailMaxMeters) /
+                    metersPerPx;
+                // Pure function of the controller value — exactly 3 laps,
+                // no separate _level state field or listener (R-12).
+                final lap = (_ctrl.value * 3).floor().clamp(0, 2);
                 return CustomPaint(
                   painter: _IntroFortifyMapPainter(
                     t: _ctrl.value,
-                    level: _level,
-                    playerFade: _playerFadeCtrl.value,
+                    lap: lap,
                     accent: widget.accent,
                     inheritedPts: _inheritedPts,
                     routePts: _routePts,
@@ -151,10 +114,9 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
 
 class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
   final double t;
-  final int level;
 
-  /// 0.0 = player fully visible; 1.0 = player fully faded.
-  final double playerFade;
+  /// 0, 1 or 2 -> ARMOR 1, 2, 3 (design.md: `(_ctrl.value * 3).floor().clamp(0, 2)`).
+  final int lap;
 
   @override
   final Color accent;
@@ -164,15 +126,19 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
 
   _IntroFortifyMapPainter({
     required this.t,
-    required this.level,
-    required this.playerFade,
+    required this.lap,
     required this.accent,
     required this.inheritedPts,
     required this.routePts,
     required this.tailLengthPx,
   });
 
-  static const int _kTotalLaps = 15;
+  static const List<String> _kArmorBadges = [
+    '⌃ ARMOR 1',
+    '⌃⌃ ARMOR 2',
+    '⌃⌃⌃ ARMOR 3',
+  ];
+  static const List<double> _kArmorBorderWidths = [1.5, 3.0, 5.0];
 
   Offset _routeCentroid() {
     if (routePts.isEmpty) return Offset.zero;
@@ -184,9 +150,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     return Offset(sumX / routePts.length, sumY / routePts.length);
   }
 
-  /// NW-most vertex: maximises (lat - lng) in LatLng space, which in screen
-  /// space corresponds to the vertex that is most upper-left. We approximate
-  /// this as minimising (dx + dy) in screen-space (smaller x+y = upper-left).
+  /// NW-most vertex — approximated as minimising (dx + dy) in screen-space.
   Offset _nwVertex() {
     if (routePts.isEmpty) return Offset.zero;
     Offset nw = routePts[0];
@@ -200,7 +164,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
   Offset _posOnClosedLoop(List<Offset> pts, double frac) {
     if (pts.isEmpty) return Offset.zero;
     if (pts.length == 1) return pts[0];
-    final segCount = pts.length; // closed: last→first is the nth segment
+    final segCount = pts.length;
     double totalLen = 0;
     final segLens = List<double>.filled(segCount, 0);
     for (int i = 0; i < segCount; i++) {
@@ -221,19 +185,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
       }
       target -= segLen;
     }
-    return pts[0]; // wrapped back to start
-  }
-
-  void _drawPulseRing(Canvas canvas, Offset center, double t, Color color) {
-    final pulseT = (math.sin(t * math.pi * 4) + 1) / 2;
-    canvas.drawCircle(
-      center,
-      20 + pulseT * 12,
-      Paint()
-        ..color = color.withValues(alpha: (1.0 - pulseT) * 0.6)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0,
-    );
+    return pts[0];
   }
 
   @override
@@ -243,111 +195,75 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     // 0. Inherited orange blocks — static base.
     drawInheritedBlocks(canvas, inheritedPts);
 
-    // 1. Fortified route polygon — kSea fill. Opacity ramps with level 1→15.
-    final fillOpacity = 0.20 + (level / _kTotalLaps.toDouble()) * 0.65;
-    drawFillColor(canvas, routePts, kSea, fillOpacity);
+    // 1. Block fill — thickens with each completed lap (ARMOR 1 -> 2 -> 3).
+    final fillOpacity = 0.30 + lap * 0.18;
+    drawFillColor(canvas, routePts, accent, fillOpacity);
 
-    // 2. Halo on route circuit — grows with level.
-    if (routePts.length >= 2) {
-      final haloOpacity = 0.20 + (level / _kTotalLaps.toDouble()) * 0.65;
-      final haloStroke = 1.0 + (level / _kTotalLaps.toDouble()) * 4.0;
-      final loopPath = Path()..moveTo(routePts[0].dx, routePts[0].dy);
-      for (int i = 1; i < routePts.length; i++) {
-        loopPath.lineTo(routePts[i].dx, routePts[i].dy);
-      }
-      loopPath.close();
-      canvas.drawPath(
-        loopPath,
-        Paint()
-          ..color = kSea.withValues(alpha: haloOpacity)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = haloStroke
-          ..strokeJoin = StrokeJoin.round,
-      );
+    // 2. Border — thickens with each completed lap; gold-tinted at ARMOR 3.
+    final borderColor = lap == 2 ? kAccent2 : accent;
+    final borderWidth = _kArmorBorderWidths[lap];
+    final loopPath = Path()..moveTo(routePts[0].dx, routePts[0].dy);
+    for (int i = 1; i < routePts.length; i++) {
+      loopPath.lineTo(routePts[i].dx, routePts[i].dy);
     }
+    loopPath.close();
+    canvas.drawPath(
+      loopPath,
+      Paint()
+        ..color = borderColor.withValues(alpha: 0.9)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = borderWidth
+        ..strokeJoin = StrokeJoin.round,
+    );
 
-    // 3. NW influence level label — visible from t=0, updates each frame.
-    if (routePts.isNotEmpty) {
-      final nw = _nwVertex();
-      final centroid = _routeCentroid();
-      // Nudge 18% from NW corner toward centroid — guaranteed inside polygon.
-      final labelPos = nw + (centroid - nw) * 0.18;
-      final tp = TextPainter(
-        text: TextSpan(
-          text: '$level',
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            fontFamily: 'BebasNeue',
-          ),
+    // 3. ARMOR badge — steps 1 -> 2 -> 3 as each ~2.7s lap completes (R-12).
+    final nw = _nwVertex();
+    final centroid = _routeCentroid();
+    final labelPos = nw + (centroid - nw) * 0.18;
+    final badgeColor = lap == 2 ? kAccent2 : Colors.white;
+    final tp = TextPainter(
+      text: TextSpan(
+        text: _kArmorBadges[lap],
+        style: TextStyle(
+          color: badgeColor,
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          fontFamily: 'BebasNeue',
         ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, labelPos - Offset(tp.width / 2, tp.height / 2));
-    }
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, labelPos - Offset(tp.width / 2, tp.height / 2));
 
-    // 4. Comet-tail trace for the active runner.
-    if (routePts.length >= 2 && playerFade < 1.0) {
-      final lapPos = (t * _kTotalLaps) % 1.0;
-      // Closed polyline: append first point so the comet wraps around.
-      final closedRoute = [...routePts, routePts[0]];
-      drawComet(canvas, closedRoute, lapPos,
-          tailLengthPx: tailLengthPx,
-          color: kSea,
-          decayMul: 1.0 - playerFade);
-    }
+    // 4. Runner traces the block once per lap (3 laps / 8s loop) — persists
+    // continuously (no fade) so the loop reads as ongoing training effort.
+    final closedRoute = [...routePts, routePts[0]];
+    final lapPos = (t * 3) % 1.0;
+    drawComet(canvas, closedRoute, lapPos,
+        tailLengthPx: tailLengthPx, color: accent);
+    final runnerPos = _posOnClosedLoop(routePts, lapPos);
+    drawRunnerAt(canvas, runnerPos, accent);
 
-    // 5. Runner dot — fades out after last loop via playerFade.
-    if (playerFade < 1.0 && routePts.isNotEmpty) {
-      final lapPos = (t * _kTotalLaps) % 1.0;
-      final runnerPos = _posOnClosedLoop(routePts, lapPos);
-      final dotAlpha = 1.0 - playerFade;
+    // 5. At ARMOR 3 (final lap), a gold pulse ring reinforces the
+    // max-hardened state.
+    if (lap == 2) {
+      final pulseT = (math.sin(t * math.pi * 4) + 1) / 2;
       canvas.drawCircle(
-          runnerPos,
-          10,
-          Paint()
-            ..color = kSea.withValues(alpha: 0.2 * dotAlpha)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
-      canvas.drawCircle(
-          runnerPos, 4, Paint()..color = kSea.withValues(alpha: dotAlpha));
-      canvas.drawCircle(
-          runnerPos,
-          1.5,
-          Paint()
-            ..color = Colors.white.withValues(alpha: 0.85 * dotAlpha));
-    }
-
-    // 6. At max level (15): pulse ring + "FORTIFIED" label.
-    if (level >= _kTotalLaps) {
-      final centroid = _routeCentroid();
-      _drawPulseRing(canvas, centroid, t, kSea);
-
-      final fortOpacity = ((t * 4) % 1.0 < 0.5)
-          ? ((t * 4) % 1.0) * 2.0
-          : (1.0 - ((t * 4) % 1.0)) * 2.0;
-      if (fortOpacity > 0) {
-        final tp = TextPainter(
-          text: TextSpan(
-            text: 'FORTIFIED',
-            style: GoogleFonts.bebasNeue(
-              fontSize: 16,
-              color: kSea.withValues(alpha: fortOpacity.clamp(0.0, 1.0)),
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        tp.paint(canvas,
-            Offset(centroid.dx - tp.width / 2, centroid.dy + 24));
-      }
+        centroid,
+        20 + pulseT * 10,
+        Paint()
+          ..color = kAccent2.withValues(alpha: (1.0 - pulseT) * 0.5)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0,
+      );
     }
   }
 
   @override
   bool shouldRepaint(_IntroFortifyMapPainter old) =>
       old.t != t ||
-      old.level != level ||
-      old.playerFade != playerFade ||
+      old.lap != lap ||
       old.tailLengthPx != tailLengthPx ||
-      old.routePts != routePts;
+      old.routePts != routePts ||
+      old.inheritedPts != inheritedPts;
 }
