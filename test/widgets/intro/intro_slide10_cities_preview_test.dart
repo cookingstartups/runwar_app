@@ -6,9 +6,13 @@
 // (IntroCitiesPreview, reusing kCitiesCatalog), non-interactive except the
 // final CTA which calls markShowcaseSeen via the existing _done().
 //
-// No FlutterMap on this slide (per design.md Test Plan Skeleton), so a
-// bounded testWidgets pump (not pumpAndSettle, matching protocol pattern #3)
-// is used for the render assertions.
+// No FlutterMap on this slide (per design.md Test Plan Skeleton). CityCard
+// starts its progress-bar animation from a 300ms Future.delayed, which
+// pumpAndSettle() alone cannot drain (a bare Future.delayed does not itself
+// schedule a frame, so pumpAndSettle can return before it fires) — so each
+// render assertion first pumps past the 300ms delay explicitly, then
+// pumpAndSettle()s to finish the resulting AnimationController, avoiding a
+// pending-timer failure at teardown.
 
 import 'dart:io';
 
@@ -48,7 +52,8 @@ void main() {
         const MaterialApp(home: Scaffold(body: IntroCitiesPreview())),
       );
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
 
       expect(find.text('OPEN'), findsOneWidget,
           reason: 'R-29: exactly 1 card (Valencia) must show OPEN');
@@ -61,7 +66,8 @@ void main() {
         const MaterialApp(home: Scaffold(body: IntroCitiesPreview())),
       );
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
 
       expect(find.byType(IgnorePointer), findsWidgets,
           reason: 'R-28: the preview grid must be non-interactive '
@@ -75,7 +81,8 @@ void main() {
         const MaterialApp(home: Scaffold(body: IntroCitiesPreview())),
       );
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
 
       expect(find.text('Invite friends to unlock'), findsNWidgets(5),
           reason: 'R-29: every SOON card must show the invite-to-unlock row');
