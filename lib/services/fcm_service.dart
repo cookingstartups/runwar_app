@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'permission_service.dart';
 import 'supabase_service.dart';
 
 /// Handles FCM token registration and foreground message routing.
@@ -16,12 +19,29 @@ class FcmService {
     try {
       final messaging = FirebaseMessaging.instance;
 
-      final settings = await messaging.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
-      debugPrint('[FcmService] permission=${settings.authorizationStatus}');
+      // Notification permission is centralized in PermissionService,
+      // Android only (this feature is Android-only this sprint).
+      // If the priming flow already secured it (granted, or the user has
+      // already been through priming at all), skip the direct request -
+      // getToken() does not require alert/badge/sound permission to succeed
+      // on Android. Fall back to the direct request only for the
+      // pre-priming-rollout edge case (upgrade path). iOS keeps its existing
+      // unconditional behavior untouched - it must never be silently skipped.
+      var shouldRequest = true;
+      if (Platform.isAndroid) {
+        final alreadyResolved =
+            await PermissionService.instance.isNotificationsGranted() ||
+                await PermissionService.instance.isPrimingDone();
+        shouldRequest = !alreadyResolved;
+      }
+      if (shouldRequest) {
+        final settings = await messaging.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+        debugPrint('[FcmService] permission=${settings.authorizationStatus}');
+      }
 
       final token = await messaging.getToken();
       if (token != null) {

@@ -41,6 +41,10 @@ dependencies:
   # GPS (declared now; tracking in sibling spec)
   geolocator: ^11.0.0
 
+  # Background-location elevation, settings deep link, unified status polling
+  # for the permission priming flow (see design.md Package Decision).
+  permission_handler: ^11.3.1
+
   # Gyroscope / accelerometer (anti-cheat orientation sampling)
   sensors_plus: ^4.0.2
 
