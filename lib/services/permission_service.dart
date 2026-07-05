@@ -145,7 +145,8 @@ class PermissionService {
   Future<bool> isBatteryGranted() async {
     try {
       return await FlutterForegroundTask.isIgnoringBatteryOptimizations;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[PermissionService] isBatteryGranted failed: $e');
       return false;
     }
   }

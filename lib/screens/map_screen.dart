@@ -179,6 +179,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
       return;
     }
     setState(() => _locationRevoked = false);
+    // Guard against re-entry (e.g. Try Again after a revoked-permission
+    // recovery) leaving a duplicate, never-cancelled stream subscription.
+    await _posSub?.cancel();
     _posSub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
@@ -337,7 +340,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
       backgroundColor: kBg,
       body: _locationRevoked
           ? LocationDeniedGate(
-              onGranted: () => setState(() => _locationRevoked = false),
+              // Re-run _initLocation (not just clear the flag) so the
+              // position stream actually restarts after re-granting -
+              // otherwise the map shows with no GPS dot or updates.
+              onGranted: _initLocation,
             )
           : body,
       floatingActionButton: _buildFab(context, city),
