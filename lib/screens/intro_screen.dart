@@ -15,7 +15,7 @@ import '../widgets/tag_chip.dart';
 // ---------------------------------------------------------------------------
 // Animation type per slide
 // ---------------------------------------------------------------------------
-enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, defenseA, physicalEvents, lootDrop, survivalCut, none }
+enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, defenseA, physicalEvents, lootDrop, purgeCut, none }
 
 // ---------------------------------------------------------------------------
 // Layout modes
@@ -122,9 +122,9 @@ const _slides = [
   _Slide(
     tag: 'THE PURGE',
     tagColor: kAccent2,
-    headline: 'THE PURGE\nHAS BEGUN.',
-    body: 'Once a week, the Purge begins. Are you under the water that week? You lose everything - zones, rank, access. Gone. There is no space for the lazy or undisciplined.',
-    anim: _Anim.survivalCut,
+    headline: 'Stay above the line.',
+    body: 'Without warning, a red line cuts the board. Land below it and you lose everything: zones, rank, access to the app.',
+    anim: _Anim.purgeCut,
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
   ),
@@ -132,8 +132,8 @@ const _slides = [
   _Slide(
     tag: 'YEARLY IN-PERSON EVENT',
     tagColor: kAccent2,
-    headline: 'THE GAME\nGETS REAL.',
-    body: 'Real-world races coming to your city — limited seats, livestreamed, glory on the line.',
+    headline: 'Real streets. Real rivals.',
+    body: 'Behind every gamertag is a runner in your city.',
     anim: _Anim.physicalEvents,
     layout: _Layout.visualTopTextBottom,
   ),
@@ -161,7 +161,7 @@ Widget _buildAnimWidget(_Anim anim, Color accent) => switch (anim) {
       _Anim.defenseA       => IntroDefenseMapA(accent: accent),
       _Anim.physicalEvents => const IntroHeroPhoto(),
       _Anim.lootDrop       => const IntroLootDropMap(),
-      _Anim.survivalCut    => const IntroPurgeLeaderboard(),
+      _Anim.purgeCut       => const IntroPurgeLeaderboard(),
       _Anim.none           => const SizedBox.shrink(),
     };
 

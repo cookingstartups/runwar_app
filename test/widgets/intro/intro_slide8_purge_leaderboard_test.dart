@@ -82,16 +82,29 @@ void main() {
   });
 
   group('R-22: updated copy for slide 8', () {
-    test('slide 8 headline/body match the option-B copy', () {
+    // The body copy below was corrected against the authoritative purge
+    // game design: the purge is irregular and unannounced (no weekly or
+    // Sunday cadence), and protection paths (a free sick/away flag plus a
+    // post-purge appeal) do exist, so copy claiming a weekly schedule or
+    // "no appeals" is wrong and must not appear.
+    test('slide 8 headline/body match the corrected copy', () {
       final src = _read('lib/screens/intro_screen.dart');
       expect(src, contains('Stay above the line.'),
           reason: 'R-22: slide 8 headline must be updated');
       expect(
         src,
-        contains('Every Sunday a red line cuts the board. Finish under it and '
-            'you lose everything: zones, rank, access. No appeals.'),
-        reason: 'R-22: slide 8 body must be updated (option B copy)',
+        contains('Without warning, a red line cuts the board. Land below it '
+            'and you lose everything: zones, rank, access to the app.'),
+        reason: 'R-22: slide 8 body must be updated (corrected copy)',
       );
+    });
+
+    test('body does not claim a weekly/Sunday schedule or "no appeals"', () {
+      final src = _read('lib/screens/intro_screen.dart');
+      expect(src, isNot(contains('Every Sunday a red line cuts the board')),
+          reason: 'R-22: the purge is irregular/unannounced, not weekly');
+      expect(src, isNot(contains('No appeals')),
+          reason: 'R-22: a post-purge appeal path exists');
     });
 
     test('old "THE PURGE HAS BEGUN" copy is gone', () {
