@@ -687,4 +687,11 @@ abstract final class IntroContinuity {
   /// painter's opening frame resolve to these exact values.
   static const double kBlock1EndFillAlpha = 0.42; // fill settles ~42%
   static const double kBlock1EndBorderWidth = 3.0; // solid ~3px border
+
+  /// Slide-1 terminal state carried into slide-2's opening beat.
+  /// The pulse map (slide 1) holds its captured union — every kS1All block —
+  /// at this fill alpha once the runner finishes. Slide 2 opens by painting
+  /// that same union directly (never replaying slide 1's controller), so the
+  /// player's turf persists across the cut instead of the map resetting empty.
+  static const double kS1CapturedFillAlpha = 0.28; // union hold alpha
 }
