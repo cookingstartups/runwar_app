@@ -126,11 +126,11 @@ const _slides = [
   _Slide(
     tag: 'THE PURGE',
     tagColor: kAccent2,
-    headline: 'Stay above the line.',
-    body: 'Without warning, a red line cuts the board. Land below it and you lose everything: zones, rank, access to the app.',
+    headline: 'THE PURGE BEGINS',
+    body: 'We leave no room for laziness here. Only the disciplined, competitive, and committed survive. If at any point you are one of the bottom 5% of players, your account can be PURGED and you\'d lose it all if that happens. Stay above the line once the purge ends, or lose it all.',
     anim: _Anim.purgeCut,
     layout: _Layout.visualTopTextBottom,
-    bodyMaxLines: 4,
+    bodyMaxLines: 8,
   ),
   // 9 - Real-world events
   _Slide(

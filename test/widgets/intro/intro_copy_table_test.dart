@@ -76,7 +76,7 @@ void main() {
         'Under attack? Tap back.',
         'Run it again. Make it armor.',
         'A flag drops. The city sprints.',
-        'Stay above the line.',
+        'THE PURGE BEGINS',
         'Real streets. Real rivals.',
         'Choose your ground.',
       ];
