@@ -12,6 +12,7 @@ const Color kFgMuted = Color(0xFF7A8FA6);  // Valencia mute
 const Color kFgFaint = Color(0x40F5EDD8);  // 25% fg
 const Color kDanger  = Color(0xFFE83300);  // Valencia danger
 const Color kSea = Color(0xFF0096C7);
+const Color kLimeGreen = Color(0xFFA6FF00);  // Valencia lime
 
 // Gradient definitions (use with LinearGradient / ShaderMask)
 const List<Color> kGradientFire  = [Color(0xFFFF6B00), Color(0xFFE8330A)];
