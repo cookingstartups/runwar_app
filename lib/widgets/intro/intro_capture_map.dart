@@ -1,16 +1,25 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart' hide Path;
+import '../../theme.dart';
 import 'intro_helpers.dart';
 
 // ---------------------------------------------------------------------------
-// 2. IntroCaptureMap — player claims a single squared block (slide 2).
+// 2. IntroCaptureMap - player claims a single squared block (slide 2).
 //    A clean, uncontested claim: the player-controlled runner traces the
 //    4 edges of IntroZones.kS1Block1 in the slide's own accent color, the
 //    loop closes, the block fills and holds a "CLAIMED" stamp, then the
 //    cycle fades and restarts. No rival color and no dispute mechanics
-//    ever fire on this slide (R-1..R-4) — the capturer always renders in
+//    ever fire on this slide (R-1..R-4) - the capturer always renders in
 //    the player's own accent, never a rival color.
+//
+//    Two visually distinct layers render here: the carried/pre-owned turf
+//    inherited from the prior slide (the "defender's" already-held
+//    territory) always paints as fixed kAccent orange, independent of
+//    whichever accent this slide is using - while the actively-claimed
+//    block (comet trace, runner, fill sweep, "CLAIMED" stamp - the
+//    "attacker" claiming new ground) always follows the slide's own
+//    widget.accent (currently a light-blue tag color on the YOUR TURF slide).
 // ---------------------------------------------------------------------------
 class IntroCaptureMap extends StatefulWidget {
   final Color accent;
@@ -33,8 +42,8 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
 
   /// Slide 1's terminal captured territory (every kS1All block), projected to
   /// screen space. Painted as a persistent under-layer so slide 2 opens on the
-  /// turf the player already holds — the pulse map's end state carried across
-  /// the cut — instead of a blank map that resets each loop.
+  /// turf the player already holds - the pulse map's end state carried across
+  /// the cut - instead of a blank map that resets each loop.
   List<List<Offset>> _carriedBlocks = [];
 
   @override
@@ -134,7 +143,7 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.tailLengthPx,
   });
 
-  // Beat timing — ~5.2s total cycle (R-3):
+  // Beat timing - ~5.2s total cycle (R-3):
   //   0.0 – 2.4s  comet trace around the 4 edges (~0.6s/edge)
   //   2.4s        close: expanding ring ping from the block centroid
   //   2.4 – 3.0s  fill sweep to IntroContinuity.kBlock1EndFillAlpha,
@@ -171,10 +180,13 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
     // ── Carried turf (slide 1's end state) ─────────────────────────────────
     // Paint the pulse map's captured union directly as a persistent under-
     // layer at IntroContinuity.kS1CapturedFillAlpha. This is slide 1's held
-    // territory arriving intact across the cut — it is NOT gated by the loop's
+    // territory arriving intact across the cut - it is NOT gated by the loop's
     // fade envelope, so the turf stays put while the claim sequence replays on
     // top of it. Unioned (protocol #5) so contiguous blocks read as one shape
     // with no internal seams, exactly like the pulse map's terminal frame.
+    // Always fixed kAccent orange - the "defender's" already-held territory -
+    // regardless of this slide's own widget.accent, so it reads as visually
+    // distinct from the actively-claimed block painted below in `accent`.
     if (carriedBlocks.isNotEmpty) {
       var carriedUnion = Path();
       for (final block in carriedBlocks) {
@@ -185,7 +197,7 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
       canvas.drawPath(
         carriedUnion,
         Paint()
-          ..color = accent.withValues(alpha: IntroContinuity.kS1CapturedFillAlpha)
+          ..color = kAccent.withValues(alpha: IntroContinuity.kS1CapturedFillAlpha)
           ..style = PaintingStyle.fill,
       );
     }
@@ -200,7 +212,7 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
 
     if (!closed) {
       // Comet trace + orange runner tracing the 4 edges. No rival color,
-      // no dispute geometry — a clean, uncontested claim (R-1/R-4).
+      // no dispute geometry - a clean, uncontested claim (R-1/R-4).
       final traceProgress = (t / _kCloseT).clamp(0.0, 1.0);
       drawComet(canvas, blockLoop, traceProgress,
           tailLengthPx: tailLengthPx, color: accent, decayMul: fade);
@@ -216,7 +228,7 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
       )!;
       drawRunnerAt(canvas, pos, accent);
     } else {
-      // Fill sweep — ramps to IntroContinuity.kBlock1EndFillAlpha over the
+      // Fill sweep - ramps to IntroContinuity.kBlock1EndFillAlpha over the
       // fill window, then holds through the stamp window. This exact value
       // is what slide 3 re-paints verbatim as its Beat-1 opening frame (R-6).
       final fillRamp =
