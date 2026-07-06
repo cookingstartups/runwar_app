@@ -6,19 +6,27 @@ import 'intro_helpers.dart';
 import 'intro_phone_card_overlay.dart';
 
 // ---------------------------------------------------------------------------
-// 3. IntroDefenseMapA — 4-beat continuity scene, 8s loop (slide 3).
+// 4. IntroDefenseMapA — 4-beat continuity scene, 8s loop (slide 4).
 //
-//    0-1s   Slide 2's end state: kS1Block1 filled/bordered per
-//           IntroContinuity, "CLAIMED" stamp fading out. Painted directly
-//           (R-6) — this frame never replays slide 2's controller.
-//    1-3s   Pink (kRunnerCPink) rival comet approaches along the block's
-//           edge; a "RAID" alert chip slides in; border stress-flickers.
-//    3-5s   IntroPhoneCardOverlay (a static Positioned widget, not part of
-//           the map painter — R-8) is visible; a shield hex flies from it
-//           to the block centroid; a blue dome ignites over the block.
-//    5-8s   The pink attack trace shatters into fading segments and
-//           retreats (R-9); the block stays orange throughout; a shield
-//           badge pins; a "DEFENDED" stamp appears.
+//    0-1s     FORTIFY's (slide 2) final-lap ARMOR-3 terminal state, painted
+//             directly via IntroContinuity.kFortifyEndFillAlpha/
+//             kFortifyEndBorderWidth (never replays slide 2's controller) —
+//             inherited blocks underneath, gold border, "ARMOR 3" badge held
+//             statically for the beat.
+//    1-3.4s   A pink (kRunnerCPink) rival traces the SAME 4-edge closed loop
+//             the player traces in slide 3's (YOUR TURF) claim animation —
+//             IntroZones.kS1Block1's 4 vertices, closing back to the start —
+//             at the same ~0.6s/edge pace as that slide's own comet trace.
+//             A "⚠ RAID" chip slides in as the hostile tell.
+//    3.4-5.4s IntroPhoneCardOverlay (a static Positioned widget, not part of
+//             the map painter) is visible; a shield hex flies from it to the
+//             block centroid, firing right as the rival's loop-trace is
+//             about to close; a blue dome ignites over the block.
+//    5.4-8s   The pink attack trace shatters into fading fragments and
+//             retreats; the block stays in its carried ARMOR-3 gold state
+//             throughout every beat — it is the same fortified block from
+//             Beat 1, never a fresh capture; a shield badge pins; a
+//             "DEFENDED" stamp appears.
 // ---------------------------------------------------------------------------
 class IntroDefenseMapA extends StatefulWidget {
   final Color accent;
@@ -32,16 +40,20 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  // Pink rival's raid approach — converges on kS1Block1's north edge
-  // (vertices C-D), "along the block's edge" per the Beat-2 design.
-  static const _kRaidApproachRoute = [
-    LatLng(39.4646, -0.3737),
-    LatLng(39.4636, -0.37505),
-    LatLng(39.462413, -0.376554), // midpoint of kS1Block1 edge C-D
-  ];
+  /// FORTIFY's (slide 2) inherited base — every kS1All block — carried into
+  /// this scene's opening beat, mirroring intro_fortify_map.dart's own
+  /// static under-layer (drawInheritedBlocks).
+  List<List<Offset>> _inheritedPts = [];
 
   List<Offset> _blockPoly = [];
-  List<Offset> _raidRoute = [];
+
+  /// The rival's raid trace — the SAME 4-edge closed loop the player traces
+  /// in slide 3's claim animation (IntroCaptureMap): kS1Block1's 4 vertices
+  /// with the first point repeated at the end, so the trace closes back to
+  /// its start exactly like the player's own claim geometry. Rendered in
+  /// kRunnerCPink instead of the player's accent — a rival attempting the
+  /// identical claim move against turf the player already fortified.
+  List<Offset> _raidLoop = [];
 
   void _onMapReady() {
     final cam = mapCtrl.camera;
@@ -51,16 +63,18 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
     }
 
     markMapReady(() {
+      _inheritedPts =
+          IntroZones.kS1All.map((block) => block.map(toScreen).toList()).toList();
       _blockPoly = IntroZones.kS1Block1.map(toScreen).toList();
-      _raidRoute = _kRaidApproachRoute.map(toScreen).toList();
+      _raidLoop = [..._blockPoly, _blockPoly.first];
     });
   }
 
-  /// Beat-3 window (3-5s of the 8s loop) with a short fade in/out so the
+  /// Beat-3 window (3.4-5.4s of the 8s loop) with a short fade in/out so the
   /// phone-card overlay does not pop in/out abruptly.
   double _cardOpacity(double v) {
-    const start = 3 / 8;
-    const end = 5 / 8;
+    const start = 3.4 / 8;
+    const end = 5.4 / 8;
     const fadeWindow = 0.02;
     if (v < start || v > end) return 0.0;
     if (v < start + fadeWindow) {
@@ -121,8 +135,9 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
                   painter: _IntroDefenseMapAPainter(
                     t: _ctrl.value,
                     accent: widget.accent,
+                    inheritedPts: _inheritedPts,
                     blockPoly: _blockPoly,
-                    raidRoute: _raidRoute,
+                    raidRoute: _raidLoop,
                     tailLengthPx: tailPx,
                   ),
                   child: const SizedBox.expand(),
@@ -135,9 +150,9 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
     );
   }
 
-  // Phone-card overlay — Positioned direct Stack child (R-8, protocol
-  // rule 7). IntroPhoneCardOverlay animates its own opacity internally,
-  // so this call site stays a single short expression.
+  // Phone-card overlay — Positioned direct Stack child (protocol rule 7).
+  // IntroPhoneCardOverlay animates its own opacity internally, so this call
+  // site stays a single short expression.
   Widget _cardOverlay() => Positioned(
         left: 16,
         right: 16,
@@ -151,6 +166,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
   final double t;
   @override
   final Color accent;
+  final List<List<Offset>> inheritedPts;
   final List<Offset> blockPoly;
   final List<Offset> raidRoute;
   final double tailLengthPx;
@@ -158,16 +174,21 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
   _IntroDefenseMapAPainter({
     required this.t,
     required this.accent,
+    required this.inheritedPts,
     required this.blockPoly,
     required this.raidRoute,
     required this.tailLengthPx,
   });
 
-  // Beat boundaries (8s loop, t in [0,1]).
-  static const double _kBeat1End = 1 / 8; // 0-1s
-  static const double _kBeat2End = 3 / 8; // 1-3s
-  static const double _kBeat3End = 5 / 8; // 3-5s
-  // Beat 4 runs from _kBeat3End through t=1.0 (5-8s).
+  // Beat boundaries (8s loop, t in [0,1]). Beat 2's window was widened from
+  // the old 2.0s single-edge approach to 2.4s so the fuller 4-edge loop
+  // trace reads at the same ~0.6s/segment pace as slide 3's own capture
+  // comet (2.4s / 4 segments there too) — Beats 3/4 each shrink slightly to
+  // absorb the difference within the same 8s total.
+  static const double _kBeat1End = 1.0 / 8; // 0-1s
+  static const double _kBeat2End = 3.4 / 8; // 1-3.4s (2.4s raid loop trace)
+  static const double _kBeat3End = 5.4 / 8; // 3.4-5.4s (2.0s shield deploy)
+  // Beat 4 runs from _kBeat3End through t=1.0 (5.4-8s, 2.6s).
 
   Offset _centroid(List<Offset> pts) {
     if (pts.isEmpty) return Offset.zero;
@@ -181,7 +202,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
 
   /// The persistent shield badge pins to the block's top-right vertex (the
   /// screen point with the smallest dy, i.e. the topmost corner of the
-  /// captured polygon) rather than the map, mirroring the reference scene
+  /// fortified polygon) rather than the map, mirroring the reference scene
   /// where the shield icon locks onto the zone's top-right corner and stays
   /// there for the rest of the loop.
   Offset _topRightVertex(List<Offset> pts) {
@@ -237,9 +258,9 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
     tp.paint(canvas, pos);
   }
 
-  /// R-9: the raid attempt visibly and unambiguously fails — the pink
-  /// trace shatters into fading fragments and the runner retreats, rather
-  /// than resolving off-screen or via a silent recolor.
+  /// The raid attempt visibly and unambiguously fails — the pink trace
+  /// shatters into fading fragments and the runner retreats, rather than
+  /// resolving off-screen or via a silent recolor.
   void _drawShatterRetreat(Canvas canvas, List<Offset> route, double retreatT) {
     if (route.length < 2) return;
     final fade = (1.0 - retreatT).clamp(0.0, 1.0);
@@ -262,7 +283,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
       );
     }
     // The runner retreats back toward the route's start as the trace
-    // shatters — the attack never touches the block's color.
+    // shatters — the attack never touches the block's fortified color.
     final retreatPos = Offset.lerp(route.last, route.first, retreatT)!;
     drawRunnerAt(canvas, retreatPos, kRunnerCPink.withValues(alpha: fade));
   }
@@ -274,45 +295,54 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
     final centroid = _centroid(blockPoly);
     final blockPath = _makePoly(blockPoly);
 
-    // The block stays kAccent orange throughout every beat (R-9/R-11) —
-    // Beat 1's held end-state from slide 2, reused verbatim as the steady
-    // defended state through beats 2-4.
+    // FORTIFY's (slide 2) inherited base — every kS1All block — painted as a
+    // static under-layer, exactly mirroring intro_fortify_map.dart's own
+    // opening treatment (drawInheritedBlocks) so the carried turf reads
+    // identically across the cut.
+    drawInheritedBlocks(canvas, inheritedPts);
+
+    // The block stays in its carried ARMOR-3 state through every beat — this
+    // is the same fortified block from Beat 1, not a fresh capture, so the
+    // fill and border reuse IntroContinuity.kFortifyEndFillAlpha/
+    // kFortifyEndBorderWidth (structurally shared with
+    // intro_fortify_map.dart's own final lap) rather than the plain-accent
+    // hex-capture look.
     canvas.drawPath(
       blockPath,
       Paint()
-        ..color = accent.withValues(alpha: IntroContinuity.kBlock1EndFillAlpha)
+        ..color = accent.withValues(alpha: IntroContinuity.kFortifyEndFillAlpha)
         ..style = PaintingStyle.fill,
     );
 
-    // Border stress-flickers during Beat 2 (raid approach); otherwise a
-    // steady solid IntroContinuity.kBlock1EndBorderWidth stroke.
-    double borderWidth = IntroContinuity.kBlock1EndBorderWidth;
-    double borderAlpha = 1.0;
+    // Border stress-flickers during Beat 2 (raid trace); otherwise a steady
+    // solid gold IntroContinuity.kFortifyEndBorderWidth stroke, matching
+    // ARMOR 3's gold-tinted border in intro_fortify_map.dart.
+    double borderWidth = IntroContinuity.kFortifyEndBorderWidth;
+    double borderAlpha = 0.9;
     if (t >= _kBeat1End && t < _kBeat2End) {
       final flicker = (math.sin(t * math.pi * 30) + 1) / 2;
       borderWidth =
-          IntroContinuity.kBlock1EndBorderWidth * (0.6 + 0.4 * flicker);
+          IntroContinuity.kFortifyEndBorderWidth * (0.6 + 0.4 * flicker);
       borderAlpha = 0.6 + 0.4 * flicker;
     }
     canvas.drawPath(
       blockPath,
       Paint()
-        ..color = accent.withValues(alpha: borderAlpha)
+        ..color = kAccent2.withValues(alpha: borderAlpha)
         ..style = PaintingStyle.stroke
         ..strokeWidth = borderWidth,
     );
 
-    // Beat 1 (0-1s): slide 2's end state — CLAIMED label fading out.
+    // Beat 1 (0-1s): FORTIFY's held terminal frame — the ARMOR 3 badge,
+    // static for the whole beat (no fade — it is a held shot, not a
+    // transition).
     if (t < _kBeat1End) {
-      final claimedFade = (1.0 - t / _kBeat1End).clamp(0.0, 1.0);
-      if (claimedFade > 0) {
-        _drawLabel(
-            canvas, centroid, 'CLAIMED', accent.withValues(alpha: claimedFade));
-      }
+      _drawLabel(canvas, centroid, '⌃⌃⌃ ARMOR 3', kAccent2);
     }
 
-    // Beat 2 (1-3s): pink raid comet approaches along the block's edge;
-    // a "RAID" alert chip slides in.
+    // Beat 2 (1-3.4s): the rival traces the same 4-edge closed loop the
+    // player traces in slide 3's claim animation, in kRunnerCPink; a
+    // "RAID" alert chip slides in as the hostile tell.
     if (t >= _kBeat1End && t < _kBeat2End && raidRoute.isNotEmpty) {
       final approachT =
           ((t - _kBeat1End) / (_kBeat2End - _kBeat1End)).clamp(0.0, 1.0);
@@ -335,8 +365,10 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
       _drawRaidChip(canvas, size, chipSlideT);
     }
 
-    // Beat 3 (3-5s): shield hex flies from the phone-card position to the
-    // block centroid; a blue dome ignites over the block.
+    // Beat 3 (3.4-5.4s): shield hex flies from the phone-card position to
+    // the block centroid — firing right as the rival's loop-trace is about
+    // to close, intercepting the claim before it resolves; a blue dome
+    // ignites over the still-fortified block.
     if (t >= _kBeat2End && t < _kBeat3End) {
       final flyT =
           ((t - _kBeat2End) / (_kBeat3End - _kBeat2End)).clamp(0.0, 1.0);
@@ -372,8 +404,9 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
       }
     }
 
-    // Beat 4 (5-8s): the raid trace shatters and retreats; the block stays
-    // orange; a shield badge pins; the "DEFENDED" stamp appears.
+    // Beat 4 (5.4-8s): the raid trace shatters and retreats; the block stays
+    // in its carried ARMOR-3 gold state throughout; a shield badge pins; the
+    // "DEFENDED" stamp appears.
     if (t >= _kBeat3End) {
       final retreatT = ((t - _kBeat3End) / (1.0 - _kBeat3End)).clamp(0.0, 1.0);
       _drawShatterRetreat(canvas, raidRoute, retreatT);
@@ -399,6 +432,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
   @override
   bool shouldRepaint(_IntroDefenseMapAPainter old) =>
       old.t != t ||
+      old.inheritedPts != inheritedPts ||
       old.blockPoly != blockPoly ||
       old.raidRoute != raidRoute ||
       old.tailLengthPx != tailLengthPx;

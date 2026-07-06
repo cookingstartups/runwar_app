@@ -69,17 +69,22 @@ void main() {
     });
   });
 
-  group('AC-CONT-3: slide 3 renders end-state via IntroContinuity constants (R-6)', () {
-    // GIVEN  IntroDefenseMapA's Beat-1 (0-1s) paint path
+  group('AC-CONT-3: slide 4 renders FORTIFY end-state via IntroContinuity constants', () {
+    // GIVEN  IntroDefenseMapA's Beat-1 (0-1s) paint path, now chained after
+    //        FORTIFY (slide 2) rather than the hex-capture slide, following
+    //        the carousel reorder that put YOUR TURF between them
     // WHEN   the source is inspected
-    // THEN   it draws using IntroContinuity.kBlock1EndFillAlpha/kBlock1EndBorderWidth
-    //        rather than re-deriving its own fill/border constants
-    test('intro_defense_map.dart uses IntroContinuity end-state fill/border constants', () {
+    // THEN   it draws using IntroContinuity.kFortifyEndFillAlpha/
+    //        kFortifyEndBorderWidth rather than re-deriving its own
+    //        fill/border constants
+    test('intro_defense_map.dart uses IntroContinuity FORTIFY end-state fill/border constants', () {
       final src = _read('lib/widgets/intro/intro_defense_map.dart');
-      expect(src, contains('IntroContinuity.kBlock1EndFillAlpha'),
-          reason: 'R-6: slide 3 opening frame must reuse slide 2\'s terminal fill alpha');
-      expect(src, contains('IntroContinuity.kBlock1EndBorderWidth'),
-          reason: 'R-6: slide 3 opening frame must reuse slide 2\'s terminal border width');
+      expect(src, contains('IntroContinuity.kFortifyEndFillAlpha'),
+          reason:
+              'slide 4 opening frame must reuse FORTIFY (slide 2)\'s terminal fill alpha');
+      expect(src, contains('IntroContinuity.kFortifyEndBorderWidth'),
+          reason:
+              'slide 4 opening frame must reuse FORTIFY (slide 2)\'s terminal border width');
     });
   });
 
