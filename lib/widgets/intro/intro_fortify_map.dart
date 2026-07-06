@@ -22,14 +22,15 @@ class IntroFortifyMap extends StatefulWidget {
 
 class _IntroFortifyMapState extends State<IntroFortifyMap>
     with TickerProviderStateMixin, IntroMapMixin<IntroFortifyMap> {
-  // This slide's layout (visualTopTextBottom) overlays the text/CTA block
-  // over roughly the bottom half of the screen. IntroContinuity.kMapCenter
-  // is shared with slides 3 and 4, which use a different layout - reusing it
-  // here put kS1Block1 too far south on screen, clipping it behind the text
-  // panel. This constant is local to this slide only; it must NOT be merged
-  // back into IntroContinuity.kMapCenter, which the other slides still rely
-  // on unchanged.
-  static const _kMapCenter = LatLng(39.4608, -0.3756);
+  // This slide's layout (textTopVisualBottom) overlays the text/CTA block
+  // over roughly the top half of the screen, so the animation should read in
+  // the bottom half. IntroContinuity.kMapCenter is shared with slides 3 and
+  // 4, which use a different layout - reusing it here put kS1Block1 too far
+  // north on screen, clipping it behind the text panel. This constant is
+  // local to this slide only; it must NOT be merged back into
+  // IntroContinuity.kMapCenter, which the other slides still rely on
+  // unchanged.
+  static const _kMapCenter = LatLng(39.4659, -0.3756);
 
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
