@@ -81,6 +81,65 @@ void main() {
     });
   });
 
+  group('3-turn upward swap rework: leaderboard internals', () {
+    test('no per-row numeric value (km/score) is rendered anywhere', () {
+      final src = _read('lib/widgets/intro/intro_purge_leaderboard.dart');
+      expect(src, isNot(contains('int km')),
+          reason: 'the km field must be removed from the row model entirely');
+      expect(src, isNot(contains('row.km')),
+          reason: 'no row should read a numeric km value anymore');
+      expect(RegExp(r'\d+\s*KM').hasMatch(src), isFalse,
+          reason: 'no row should render a distance/score string like "212 KM"');
+    });
+
+    test('no rank ordinal digit is drawn next to a row', () {
+      final src = _read('lib/widgets/intro/intro_purge_leaderboard.dart');
+      expect(src, isNot(contains('rankTp')),
+          reason: 'the old rank-number TextPainter must be removed; list '
+              'order is the only signal of rank now');
+    });
+
+    test('the top-of-screen countdown clock is preserved', () {
+      final src = _read('lib/widgets/intro/intro_purge_leaderboard.dart');
+      expect(src, contains('_drawCountdown'),
+          reason: 'the dramatic countdown timer is a clock, not a per-row '
+              'number, and stays in place per operator decision');
+      expect(src, contains('00:0\$secondsLeft'),
+          reason: 'the countdown text must still render');
+    });
+
+    test('YOU starts below the eventual cut line and finishes above it after three turns', () {
+      final src = _read('lib/widgets/intro/intro_purge_leaderboard.dart');
+      final youBlock = RegExp(r"_PurgeRow\(\s*'YOU',([\s\S]*?)\);").firstMatch(src);
+      expect(youBlock, isNotNull, reason: 'YOU row definition must exist');
+      final body = youBlock!.group(1)!;
+
+      expect(body, contains('homeSlot: 6'),
+          reason: 'YOU must start at slot 6, below the final cut-after index');
+      expect(src, contains('const int _kCutAfterIndex = 4;'),
+          reason: 'the cut line must rest after slot 4 once all turns land');
+
+      final swapCount = RegExp(r'_SwapEvent').allMatches(body).length;
+      expect(swapCount, equals(3),
+          reason: 'YOU must trade places exactly three times, one per turn');
+
+      expect(body, contains('_SwapEvent(_kTurn1Start, _kTurn1End, 5)'));
+      expect(body, contains('_SwapEvent(_kTurn2Start, _kTurn2End, 4)'));
+      expect(body, contains('_SwapEvent(_kTurn3Start, _kTurn3End, 3)'),
+          reason: 'the final turn must land YOU at slot 3, clear of slot 4');
+    });
+
+    test('three discrete turn windows are defined across the loop', () {
+      final src = _read('lib/widgets/intro/intro_purge_leaderboard.dart');
+      expect(src, contains('const double _kTurn1Start = 0.06;'));
+      expect(src, contains('const double _kTurn1End = 0.22;'));
+      expect(src, contains('const double _kTurn2Start = 0.22;'));
+      expect(src, contains('const double _kTurn2End = 0.38;'));
+      expect(src, contains('const double _kTurn3Start = 0.38;'));
+      expect(src, contains('const double _kTurn3End = 0.54;'));
+    });
+  });
+
   group('R-22: updated copy for slide 8', () {
     // The body copy below was corrected against the authoritative purge
     // game design: the purge is irregular and unannounced (no weekly or
