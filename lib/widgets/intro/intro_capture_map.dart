@@ -23,7 +23,15 @@ import 'intro_helpers.dart';
 // ---------------------------------------------------------------------------
 class IntroCaptureMap extends StatefulWidget {
   final Color accent;
-  const IntroCaptureMap({required this.accent, super.key});
+
+  /// Optional map-center override. Defaults to the shared
+  /// IntroContinuity.kMapCenter used by slides 3/4. The on-screen slide 3
+  /// instance (visualTopTextBottom layout) passes a center shifted south so
+  /// the claimed block reads in the top half, clear of the bottom text
+  /// panel - other callers (e.g. the pre-warm Offstage instance) keep the
+  /// shared default so nothing else on screen shifts.
+  final LatLng? center;
+  const IntroCaptureMap({required this.accent, this.center, super.key});
   @override
   State<IntroCaptureMap> createState() => _IntroCaptureMapState();
 }
@@ -90,7 +98,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: IntroContinuity.kMapCenter,
+            center: widget.center ?? IntroContinuity.kMapCenter,
             zoom: IntroContinuity.kMapZoom,
             onReady: _updatePoints,
           ),

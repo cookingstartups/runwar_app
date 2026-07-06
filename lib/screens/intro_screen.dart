@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme.dart';
@@ -153,11 +154,20 @@ const _slides = [
 ];
 
 // ---------------------------------------------------------------------------
+// Slide 3 (YOUR TURF) map-center override - shifted south of the shared
+// IntroContinuity.kMapCenter so the claimed block reads in the top half of
+// the screen, clear of this slide's bottom text panel (visualTopTextBottom
+// layout). Only this slide's on-screen instance uses it; the pre-warm
+// Offstage instance and any other caller keep the shared default.
+// ---------------------------------------------------------------------------
+const _kSlide3CaptureMapCenter = LatLng(39.4583, -0.3756);
+
+// ---------------------------------------------------------------------------
 // Shared top-level helper - resolves _Anim enum to its widget
 // ---------------------------------------------------------------------------
-Widget _buildAnimWidget(_Anim anim, Color accent) => switch (anim) {
+Widget _buildAnimWidget(_Anim anim, Color accent, {LatLng? captureMapCenter}) => switch (anim) {
       _Anim.pulse          => IntroPulseMap(accent: accent),
-      _Anim.hexCapture     => IntroCaptureMap(accent: accent),
+      _Anim.hexCapture     => IntroCaptureMap(accent: accent, center: captureMapCenter),
       _Anim.rivals         => IntroRivalsMap(accent: accent),
       _Anim.ctfDrop        => IntroFlagDropMap(accent: accent),
       _Anim.fortify        => IntroFortifyMap(accent: accent),
@@ -563,7 +573,12 @@ class _SplitBleedSlide extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        _buildAnimWidget(slide.anim, slide.tagColor),
+        _buildAnimWidget(
+          slide.anim,
+          slide.tagColor,
+          captureMapCenter:
+              slide.anim == _Anim.hexCapture ? _kSlide3CaptureMapCenter : null,
+        ),
 
         Positioned.fill(
           child: DecoratedBox(
