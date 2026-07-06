@@ -6,12 +6,11 @@ import 'intro_helpers.dart';
 // ---------------------------------------------------------------------------
 // 2. IntroCaptureMap — player claims a single squared block (slide 2).
 //    A clean, uncontested claim: the player-controlled runner traces the
-//    4 edges of IntroZones.kS1Block1 in kAccent orange, the loop closes,
-//    the block fills orange and holds a "CLAIMED" stamp, then the cycle
-//    fades and restarts. No rival color and no dispute mechanics ever fire
-//    on this slide (R-1..R-4) — this fixes the prior build's "wrong
-//    protagonist" defect where the capturer was rendered in the rival's
-//    blue instead of the player's own color.
+//    4 edges of IntroZones.kS1Block1 in the slide's own accent color, the
+//    loop closes, the block fills and holds a "CLAIMED" stamp, then the
+//    cycle fades and restarts. No rival color and no dispute mechanics
+//    ever fire on this slide (R-1..R-4) — the capturer always renders in
+//    the player's own accent, never a rival color.
 // ---------------------------------------------------------------------------
 class IntroCaptureMap extends StatefulWidget {
   final Color accent;

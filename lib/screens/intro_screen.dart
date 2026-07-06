@@ -58,7 +58,7 @@ const _slides = [
   // 1 — Comeback
   _Slide(
     tag: 'CLAIM IT',
-    tagColor: kSea,
+    tagColor: kAccent,
     headline: 'Loop it. Own it.',
     body: 'Draw a loop while you run. Close it and the street flips to you instantly — no fights, no waiting on results.',
     anim: _Anim.pulse,
@@ -67,7 +67,7 @@ const _slides = [
   // 2 — Provocation
   _Slide(
     tag: 'YOUR TURF',
-    tagColor: kAccent,
+    tagColor: kSea,
     headline: 'A rival stole your block.',
     body: 'Every street belongs to the last runner who looped it. Their name. Your pavement. Take it back — or keep paying rent in shoe rubber.',
     anim: _Anim.hexCapture,
