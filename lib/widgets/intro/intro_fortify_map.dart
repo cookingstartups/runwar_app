@@ -138,7 +138,16 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     '⌃⌃ ARMOR 2',
     '⌃⌃⌃ ARMOR 3',
   ];
-  static const List<double> _kArmorBorderWidths = [1.5, 3.0, 5.0];
+
+  // The final-lap (ARMOR 3) border width is IntroContinuity's shared
+  // constant, not a local literal — slide 4 (SHIELD) reuses this exact
+  // value to open on this slide's terminal state, so the two frames can
+  // never visually drift apart.
+  static const List<double> _kArmorBorderWidths = [
+    1.5,
+    3.0,
+    IntroContinuity.kFortifyEndBorderWidth,
+  ];
 
   Offset _routeCentroid() {
     if (routePts.isEmpty) return Offset.zero;
@@ -196,7 +205,11 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     drawInheritedBlocks(canvas, inheritedPts);
 
     // 1. Block fill — thickens with each completed lap (ARMOR 1 -> 2 -> 3).
-    final fillOpacity = 0.30 + lap * 0.18;
+    // The final lap (ARMOR 3) resolves to IntroContinuity's shared constant
+    // directly, rather than recomputing a value that merely happens to
+    // match — slide 4 (SHIELD) opens on this exact fill alpha.
+    final fillOpacity =
+        lap == 2 ? IntroContinuity.kFortifyEndFillAlpha : 0.30 + lap * 0.18;
     drawFillColor(canvas, routePts, accent, fillOpacity);
 
     // 2. Border — thickens with each completed lap; gold-tinted at ARMOR 3.

@@ -694,4 +694,15 @@ abstract final class IntroContinuity {
   /// that same union directly (never replaying slide 1's controller), so the
   /// player's turf persists across the cut instead of the map resetting empty.
   static const double kS1CapturedFillAlpha = 0.28; // union hold alpha
+
+  /// FORTIFY's (slide 2) final-lap ARMOR-3 terminal state, carried into
+  /// SHIELD's (slide 4) Beat-1 opening frame. Derived from
+  /// intro_fortify_map.dart's own final-lap math (`lap == 2`):
+  /// fillOpacity = 0.30 + 2 * 0.18 = 0.66, borderWidth = _kArmorBorderWidths[2].
+  /// Both intro_fortify_map.dart's own final lap and intro_defense_map.dart's
+  /// held opening beat reference these constants directly (never re-derive
+  /// the numbers independently), so the two frames are structurally
+  /// guaranteed to match rather than merely visually approximate.
+  static const double kFortifyEndFillAlpha = 0.66; // ARMOR 3 fill
+  static const double kFortifyEndBorderWidth = 5.0; // ARMOR 3 border (gold)
 }
