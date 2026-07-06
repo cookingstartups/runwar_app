@@ -5,12 +5,12 @@ import '../../theme.dart';
 import 'intro_helpers.dart';
 
 // ---------------------------------------------------------------------------
-// 4. IntroFortifyMap — 3 re-laps of the shared block, ARMOR 1->2->3 (slide 4).
+// 4. IntroFortifyMap - 3 re-laps of the shared block, ARMOR 1->2->3 (slide 4).
 //    8s total loop, ~2.7s per lap. Traces IntroZones.kS1Block1 directly
-//    (continuity with slides 2/3 — R-13), replacing the old bespoke
+//    (continuity with slides 2/3 - R-13), replacing the old bespoke
 //    old bespoke 6-waypoint route that pointed at an unrelated location.
 //    Lap/badge/border are derived as a pure function of the controller
-//    value inside AnimatedBuilder.builder — no addListener/setState
+//    value inside AnimatedBuilder.builder - no addListener/setState
 //    anti-pattern (protocol rule 1; design.md).
 // ---------------------------------------------------------------------------
 class IntroFortifyMap extends StatefulWidget {
@@ -22,6 +22,15 @@ class IntroFortifyMap extends StatefulWidget {
 
 class _IntroFortifyMapState extends State<IntroFortifyMap>
     with TickerProviderStateMixin, IntroMapMixin<IntroFortifyMap> {
+  // This slide's layout (visualTopTextBottom) overlays the text/CTA block
+  // over roughly the bottom half of the screen. IntroContinuity.kMapCenter
+  // is shared with slides 3 and 4, which use a different layout - reusing it
+  // here put kS1Block1 too far south on screen, clipping it behind the text
+  // panel. This constant is local to this slide only; it must NOT be merged
+  // back into IntroContinuity.kMapCenter, which the other slides still rely
+  // on unchanged.
+  static const _kMapCenter = LatLng(39.4608, -0.3756);
+
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
@@ -74,7 +83,7 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: IntroContinuity.kMapCenter,
+            center: _kMapCenter,
             zoom: IntroContinuity.kMapZoom,
             onReady: _onMapReady,
           ),
@@ -90,7 +99,7 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
                 final tailPx = (_ctrl.value * kIntroRouteEstimatedMeters)
                         .clamp(0.0, kCometTailMaxMeters) /
                     metersPerPx;
-                // Pure function of the controller value — exactly 3 laps,
+                // Pure function of the controller value - exactly 3 laps,
                 // no separate _level state field or listener (R-12).
                 final lap = (_ctrl.value * 3).floor().clamp(0, 2);
                 return CustomPaint(
@@ -140,7 +149,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
   ];
 
   // The final-lap (ARMOR 3) border width is IntroContinuity's shared
-  // constant, not a local literal — slide 4 (SHIELD) reuses this exact
+  // constant, not a local literal - slide 4 (SHIELD) reuses this exact
   // value to open on this slide's terminal state, so the two frames can
   // never visually drift apart.
   static const List<double> _kArmorBorderWidths = [
@@ -159,7 +168,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     return Offset(sumX / routePts.length, sumY / routePts.length);
   }
 
-  /// NW-most vertex — approximated as minimising (dx + dy) in screen-space.
+  /// NW-most vertex - approximated as minimising (dx + dy) in screen-space.
   Offset _nwVertex() {
     if (routePts.isEmpty) return Offset.zero;
     Offset nw = routePts[0];
@@ -201,18 +210,18 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
   void paint(Canvas canvas, Size size) {
     if (routePts.isEmpty) return;
 
-    // 0. Inherited orange blocks — static base.
+    // 0. Inherited orange blocks - static base.
     drawInheritedBlocks(canvas, inheritedPts);
 
-    // 1. Block fill — thickens with each completed lap (ARMOR 1 -> 2 -> 3).
+    // 1. Block fill - thickens with each completed lap (ARMOR 1 -> 2 -> 3).
     // The final lap (ARMOR 3) resolves to IntroContinuity's shared constant
     // directly, rather than recomputing a value that merely happens to
-    // match — slide 4 (SHIELD) opens on this exact fill alpha.
+    // match - slide 4 (SHIELD) opens on this exact fill alpha.
     final fillOpacity =
         lap == 2 ? IntroContinuity.kFortifyEndFillAlpha : 0.30 + lap * 0.18;
     drawFillColor(canvas, routePts, accent, fillOpacity);
 
-    // 2. Border — thickens with each completed lap; gold-tinted at ARMOR 3.
+    // 2. Border - thickens with each completed lap; gold-tinted at ARMOR 3.
     final borderColor = lap == 2 ? kAccent2 : accent;
     final borderWidth = _kArmorBorderWidths[lap];
     final loopPath = Path()..moveTo(routePts[0].dx, routePts[0].dy);
@@ -229,7 +238,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
         ..strokeJoin = StrokeJoin.round,
     );
 
-    // 3. ARMOR badge — steps 1 -> 2 -> 3 as each ~2.7s lap completes (R-12).
+    // 3. ARMOR badge - steps 1 -> 2 -> 3 as each ~2.7s lap completes (R-12).
     final nw = _nwVertex();
     final centroid = _routeCentroid();
     final labelPos = nw + (centroid - nw) * 0.18;
@@ -248,7 +257,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     )..layout();
     tp.paint(canvas, labelPos - Offset(tp.width / 2, tp.height / 2));
 
-    // 4. Runner traces the block once per lap (3 laps / 8s loop) — persists
+    // 4. Runner traces the block once per lap (3 laps / 8s loop) - persists
     // continuously (no fade) so the loop reads as ongoing training effort.
     final closedRoute = [...routePts, routePts[0]];
     final lapPos = (t * 3) % 1.0;
