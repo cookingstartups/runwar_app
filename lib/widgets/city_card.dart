@@ -10,10 +10,16 @@ class CityCard extends StatefulWidget {
     required this.city,
     required this.selected,
     required this.onTap,
+    this.inviteHint = false,
   });
   final CityEntry city;
   final bool selected;
   final VoidCallback onTap;
+
+  /// Opt-in "Invite friends to unlock" affordance for locked cards. Defaults
+  /// to false so the shipped CitiesSelectionScreen call site (which never
+  /// passes this) is visually unaffected.
+  final bool inviteHint;
 
   @override
   State<CityCard> createState() => _CityCardState();
@@ -272,6 +278,25 @@ class _CityCardState extends State<CityCard> with SingleTickerProviderStateMixin
                           color: kFgMuted,
                         ),
                       ),
+                      if (widget.inviteHint && !widget.city.isUnlocked) ...[
+                        const SizedBox(height: 6),
+                        const Row(
+                          children: [
+                            Icon(Icons.ios_share, size: 11, color: kAccent2),
+                            SizedBox(width: 4),
+                            Text(
+                              'Invite friends to unlock',
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 8,
+                                letterSpacing: 1.0,
+                                color: kAccent2,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),

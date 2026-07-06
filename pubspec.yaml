@@ -128,10 +128,12 @@ flutter:
     - assets/cities/
     - assets/icons/
     - assets/maps/
+    - assets/hero_photos/
     - assets/intro_tiles/15/16348/
     - assets/intro_tiles/15/16349/
     - assets/intro_tiles/15/16350/
     - assets/intro_tiles/15/16351/
+    - assets/intro_tiles/15/16352/
     - assets/intro_tiles/16/32697/
     - assets/intro_tiles/16/32698/
     - assets/intro_tiles/16/32699/
@@ -139,4 +141,6 @@ flutter:
     - assets/intro_tiles/16/32701/
     - assets/intro_tiles/16/32702/
     - assets/intro_tiles/16/32703/
+    - assets/intro_tiles/16/32704/
+    - assets/intro_tiles/16/32705/
     - assets/screenshots/

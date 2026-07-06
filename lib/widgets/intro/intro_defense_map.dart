@@ -1,25 +1,24 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import '../../theme.dart';
 import 'intro_helpers.dart';
+import 'intro_phone_card_overlay.dart';
 
 // ---------------------------------------------------------------------------
-// 6A. IntroDefenseMapA — SHIELD superpower, Variant A "Inventory Drop"
+// 3. IntroDefenseMapA — 4-beat continuity scene, 8s loop (slide 3).
 //
-// Scene (9s loop, t ∈ [0,1]):
-//   0.00–0.20  Inherited orange Ruzafa territory visible.
-//   0.10–0.40  Player 3 (pink-red) runs real-street Valencia route, drawing a lasso.
-//   0.40–0.711 Newly-claimed block enters dispute (amber fill + dashed border).
-//              Dispute hold ≈ 2.8 s.
-//   0.711–0.80 Shield icon (orange hex outline) flies from a bottom-center
-//              inventory slot to the disputed centroid; stamps and pulses.
-//              A blue-tinted hex aura outlines the disputed polygon.
-//   0.80–0.944 3 staggered hex-aura pulses ripple outward; attacker lasso
-//              fades; disputed fill stays amber.
-//   0.944–1.00 Disputed block snaps to kAccent orange ownership; brief
-//              "DEFENDED" label at centroid.
+//    0-1s   Slide 2's end state: kS1Block1 filled/bordered per
+//           IntroContinuity, "CLAIMED" stamp fading out. Painted directly
+//           (R-6) — this frame never replays slide 2's controller.
+//    1-3s   Pink (kRunnerCPink) rival comet approaches along the block's
+//           edge; a "RAID" alert chip slides in; border stress-flickers.
+//    3-5s   IntroPhoneCardOverlay (a static Positioned widget, not part of
+//           the map painter — R-8) is visible; a shield hex flies from it
+//           to the block centroid; a blue dome ignites over the block.
+//    5-8s   The pink attack trace shatters into fading segments and
+//           retreats (R-9); the block stays orange throughout; a shield
+//           badge pins; a "DEFENDED" stamp appears.
 // ---------------------------------------------------------------------------
 class IntroDefenseMapA extends StatefulWidget {
   final Color accent;
@@ -33,26 +32,16 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  // Runner C (pink-red) — 5-point on-screen attacker beam.
-  // Short loop fully enclosing kS1Block1 so the disputed-area clip is non-degenerate.
-  // Starts west of the block (inside the viewport rect centered on 39.4650,-0.3756)
-  // and traces a tight ring around the block, total path under ~400 m.
-  // pt5 ≈ pt1 closes the loop.
-  static const _kP3RouteA = [
-    LatLng(39.4641, -0.3795), // pt1 — west edge, on-screen
-    LatLng(39.4660, -0.3790), // pt2 — north-west of block
-    LatLng(39.4663, -0.3760), // pt3 — north-east of block
-    LatLng(39.4645, -0.3755), // pt4 — south-east of block
-    LatLng(39.4641, -0.3795), // pt5 ≈ pt1 — close loop
+  // Pink rival's raid approach — converges on kS1Block1's north edge
+  // (vertices C-D), "along the block's edge" per the Beat-2 design.
+  static const _kRaidApproachRoute = [
+    LatLng(39.4646, -0.3737),
+    LatLng(39.4636, -0.37505),
+    LatLng(39.462413, -0.376554), // midpoint of kS1Block1 edge C-D
   ];
 
-  // Pink-red attacker color for player 3.
-  static const Color _kP3Color = Color(0xFFFF3B7A);
-
-  List<List<Offset>> _inheritedPts = [];
-  List<Offset> _p3Route = [];
-  List<Offset> _disputedArea = [];
-  List<Offset> _sharedTransferVertices = [];
+  List<Offset> _blockPoly = [];
+  List<Offset> _raidRoute = [];
 
   void _onMapReady() {
     final cam = mapCtrl.camera;
@@ -60,97 +49,35 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
       final p = cam.latLngToScreenPoint(ll);
       return Offset(p.x.toDouble(), p.y.toDouble());
     }
-    markMapReady(() {
-      _inheritedPts = IntroZones.kS1All
-          .map((block) => block.map(toScreen).toList())
-          .toList();
-      _p3Route = _kP3RouteA.map(toScreen).toList();
 
-      // Compute disputed area dynamically (screen-space, not GPS-space).
-      final lassoScreen = _p3Route;
-      final block1Screen = IntroZones.kS1Block1.map(toScreen).toList();
-      var clipped = _sutherlandHodgman(lassoScreen, block1Screen);
-      if (clipped.length < 3 || _polygonArea(clipped) <= 1.0) {
-        // Fallback: try kS1Block2.
-        final block2Screen = IntroZones.kS1Block2.map(toScreen).toList();
-        clipped = _sutherlandHodgman(lassoScreen, block2Screen);
-      }
-      if (clipped.length >= 3 && _polygonArea(clipped) > 1.0) {
-        _disputedArea = clipped;
-        _sharedTransferVertices =
-            _extractSharedVertices(clipped, block1Screen);
-      } else {
-        // Both intersections empty — skip all dispute visuals.
-        _disputedArea = [];
-        _sharedTransferVertices = [];
-      }
+    markMapReady(() {
+      _blockPoly = IntroZones.kS1Block1.map(toScreen).toList();
+      _raidRoute = _kRaidApproachRoute.map(toScreen).toList();
     });
   }
 
-  // ── Sutherland-Hodgman polygon clipping helpers ───────────────────────────
-
-  static List<Offset> _sutherlandHodgman(
-      List<Offset> subject, List<Offset> clip) {
-    var output = List<Offset>.from(subject);
-    if (output.isEmpty) return output;
-    final n = clip.length;
-    for (int i = 0; i < n; i++) {
-      if (output.isEmpty) break;
-      final input = List<Offset>.from(output);
-      output.clear();
-      final edgeA = clip[i];
-      final edgeB = clip[(i + 1) % n];
-      for (int j = 0; j < input.length; j++) {
-        final curr = input[j];
-        final prev = input[(j + 1) % input.length];
-        final currInside = _isInside(curr, edgeA, edgeB);
-        final prevInside = _isInside(prev, edgeA, edgeB);
-        if (currInside) {
-          if (!prevInside) output.add(_intersection(prev, curr, edgeA, edgeB));
-          output.add(curr);
-        } else if (prevInside) {
-          output.add(_intersection(prev, curr, edgeA, edgeB));
-        }
-      }
+  /// Beat-3 window (3-5s of the 8s loop) with a short fade in/out so the
+  /// phone-card overlay does not pop in/out abruptly.
+  double _cardOpacity(double v) {
+    const start = 3 / 8;
+    const end = 5 / 8;
+    const fadeWindow = 0.02;
+    if (v < start || v > end) return 0.0;
+    if (v < start + fadeWindow) {
+      return ((v - start) / fadeWindow).clamp(0.0, 1.0);
     }
-    return output;
-  }
-
-  static bool _isInside(Offset p, Offset a, Offset b) =>
-      (b.dx - a.dx) * (p.dy - a.dy) - (b.dy - a.dy) * (p.dx - a.dx) >= 0;
-
-  static Offset _intersection(Offset a, Offset b, Offset c, Offset d) {
-    final dxAB = b.dx - a.dx, dyAB = b.dy - a.dy;
-    final dxCD = d.dx - c.dx, dyCD = d.dy - c.dy;
-    final denom = dxAB * dyCD - dyAB * dxCD;
-    if (denom.abs() < 1e-10) return a; // parallel — degenerate guard
-    final t = ((c.dx - a.dx) * dyCD - (c.dy - a.dy) * dxCD) / denom;
-    return Offset(a.dx + t * dxAB, a.dy + t * dyAB);
-  }
-
-  static double _polygonArea(List<Offset> pts) {
-    if (pts.length < 3) return 0.0;
-    double area = 0;
-    for (int i = 0; i < pts.length; i++) {
-      final j = (i + 1) % pts.length;
-      area += pts[i].dx * pts[j].dy - pts[j].dx * pts[i].dy;
+    if (v > end - fadeWindow) {
+      return ((end - v) / fadeWindow).clamp(0.0, 1.0);
     }
-    return area.abs() / 2.0;
-  }
-
-  static List<Offset> _extractSharedVertices(
-      List<Offset> disputed, List<Offset> block,
-      {double eps = 2.0}) {
-    return disputed
-        .where((d) => block.any((b) => (d - b).distance < eps))
-        .toList();
+    return 1.0;
   }
 
   @override
   void initState() {
     super.initState();
     _fadeCtrl = AnimationController(vsync: this, duration: kIntroFadeDuration);
-    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 9));
+    _ctrl =
+        AnimationController(vsync: this, duration: const Duration(seconds: 8));
     Future.delayed(kIntroFadeDelay, () {
       if (mounted) _fadeCtrl.forward();
     });
@@ -174,8 +101,8 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4650, -0.3756),
-            zoom: 16.0,
+            center: IntroContinuity.kMapCenter,
+            zoom: IntroContinuity.kMapZoom,
             onReady: _onMapReady,
           ),
           if (mapReady)
@@ -187,62 +114,60 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
                 const earthCircumference = 2 * math.pi * 6378137.0;
                 final metersPerPx = (earthCircumference * math.cos(lat)) /
                     (256.0 * math.pow(2.0, zoom));
-                final tailPx = ((_ctrl.value * kIntroRouteEstimatedMeters)
-                            .clamp(0.0, kCometTailMaxMeters) /
-                        metersPerPx) *
-                    2.0;
+                final tailPx =
+                    kIntroRouteEstimatedMeters.clamp(0.0, kCometTailMaxMeters) /
+                        metersPerPx;
                 return CustomPaint(
                   painter: _IntroDefenseMapAPainter(
                     t: _ctrl.value,
                     accent: widget.accent,
-                    inheritedPts: _inheritedPts,
-                    p3Route: _p3Route,
-                    disputedArea: _disputedArea,
-                    sharedTransferVertices: _sharedTransferVertices,
-                    p3Color: _kP3Color,
+                    blockPoly: _blockPoly,
+                    raidRoute: _raidRoute,
                     tailLengthPx: tailPx,
                   ),
                   child: const SizedBox.expand(),
                 );
               },
             ),
+          _cardOverlay(),
         ],
       ),
     );
   }
+
+  // Phone-card overlay — Positioned direct Stack child (R-8, protocol
+  // rule 7). IntroPhoneCardOverlay animates its own opacity internally,
+  // so this call site stays a single short expression.
+  Widget _cardOverlay() => Positioned(
+        left: 16,
+        right: 16,
+        bottom: 96,
+        child:
+            IntroPhoneCardOverlay(controller: _ctrl, opacityOf: _cardOpacity),
+      );
 }
 
 class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
   final double t;
   @override
   final Color accent;
-  final List<List<Offset>> inheritedPts;
-  final List<Offset> p3Route;
-  final List<Offset> disputedArea;
-  final List<Offset> sharedTransferVertices;
-  final Color p3Color;
+  final List<Offset> blockPoly;
+  final List<Offset> raidRoute;
   final double tailLengthPx;
 
   _IntroDefenseMapAPainter({
     required this.t,
     required this.accent,
-    required this.inheritedPts,
-    required this.p3Route,
-    required this.disputedArea,
-    required this.sharedTransferVertices,
-    required this.p3Color,
+    required this.blockPoly,
+    required this.raidRoute,
     required this.tailLengthPx,
   });
 
-  // Phase boundaries (9 s loop, t ∈ [0, 1]).
-  static const double _kRouteStart = 0.10;
-  static const double _kRouteEnd = 0.40;
-  static const double _kDisputeStart = 0.40;
-  static const double _kShieldFlyStart = 0.711;
-  static const double _kShieldArrive = 0.800;
-  static const double _kPulseStart = 0.800;
-  static const double _kPulseEnd = 0.944;
-  static const double _kSnapStart = 0.944;
+  // Beat boundaries (8s loop, t in [0,1]).
+  static const double _kBeat1End = 1 / 8; // 0-1s
+  static const double _kBeat2End = 3 / 8; // 1-3s
+  static const double _kBeat3End = 5 / 8; // 3-5s
+  // Beat 4 runs from _kBeat3End through t=1.0 (5-8s).
 
   Offset _centroid(List<Offset> pts) {
     if (pts.isEmpty) return Offset.zero;
@@ -254,273 +179,219 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
     return Offset(sx / pts.length, sy / pts.length);
   }
 
-  /// Build a closed Path through [pts].
-  Path _polyPath(List<Offset> pts) {
+  /// The persistent shield badge pins to the block's top-right vertex (the
+  /// screen point with the smallest dy, i.e. the topmost corner of the
+  /// captured polygon) rather than the map, mirroring the reference scene
+  /// where the shield icon locks onto the zone's top-right corner and stays
+  /// there for the rest of the loop.
+  Offset _topRightVertex(List<Offset> pts) {
+    if (pts.isEmpty) return Offset.zero;
+    return pts.reduce((a, b) => a.dy <= b.dy ? a : b);
+  }
+
+  Path _makePoly(List<Offset> pts) {
+    if (pts.isEmpty) return Path();
     final p = Path()..moveTo(pts[0].dx, pts[0].dy);
     for (int i = 1; i < pts.length; i++) {
       p.lineTo(pts[i].dx, pts[i].dy);
     }
-    p.close();
-    return p;
+    return p..close();
   }
 
-  /// Draw a dashed stroke along a closed polygon.
-  void _drawDashedPolygon(
-    Canvas canvas,
-    List<Offset> pts,
-    Paint paint, {
-    double dash = 6,
-    double gap = 4,
-  }) {
-    if (pts.length < 2) return;
-    for (int i = 0; i < pts.length; i++) {
-      final a = pts[i];
-      final b = pts[(i + 1) % pts.length];
-      final seg = b - a;
-      final len = seg.distance;
-      if (len == 0) continue;
-      final dir = seg / len;
-      double traveled = 0;
-      while (traveled < len) {
-        final start = a + dir * traveled;
-        final end = a + dir * math.min(traveled + dash, len);
-        canvas.drawLine(start, end, paint);
-        traveled += dash + gap;
-      }
+  void _drawLabel(Canvas canvas, Offset centroid, String text, Color color) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 12,
+          letterSpacing: 2,
+          fontWeight: FontWeight.w700,
+          color: color,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(
+      canvas,
+      Offset(centroid.dx - tp.width / 2, centroid.dy - tp.height / 2),
+    );
+  }
+
+  void _drawRaidChip(Canvas canvas, Size size, double slideT) {
+    final dx = (1.0 - slideT) * 60;
+    final pos = Offset(size.width - 90 + dx, 40);
+    final tp = TextPainter(
+      text: TextSpan(
+        text: '⚠ RAID',
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 12,
+          letterSpacing: 1.5,
+          fontWeight: FontWeight.w700,
+          color: kRunnerCPink.withValues(alpha: slideT),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, pos);
+  }
+
+  /// R-9: the raid attempt visibly and unambiguously fails — the pink
+  /// trace shatters into fading fragments and the runner retreats, rather
+  /// than resolving off-screen or via a silent recolor.
+  void _drawShatterRetreat(Canvas canvas, List<Offset> route, double retreatT) {
+    if (route.length < 2) return;
+    final fade = (1.0 - retreatT).clamp(0.0, 1.0);
+    if (fade <= 0) return;
+    final rnd = math.Random(7);
+    for (int i = 0; i < route.length - 1; i++) {
+      final a = route[i];
+      final b = route[i + 1];
+      final jitter = Offset(
+        (rnd.nextDouble() - 0.5) * 18 * retreatT,
+        (rnd.nextDouble() - 0.5) * 18 * retreatT,
+      );
+      canvas.drawLine(
+        a + jitter,
+        b + jitter,
+        Paint()
+          ..color = kRunnerCPink.withValues(alpha: 0.6 * fade)
+          ..strokeWidth = 1.6
+          ..strokeCap = StrokeCap.round,
+      );
     }
+    // The runner retreats back toward the route's start as the trace
+    // shatters — the attack never touches the block's color.
+    final retreatPos = Offset.lerp(route.last, route.first, retreatT)!;
+    drawRunnerAt(canvas, retreatPos, kRunnerCPink.withValues(alpha: fade));
   }
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (p3Route.isEmpty) return;
+    if (blockPoly.isEmpty) return;
 
-    final segs = p3Route.length - 1;
-    final centroid = _centroid(disputedArea);
+    final centroid = _centroid(blockPoly);
+    final blockPath = _makePoly(blockPoly);
 
-    // 0. Inherited orange Ruzafa territory.
-    drawInheritedBlocks(canvas, inheritedPts);
+    // The block stays kAccent orange throughout every beat (R-9/R-11) —
+    // Beat 1's held end-state from slide 2, reused verbatim as the steady
+    // defended state through beats 2-4.
+    canvas.drawPath(
+      blockPath,
+      Paint()
+        ..color = accent.withValues(alpha: IntroContinuity.kBlock1EndFillAlpha)
+        ..style = PaintingStyle.fill,
+    );
 
-    // Phase 1: 0.10–0.40 — player 3 runs + lasso draws.
-    final routeProgress =
-        ((t - _kRouteStart) / (_kRouteEnd - _kRouteStart)).clamp(0.0, 1.0);
+    // Border stress-flickers during Beat 2 (raid approach); otherwise a
+    // steady solid IntroContinuity.kBlock1EndBorderWidth stroke.
+    double borderWidth = IntroContinuity.kBlock1EndBorderWidth;
+    double borderAlpha = 1.0;
+    if (t >= _kBeat1End && t < _kBeat2End) {
+      final flicker = (math.sin(t * math.pi * 30) + 1) / 2;
+      borderWidth =
+          IntroContinuity.kBlock1EndBorderWidth * (0.6 + 0.4 * flicker);
+      borderAlpha = 0.6 + 0.4 * flicker;
+    }
+    canvas.drawPath(
+      blockPath,
+      Paint()
+        ..color = accent.withValues(alpha: borderAlpha)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = borderWidth,
+    );
 
-    // Lasso trace fade — fully visible until 0.800, then fades to 0 by 0.944.
-    final lassoFade = t < _kPulseStart
-        ? 1.0
-        : (1.0 - (t - _kPulseStart) / (_kPulseEnd - _kPulseStart))
-            .clamp(0.0, 1.0);
+    // Beat 1 (0-1s): slide 2's end state — CLAIMED label fading out.
+    if (t < _kBeat1End) {
+      final claimedFade = (1.0 - t / _kBeat1End).clamp(0.0, 1.0);
+      if (claimedFade > 0) {
+        _drawLabel(
+            canvas, centroid, 'CLAIMED', accent.withValues(alpha: claimedFade));
+      }
+    }
 
-    if (lassoFade > 0 && routeProgress > 0) {
-      drawComet(
+    // Beat 2 (1-3s): pink raid comet approaches along the block's edge;
+    // a "RAID" alert chip slides in.
+    if (t >= _kBeat1End && t < _kBeat2End && raidRoute.isNotEmpty) {
+      final approachT =
+          ((t - _kBeat1End) / (_kBeat2End - _kBeat1End)).clamp(0.0, 1.0);
+      drawComet(canvas, raidRoute, approachT,
+          tailLengthPx: tailLengthPx, color: kRunnerCPink);
+      final segs = raidRoute.length - 1;
+      if (segs > 0) {
+        final traveled = approachT * segs;
+        final segIdx = traveled.floor().clamp(0, segs - 1);
+        final segFrac = (traveled - segIdx).clamp(0.0, 1.0);
+        final pos = Offset.lerp(
+          raidRoute[segIdx],
+          raidRoute[(segIdx + 1).clamp(0, segs)],
+          segFrac,
+        )!;
+        drawRunnerAt(canvas, pos, kRunnerCPink);
+      }
+
+      final chipSlideT = (((t - _kBeat1End) / 0.05)).clamp(0.0, 1.0);
+      _drawRaidChip(canvas, size, chipSlideT);
+    }
+
+    // Beat 3 (3-5s): shield hex flies from the phone-card position to the
+    // block centroid; a blue dome ignites over the block.
+    if (t >= _kBeat2End && t < _kBeat3End) {
+      final flyT =
+          ((t - _kBeat2End) / (_kBeat3End - _kBeat2End)).clamp(0.0, 1.0);
+      final cardPos = Offset(size.width / 2, size.height - 96);
+      final hexPos =
+          Offset.lerp(cardPos, centroid, Curves.easeOut.transform(flyT))!;
+      drawHexGlyph(
         canvas,
-        p3Route,
-        routeProgress,
-        tailLengthPx: tailLengthPx,
-        color: p3Color,
-        decayMul: lassoFade,
-      );
-    }
-
-    // Runner dot for player 3 while route is being drawn.
-    if (t >= _kRouteStart && t < _kShieldFlyStart && segs > 0) {
-      final traveled = routeProgress * segs;
-      final segIdx = traveled.floor().clamp(0, segs - 1);
-      final segFrac = (traveled - segIdx).clamp(0.0, 1.0);
-      final pos = Offset.lerp(
-        p3Route[segIdx],
-        p3Route[(segIdx + 1).clamp(0, segs)],
-        segFrac,
-      )!;
-      canvas.drawCircle(
-        pos,
-        16,
+        hexPos,
+        12,
         Paint()
-          ..color = p3Color.withValues(alpha: 0.35)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
+          ..color = accent.withValues(alpha: flyT)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0,
       );
-      canvas.drawCircle(pos, 5.5, Paint()..color = p3Color);
-      canvas.drawCircle(
-        pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.85),
-      );
-    }
 
-    // [NEW] Residual attacker-claim fill (AC-6).
-    // Difference of lasso minus disputed area; persists from _kDisputeStart through t=1.0.
-    if (t >= _kDisputeStart && disputedArea.length >= 3 && p3Route.length >= 3) {
-      final lassoPath = _polyPath(p3Route);
-      final disputedPath = _polyPath(disputedArea);
-      final residualPath =
-          Path.combine(PathOperation.difference, lassoPath, disputedPath);
-      final residualBounds = residualPath.getBounds();
-      if (residualBounds.width > 0 && residualBounds.height > 0) {
+      // Blue dome ignites over the block once the hex has mostly arrived.
+      final domeT = ((flyT - 0.5) / 0.5).clamp(0.0, 1.0);
+      if (domeT > 0) {
         canvas.drawPath(
-          residualPath,
+          blockPath,
           Paint()
-            ..color = p3Color.withValues(alpha: 0.38)
+            ..color = kSea.withValues(alpha: 0.28 * domeT)
             ..style = PaintingStyle.fill,
         );
-      }
-    }
-
-    // Ping burst at lasso close — fires on the shared kS1Block1 vertices
-    // (A and D) where defender territory transfers to the attacker.
-    if (sharedTransferVertices.isNotEmpty) {
-      final pingT = (t - _kDisputeStart) / 0.15; // ramp 0.40–0.55
-      if (pingT > 0 && pingT < 1.0) {
-        drawPings(canvas, sharedTransferVertices, pingT.clamp(0.0, 1.0));
-      }
-    }
-
-    // Phase 2: 0.40–0.944 — disputed area amber fill + dashed amber border.
-    // (Snaps to orange in phase 5.)
-    const disputedAmber = Color(0xFFFFB200);
-    if (disputedArea.length >= 3) {
-      if (t >= _kDisputeStart && t < _kSnapStart) {
-        final dispRamp =
-            ((t - _kDisputeStart) / 0.15).clamp(0.0, 1.0); // ramp 0.40–0.55
-        drawFillColor(canvas, disputedArea, disputedAmber, dispRamp * 0.38);
-
-        // Dashed amber border, same ramp.
-        if (dispRamp > 0) {
-          final dashPaint = Paint()
-            ..color = disputedAmber.withValues(alpha: dispRamp)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.6
-            ..strokeCap = StrokeCap.round;
-          _drawDashedPolygon(canvas, disputedArea, dashPaint);
-        }
-      } else if (t >= _kSnapStart) {
-        // Phase 5: snap amber → orange.
-        final snapT = ((t - _kSnapStart) / 0.05).clamp(0.0, 1.0);
-        final dispColor = Color.lerp(disputedAmber, kAccent, snapT)!;
-        drawFillColor(canvas, disputedArea, dispColor, 0.38);
-      }
-    }
-
-    // Phase 3: 0.711–0.800 — shield icon flies from inventory slot to centroid.
-    final inventoryPos = Offset(size.width / 2, size.height - 40);
-
-    if (t >= _kShieldFlyStart && t < _kShieldArrive && centroid != Offset.zero) {
-      final flyT = ((t - _kShieldFlyStart) /
-              (_kShieldArrive - _kShieldFlyStart))
-          .clamp(0.0, 1.0);
-      final pos = Offset.lerp(inventoryPos, centroid, flyT)!;
-      final alpha = flyT.clamp(0.0, 1.0);
-
-      // Soft glow.
-      canvas.drawCircle(
-        pos,
-        14,
-        Paint()
-          ..color = accent.withValues(alpha: 0.35 * alpha)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
-      );
-
-      // Hex glyph outline.
-      drawHexGlyph(
-        canvas,
-        pos,
-        10,
-        Paint()
-          ..color = accent.withValues(alpha: alpha)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.0
-          ..strokeJoin = StrokeJoin.round,
-      );
-    }
-
-    // Phase 3b: 0.800 onward — hex glyph stamped at centroid, pulsing alpha.
-    if (t >= _kShieldArrive && centroid != Offset.zero) {
-      // Pulse alpha 0.7 → 1.0 → 0.7 via sine wave.
-      // Fade out after 0.944 (during snap).
-      final stampPulse = 0.85 + 0.15 * math.sin((t - _kShieldArrive) * math.pi * 4);
-      final stampFade = t < _kSnapStart
-          ? 1.0
-          : (1.0 - (t - _kSnapStart) / 0.05).clamp(0.0, 1.0);
-
-      drawHexGlyph(
-        canvas,
-        centroid,
-        10,
-        Paint()
-          ..color = accent.withValues(alpha: stampPulse * stampFade)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.0
-          ..strokeJoin = StrokeJoin.round,
-      );
-    }
-
-    // Phase 3c: 0.711–0.944 — blue-tinted hex aura outlining the disputed area.
-    if (t >= _kShieldFlyStart && t < _kSnapStart && disputedArea.length >= 3) {
-      // Fade in from 0.711–0.800, hold, fade out 0.90–0.944.
-      double auraFade;
-      if (t < _kShieldArrive) {
-        auraFade = ((t - _kShieldFlyStart) / 0.089).clamp(0.0, 1.0);
-      } else if (t < 0.90) {
-        auraFade = 1.0;
-      } else {
-        auraFade = (1.0 - (t - 0.90) / 0.044).clamp(0.0, 1.0);
-      }
-      if (auraFade > 0) {
-        final auraPaint = Paint()
-          ..color = kSea.withValues(alpha: 0.4 * auraFade)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 3.0
-          ..strokeJoin = StrokeJoin.round;
-        canvas.drawPath(_polyPath(disputedArea), auraPaint);
-      }
-    }
-
-    // Phase 4: 0.800–0.944 — 3 concentric hex auras pulse outward.
-    if (t >= _kPulseStart && t < _kPulseEnd && centroid != Offset.zero) {
-      const pulseSpan = _kPulseEnd - _kPulseStart; // 0.144
-      // Stagger ~0.4s apart in a 9s loop = 0.0444 of t per stagger.
-      const stagger = 0.044;
-      const perPulse = 0.18; // each pulse expands over 0.18 of t
-
-      for (int i = 0; i < 3; i++) {
-        final localStart = _kPulseStart + i * stagger;
-        if (t < localStart) continue;
-        final ringT = ((t - localStart) / perPulse).clamp(0.0, 1.0);
-        if (ringT >= 1.0) continue;
-        final radius = 20 + ringT * 60; // 20 → 80
-        final ringAlpha = (1.0 - ringT) * 0.55;
-        drawHexGlyph(
-          canvas,
-          centroid,
-          radius,
+        canvas.drawPath(
+          blockPath,
           Paint()
-            ..color = kSea.withValues(alpha: ringAlpha)
+            ..color = kSea.withValues(alpha: 0.6 * domeT)
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 2.0,
+            ..strokeWidth = 2.5,
         );
       }
-      // Silence unused-const warning (pulseSpan documents intent).
-      assert(pulseSpan > 0);
     }
 
-    // Phase 5: 0.944–1.00 — "DEFENDED" label fades in at centroid.
-    if (t >= _kSnapStart && centroid != Offset.zero) {
-      final labelFade = ((t - _kSnapStart) / 0.05).clamp(0.0, 1.0);
-      if (labelFade > 0) {
-        final tp = TextPainter(
-          text: TextSpan(
-            text: 'DEFENDED',
-            style: GoogleFonts.bebasNeue(
-              fontSize: 18,
-              letterSpacing: 1.5,
-              color: accent.withValues(alpha: labelFade),
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        tp.paint(
-          canvas,
-          Offset(
-            centroid.dx - tp.width / 2,
-            centroid.dy - tp.height - 18,
-          ),
-        );
+    // Beat 4 (5-8s): the raid trace shatters and retreats; the block stays
+    // orange; a shield badge pins; the "DEFENDED" stamp appears.
+    if (t >= _kBeat3End) {
+      final retreatT = ((t - _kBeat3End) / (1.0 - _kBeat3End)).clamp(0.0, 1.0);
+      _drawShatterRetreat(canvas, raidRoute, retreatT);
+
+      drawHexGlyph(
+        canvas,
+        _topRightVertex(blockPoly),
+        9,
+        Paint()
+          ..color = kSea.withValues(alpha: 0.9)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0,
+      );
+
+      final stampOpacity = (retreatT / 0.3).clamp(0.0, 1.0);
+      if (stampOpacity > 0) {
+        _drawLabel(canvas, centroid, 'DEFENDED',
+            accent.withValues(alpha: stampOpacity));
       }
     }
   }
@@ -528,9 +399,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
   @override
   bool shouldRepaint(_IntroDefenseMapAPainter old) =>
       old.t != t ||
-      old.tailLengthPx != tailLengthPx ||
-      old.p3Route != p3Route ||
-      old.disputedArea != disputedArea ||
-      old.sharedTransferVertices != sharedTransferVertices ||
-      old.inheritedPts != inheritedPts;
+      old.blockPoly != blockPoly ||
+      old.raidRoute != raidRoute ||
+      old.tailLengthPx != tailLengthPx;
 }

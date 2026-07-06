@@ -669,3 +669,22 @@ abstract final class IntroZones {
     kS3OwnedBlock2,
   ];
 }
+
+// ---------------------------------------------------------------------------
+// Continuity constants shared by slides 2, 3 and 4 (onboarding-remake).
+// Slides 2-4 are three independently-mounted widgets with no shared
+// lifecycle, so "continuity" is enforced structurally: all three reference
+// these constants directly instead of repeating the literal values, which
+// guarantees they can never visually drift apart.
+// ---------------------------------------------------------------------------
+abstract final class IntroContinuity {
+  /// Single source of truth for slides 2, 3, 4's map center/zoom.
+  static const kMapCenter = LatLng(39.4650, -0.3756);
+  static const double kMapZoom = 16.0;
+
+  /// Slide-2 terminal state == slide-3 Beat-1 (0-1s) opening state.
+  /// Both the capture-map painter's held end frame and the defense-map
+  /// painter's opening frame resolve to these exact values.
+  static const double kBlock1EndFillAlpha = 0.42; // fill settles ~42%
+  static const double kBlock1EndBorderWidth = 3.0; // solid ~3px border
+}

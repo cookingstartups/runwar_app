@@ -5,16 +5,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme.dart';
 import '../providers/showcase_provider.dart';
+import '../widgets/intro/intro_cities_preview.dart';
+import '../widgets/intro/intro_hero_photo.dart';
 import '../widgets/intro/intro_loot_drop_map.dart';
-import '../widgets/intro/intro_survival_cut.dart';
+import '../widgets/intro/intro_purge_leaderboard.dart';
 import '../widgets/intro_map_animations.dart';
-import '../widgets/pulse_ring.dart';
 import '../widgets/tag_chip.dart';
+import '../widgets/valencia_button.dart';
 
 // ---------------------------------------------------------------------------
 // Animation type per slide
 // ---------------------------------------------------------------------------
-enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, defenseA, physicalEvents, lootDrop, survivalCut, none }
+enum _Anim { pulse, hexCapture, rivals, ctfDrop, fortify, defense, defenseA, physicalEvents, lootDrop, purgeCut, none }
 
 // ---------------------------------------------------------------------------
 // Layout modes
@@ -37,6 +39,7 @@ class _Slide {
   final _Anim anim;
   final _Layout layout;
   final int bodyMaxLines;
+  final String? monoSubline;
 
   const _Slide({
     required this.tag,
@@ -47,6 +50,7 @@ class _Slide {
     this.anim = _Anim.none,
     // ignore: unused_element_parameter
     this.bodyMaxLines = 3,
+    this.monoSubline,
   });
 }
 
@@ -55,8 +59,8 @@ const _slides = [
   _Slide(
     tag: 'YOUR TURF',
     tagColor: kAccent,
-    headline: 'A RIVAL STOLE\nYOUR BLOCK.',
-    body: 'Every block you sweat on belongs to the last runner who looped it. Their name. Your pavement. Take it back — or keep paying rent in shoe rubber.',
+    headline: 'A rival stole your block.',
+    body: 'Every street belongs to the last runner who looped it. Their name. Your pavement. Take it back — or keep paying rent in shoe rubber.',
     anim: _Anim.pulse,
     layout: _Layout.visualTopTextBottom,
   ),
@@ -64,27 +68,28 @@ const _slides = [
   _Slide(
     tag: 'CLAIM IT',
     tagColor: kSea,
-    headline: 'MAKE A LOOP TO TAKE\nBACK WHAT IS YOURS.',
-    body: 'Draw a loop while you run. Every meter you close is a meter you steal. Chip away at the giants — one block today, the whole neighbourhood by Sunday.',
+    headline: 'Loop it. Own it.',
+    body: 'Draw a loop while you run. Close it and the street flips to you instantly — no fights, no waiting on results.',
     anim: _Anim.hexCapture,
     layout: _Layout.textTopVisualBottom,
   ),
   // 3 — Shield (Variant A)
   // SHIELD Variant A — winner. B and C archived (classes kept in intro_map_animations.dart).
   _Slide(
-    tag: 'SHIELD · VARIANT A',
+    tag: 'SHIELD',
     tagColor: kAccent,
-    headline: 'ACTIVATE.\nDROP THE SHIELD.',
-    body: 'Earned on the streets — deployed from your couch. The inventory drop sends your shield flying to any territory you own.',
+    headline: 'Under attack? Tap back.',
+    body: 'Fire your shield straight from the phone. The attack breaks. Your paint stays.',
     anim: _Anim.defenseA,
     layout: _Layout.textTopVisualBottom,
+    monoSubline: 'DEFEND FROM HOME, FROM WORK, FROM BED',
   ),
   // 4 — Mastery / Fortify
   _Slide(
     tag: 'FORTIFY',
     tagColor: kAccent,
-    headline: 'RUN IT. OWN IT.\nFORTIFY IT.',
-    body: 'Lap your zone again and it levels up — all the way to level 15. The higher the level, the more it costs to take it back. The streets remember who trained hardest.',
+    headline: 'Run it again. Make it armor.',
+    body: 'Every extra lap hardens your claim. Level 1, level 2, level 3. The streets remember who trained hardest.',
     anim: _Anim.fortify,
     layout: _Layout.visualTopTextBottom,
   ),
@@ -92,8 +97,8 @@ const _slides = [
   _Slide(
     tag: 'EARN YOUR EDGE',
     tagColor: kSea,
-    headline: 'EARNED IN STREETS.\nDEPLOYED FROM HOME.',
-    body: 'Superpowers can\'t be bought. You earn them by running — then unleash them anywhere in the city without leaving your couch. Pay with kilometres, not cash.',
+    headline: 'Pay in kilometers. Not in cash.',
+    body: 'Shields, strikes, radar sweeps. Superpowers cannot be bought. Earn them on the street, deploy them from your couch.',
     anim: _Anim.defense,
     layout: _Layout.textTopVisualBottom,
   ),
@@ -101,8 +106,8 @@ const _slides = [
   _Slide(
     tag: 'LOOT DROPS',
     tagColor: kAccent2,
-    headline: 'FIRST FEET\nTAKE IT ALL.',
-    body: 'GPS drops hit the map without warning. Cash, crates, killer gear — pinned to a spot somewhere in your city. One winner: whoever\'s lungs get there first.',
+    headline: 'First feet take it all.',
+    body: 'Crates hit the map without warning. Cash, gear, killer loot — whoever\'s lungs get there first walks away with everything.',
     anim: _Anim.lootDrop,
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
@@ -111,8 +116,8 @@ const _slides = [
   _Slide(
     tag: 'SPECIAL EVENT',
     tagColor: kAccent,
-    headline: 'A FLAG DROPS.\nONE RUNNER WINS.',
-    body: 'A daily flag drops somewhere in the city. First feet claim the territory — and the glory.',
+    headline: 'A flag drops. The city sprints.',
+    body: 'One flag. One exact GPS point. Every runner notified in the same second.',
     anim: _Anim.ctfDrop,
     layout: _Layout.textTopVisualBottom,
     bodyMaxLines: 4,
@@ -121,9 +126,9 @@ const _slides = [
   _Slide(
     tag: 'THE PURGE',
     tagColor: kAccent2,
-    headline: 'THE PURGE\nHAS BEGUN.',
-    body: 'Once a week, the Purge begins. Are you under the water that week? You lose everything - zones, rank, access. Gone. There is no space for the lazy or undisciplined.',
-    anim: _Anim.survivalCut,
+    headline: 'Stay above the line.',
+    body: 'Without warning, a red line cuts the board. Land below it and you lose everything: zones, rank, access to the app.',
+    anim: _Anim.purgeCut,
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
   ),
@@ -131,17 +136,17 @@ const _slides = [
   _Slide(
     tag: 'YEARLY IN-PERSON EVENT',
     tagColor: kAccent2,
-    headline: 'THE GAME\nGETS REAL.',
-    body: 'Real-world races coming to your city — limited seats, livestreamed, glory on the line.',
+    headline: 'Real streets. Real rivals.',
+    body: 'Behind every gamertag is a runner in your city.',
     anim: _Anim.physicalEvents,
     layout: _Layout.visualTopTextBottom,
   ),
-  // 10 — Invite only
+  // 10 — Cities preview / final CTA
   _Slide(
     tag: 'INVITE ONLY',
     tagColor: kAccent,
-    headline: 'THE CITY\'S WAITING.\nMOST WON\'T GET IN.',
-    body: 'RunWar isn\'t for joggers. It\'s for the ones who feel it in their chest before the alarm goes off. If that\'s you — knock.',
+    headline: 'Choose your ground.',
+    body: 'Valencia is live. Five more cities sit behind the wall.',
     anim: _Anim.none,
     layout: _Layout.centeredClose,
   ),
@@ -158,9 +163,9 @@ Widget _buildAnimWidget(_Anim anim, Color accent) => switch (anim) {
       _Anim.fortify        => IntroFortifyMap(accent: accent),
       _Anim.defense        => IntroDefenseMap(accent: accent),
       _Anim.defenseA       => IntroDefenseMapA(accent: accent),
-      _Anim.physicalEvents => IntroPhysicalEventsMap(accent: accent),
+      _Anim.physicalEvents => const IntroHeroPhoto(),
       _Anim.lootDrop       => const IntroLootDropMap(),
-      _Anim.survivalCut    => const IntroSurvivalCut(),
+      _Anim.purgeCut       => const IntroPurgeLeaderboard(),
       _Anim.none           => const SizedBox.shrink(),
     };
 
@@ -303,6 +308,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
                     )),
                     child: _SlidePage(
                       slide: _slides[_prevPage],
+                      onDone: _done,
                       key: ValueKey(_prevPage),
                     ),
                   ),
@@ -319,6 +325,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
                     )),
                     child: _SlidePage(
                       slide: _slides[_page],
+                      onDone: _done,
                       key: ValueKey(_page),
                     ),
                   ),
@@ -413,7 +420,8 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
 // ---------------------------------------------------------------------------
 class _SlidePage extends StatelessWidget {
   final _Slide slide;
-  const _SlidePage({required this.slide, super.key});
+  final VoidCallback onDone;
+  const _SlidePage({required this.slide, required this.onDone, super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -425,7 +433,7 @@ class _SlidePage extends StatelessWidget {
       case _Layout.visualTopTextBottom:
         return _SplitBleedSlide(slide: slide, visualOnTop: true);
       case _Layout.centeredClose:
-        return _CenteredCloseSlide(slide: slide);
+        return _CitiesPreviewSlide(slide: slide, onDone: onDone);
     }
   }
 }
@@ -545,6 +553,10 @@ class _SplitBleedSlide extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: bodyStyle(size: 13, color: kFgMuted),
         ),
+        if (slide.monoSubline != null) ...[
+          const SizedBox(height: 10),
+          Text(slide.monoSubline!, style: monoStyle(size: 10, color: slide.tagColor)),
+        ],
       ],
     );
 
@@ -581,53 +593,59 @@ class _SplitBleedSlide extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout C — Centered close (slide 7: invite only)
-// Pure dark screen, centered typography, pulse ring — silence = pressure
+// Layout C — Cities preview (slide 10: choose your ground / final CTA)
+// Honest preview of real city selection — Valencia OPEN, five cities locked
+// behind an invite-to-unlock affordance — closing with the final signup CTA.
 // ---------------------------------------------------------------------------
-class _CenteredCloseSlide extends StatelessWidget {
+class _CitiesPreviewSlide extends StatelessWidget {
   final _Slide slide;
-  const _CenteredCloseSlide({required this.slide});
+  final VoidCallback _done;
+  const _CitiesPreviewSlide({required this.slide, required VoidCallback onDone})
+      : _done = onDone;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(32, 0, 32, 140),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Center(child: TagChip(label: slide.tag, color: slide.tagColor)),
-          const SizedBox(height: 16),
-          const PulseRing(),
-          const SizedBox(height: 20),
-          Text(
-            slide.headline,
-            textAlign: TextAlign.center,
-            style: GoogleFonts.bebasNeue(
-              fontSize: 62,
-              height: 1.0,
-              color: kFg,
-              letterSpacing: 3,
-            ),
+    final top = MediaQuery.of(context).padding.top;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(height: top + 24),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TagChip(label: slide.tag, color: slide.tagColor),
+              const SizedBox(height: 14),
+              Text(
+                slide.headline,
+                style: GoogleFonts.bebasNeue(
+                  fontSize: 42,
+                  height: 1.0,
+                  color: kFg,
+                  letterSpacing: 2,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                slide.body,
+                maxLines: slide.bodyMaxLines,
+                overflow: TextOverflow.ellipsis,
+                style: bodyStyle(size: 13, color: kFgMuted),
+              ),
+            ],
           ),
-          const SizedBox(height: 20),
-          Text(
-            slide.body,
-            textAlign: TextAlign.center,
-            maxLines: slide.bodyMaxLines,
-            overflow: TextOverflow.ellipsis,
-            style: bodyStyle(size: 15, color: kFgMuted),
+        ),
+        const SizedBox(height: 16),
+        const Expanded(child: IntroCitiesPreview()),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(28, 12, 28, 96),
+          child: ValenciaButton(
+            label: "I'M IN · CREATE MY ACCOUNT",
+            onPressed: _done,
           ),
-          const SizedBox(height: 20),
-          Container(width: 40, height: 1, color: kAccent.withValues(alpha: 0.3)),
-          const SizedBox(height: 16),
-          // Scarcity signal
-          Text(
-            'EARLY ACCESS · INVITE ONLY',
-            style: monoStyle(size: 9, color: kAccent2),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

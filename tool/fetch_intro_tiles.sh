@@ -24,7 +24,7 @@ SLIDES=(
   "39.4650 -0.3756 16 slide3_defense"
   "39.4607 -0.3762 16 slide4_fortify"
   "39.4620 -0.3760 16 slide6_loot"
-  "39.47360 -0.36490 16 slide7_flag"
+  "39.457074305497436 -0.35217545801606326 16 slide7_flag"
 )
 
 mkdir -p "$OUT_DIR"

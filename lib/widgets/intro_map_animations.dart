@@ -8,4 +8,3 @@ export 'intro/intro_flag_drop_map.dart';
 export 'intro/intro_fortify_map.dart';
 export 'intro/intro_defense_map_legacy.dart';
 export 'intro/intro_defense_map.dart';
-export 'intro/intro_physical_events_map.dart';
