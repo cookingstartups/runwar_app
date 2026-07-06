@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-// ── Color tokens — Valencia aesthetic (mirrors landing page CSS variables) ──
+// ── Color tokens - Valencia aesthetic (mirrors landing page CSS variables) ──
 const Color kBg      = Color(0xFF080E1A);  // Valencia bg
 const Color kSurface = Color(0xFF0F1C2E);  // Valencia surface
 const Color kBorder  = Color(0x14F5EDD8);  // rgba(245,237,216,0.08)
@@ -12,7 +12,7 @@ const Color kFgMuted = Color(0xFF7A8FA6);  // Valencia mute
 const Color kFgFaint = Color(0x40F5EDD8);  // 25% fg
 const Color kDanger  = Color(0xFFE83300);  // Valencia danger
 const Color kSea = Color(0xFF0096C7);
-const Color kLimeGreen = Color(0xFFA6FF00);  // Valencia lime
+const Color kLimeGreen = Color(0xFFA6FF00);  // Valencia lime - defender patrol
 
 // Gradient definitions (use with LinearGradient / ShaderMask)
 const List<Color> kGradientFire  = [Color(0xFFFF6B00), Color(0xFFE8330A)];
