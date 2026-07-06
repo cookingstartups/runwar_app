@@ -55,7 +55,7 @@ class _Slide {
 }
 
 const _slides = [
-  // 1 — Comeback
+  // 1 - Comeback
   _Slide(
     tag: 'CLAIM IT',
     tagColor: kAccent,
@@ -64,7 +64,7 @@ const _slides = [
     anim: _Anim.pulse,
     layout: _Layout.visualTopTextBottom,
   ),
-  // 2 — Mastery / Fortify
+  // 2 - Mastery / Fortify
   _Slide(
     tag: 'FORTIFY',
     tagColor: kAccent,
@@ -73,7 +73,7 @@ const _slides = [
     anim: _Anim.fortify,
     layout: _Layout.textTopVisualBottom,
   ),
-  // 3 — Provocation
+  // 3 - Provocation
   _Slide(
     tag: 'YOUR TURF',
     tagColor: kSea,
@@ -82,8 +82,8 @@ const _slides = [
     anim: _Anim.hexCapture,
     layout: _Layout.visualTopTextBottom,
   ),
-  // 4 — Shield (Variant A)
-  // SHIELD Variant A — winner. B and C archived (classes kept in intro_map_animations.dart).
+  // 4 - Shield (Variant A)
+  // SHIELD Variant A - winner. B and C archived (classes kept in intro_map_animations.dart).
   _Slide(
     tag: 'SHIELD',
     tagColor: kAccent,
@@ -93,16 +93,16 @@ const _slides = [
     layout: _Layout.textTopVisualBottom,
     monoSubline: 'DEFEND FROM HOME, FROM WORK, FROM BED',
   ),
-  // 5 — Superpowers
+  // 5 - Superpowers
   _Slide(
     tag: 'EARN YOUR EDGE',
     tagColor: kSea,
-    headline: 'Pay in kilometers. Not in cash.',
-    body: 'Shields, strikes, radar sweeps. Superpowers cannot be bought. Earn them on the street, deploy them from your couch.',
+    headline: 'You cannot pay-to-win. You must earn it.',
+    body: 'Shields, strikes, radar sweeps. Every superpower is earned on the street, never bought. Once it is yours, credits can only stretch its reach - extra range, extra time, never a shortcut to owning it.',
     anim: _Anim.defense,
     layout: _Layout.textTopVisualBottom,
   ),
-  // 6 — Loot drops
+  // 6 - Loot drops
   _Slide(
     tag: 'LOOT DROPS',
     tagColor: kAccent2,
@@ -112,7 +112,7 @@ const _slides = [
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
   ),
-  // 7 — Special events / CTF
+  // 7 - Special events / CTF
   _Slide(
     tag: 'SPECIAL EVENT',
     tagColor: kAccent,
@@ -132,7 +132,7 @@ const _slides = [
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 4,
   ),
-  // 9 — Real-world events
+  // 9 - Real-world events
   _Slide(
     tag: 'YEARLY IN-PERSON EVENT',
     tagColor: kAccent2,
@@ -141,7 +141,7 @@ const _slides = [
     anim: _Anim.physicalEvents,
     layout: _Layout.visualTopTextBottom,
   ),
-  // 10 — Cities preview / final CTA
+  // 10 - Cities preview / final CTA
   _Slide(
     tag: 'INVITE ONLY',
     tagColor: kAccent,
@@ -153,7 +153,7 @@ const _slides = [
 ];
 
 // ---------------------------------------------------------------------------
-// Shared top-level helper — resolves _Anim enum to its widget
+// Shared top-level helper - resolves _Anim enum to its widget
 // ---------------------------------------------------------------------------
 Widget _buildAnimWidget(_Anim anim, Color accent) => switch (anim) {
       _Anim.pulse          => IntroPulseMap(accent: accent),
@@ -291,11 +291,11 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
                 IntroLootDropMap(),
               ]),
             ),
-            // Stack-based slide transition — no AnimatedSwitcher flicker
+            // Stack-based slide transition - no AnimatedSwitcher flicker
             ClipRect(
               child: Stack(
                 children: [
-                  // Outgoing — slides away
+                  // Outgoing - slides away
                   SlideTransition(
                     position: Tween<Offset>(
                       begin: Offset.zero,
@@ -312,7 +312,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
                       key: ValueKey(_prevPage),
                     ),
                   ),
-                  // Incoming — slides in
+                  // Incoming - slides in
                   SlideTransition(
                     position: Tween<Offset>(
                       begin: _axis == Axis.vertical
@@ -333,7 +333,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
               ),
             ),
 
-            // Tap-border navigation — left edge → prev, right edge → next.
+            // Tap-border navigation - left edge → prev, right edge → next.
             // Excludes top 60px (SKIP button zone) and bottom 180px (CTA zone).
             Positioned(
               top: top + 60,
@@ -356,7 +356,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
               ),
             ),
 
-            // Skip row — floats above content
+            // Skip row - floats above content
             Positioned(
               top: top + 8,
               right: 20,
@@ -378,7 +378,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
               ),
             ),
 
-            // Dots + CTA — floats at bottom
+            // Dots + CTA - floats at bottom
             Positioned(
               left: 0,
               right: 0,
@@ -416,7 +416,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
 }
 
 // ---------------------------------------------------------------------------
-// Slide page — dispatches to layout variant
+// Slide page - dispatches to layout variant
 // ---------------------------------------------------------------------------
 class _SlidePage extends StatelessWidget {
   final _Slide slide;
@@ -439,7 +439,7 @@ class _SlidePage extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout A — Full bleed (fallback layout; kept for future use)
+// Layout A - Full bleed (fallback layout; kept for future use)
 // Real Valencia FlutterMap fills screen, scrim darkens bottom, text overlays.
 // ---------------------------------------------------------------------------
 class _FullBleedSlide extends StatelessWidget {
@@ -456,7 +456,7 @@ class _FullBleedSlide extends StatelessWidget {
           child: _buildAnimWidget(slide.anim, slide.tagColor),
         ),
 
-        // Bottom scrim — keeps CTA area readable
+        // Bottom scrim - keeps CTA area readable
         Positioned.fill(
           child: DecoratedBox(
             decoration: BoxDecoration(
@@ -475,7 +475,7 @@ class _FullBleedSlide extends StatelessWidget {
           ),
         ),
 
-        // Text — positioned center-left, above scrim
+        // Text - positioned center-left, above scrim
         Positioned(
           top: top + 80,
           left: 28,
@@ -514,7 +514,7 @@ class _FullBleedSlide extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout B — Full-bleed split (slides 2-6)
+// Layout B - Full-bleed split (slides 2-6)
 // Map fills the entire screen; a gradient dissolves it into kBg on one half
 // so that the text block floats on a clean dark surface.
 // ---------------------------------------------------------------------------
@@ -593,9 +593,9 @@ class _SplitBleedSlide extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout C — Cities preview (slide 10: choose your ground / final CTA)
-// Honest preview of real city selection — Valencia OPEN, five cities locked
-// behind an invite-to-unlock affordance — closing with the final signup CTA.
+// Layout C - Cities preview (slide 10: choose your ground / final CTA)
+// Honest preview of real city selection - Valencia OPEN, five cities locked
+// behind an invite-to-unlock affordance - closing with the final signup CTA.
 // ---------------------------------------------------------------------------
 class _CitiesPreviewSlide extends StatelessWidget {
   final _Slide slide;

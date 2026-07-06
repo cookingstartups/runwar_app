@@ -1,8 +1,8 @@
 // test/widgets/intro/intro_copy_table_test.dart
 //
-// RED phase — SDD Step 4 Test Engineer
+// RED phase - SDD Step 4 Test Engineer
 // Spec: infra/meta/specs/runwar/onboarding-remake/requirements.md
-// (R-5, R-10, R-14, R-19, R-22, R-26, R-31, R-32) — copy table across all
+// (R-5, R-10, R-14, R-19, R-22, R-26, R-31, R-32) - copy table across all
 // 10 slides, source-inspection of the _slides list in intro_screen.dart.
 
 import 'dart:io';
@@ -32,11 +32,11 @@ void main() {
 
     test('slide 5 headline/body match the new copy', () {
       final src = _sourceText();
-      expect(src, contains('Pay in kilometers. Not in cash.'),
+      expect(src, contains('You cannot pay-to-win. You must earn it.'),
           reason: 'R-32: slide 5 headline must be updated');
       expect(
         src,
-        contains('Shields, strikes, radar sweeps. Superpowers cannot be bought.'),
+        contains('Shields, strikes, radar sweeps. Every superpower is earned on the street, never bought.'),
         reason: 'R-32: slide 5 body must be updated',
       );
     });
