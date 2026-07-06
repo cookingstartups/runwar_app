@@ -71,7 +71,7 @@ const _slides = [
     headline: 'Run it again. Make it armor.',
     body: 'Every extra lap hardens your claim. Level 1, level 2, level 3. The streets remember who trained hardest.',
     anim: _Anim.fortify,
-    layout: _Layout.visualTopTextBottom,
+    layout: _Layout.textTopVisualBottom,
   ),
   // 3 — Provocation
   _Slide(
@@ -80,7 +80,7 @@ const _slides = [
     headline: 'A rival stole your block.',
     body: 'Every street belongs to the last runner who looped it. Their name. Your pavement. Take it back — or keep paying rent in shoe rubber.',
     anim: _Anim.hexCapture,
-    layout: _Layout.textTopVisualBottom,
+    layout: _Layout.visualTopTextBottom,
   ),
   // 4 — Shield (Variant A)
   // SHIELD Variant A — winner. B and C archived (classes kept in intro_map_animations.dart).
