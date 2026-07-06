@@ -1,11 +1,12 @@
 // test/widgets/intro/intro_slide3_defense_remake_test.dart
 //
-// RED phase — SDD Step 4 Test Engineer
+// RED phase - SDD Step 4 Test Engineer
 // Spec: infra/meta/specs/runwar/onboarding-remake/requirements.md (R-7..R-11)
 // Design: IntroDefenseMapA rewritten in place, 4-beat/8s continuity scene;
 // new IntroPhoneCardOverlay widget (Positioned direct Stack child).
 
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -127,6 +128,73 @@ void main() {
         contains('DEFEND FROM HOME, FROM WORK, FROM BED'),
         reason: 'R-10: slide 3 must carry the new mono subline',
       );
+    });
+  });
+
+  group('R-12: persistent lime-green defender runner + independent camera center', () {
+    // GIVEN  a persistent player/defender runner distinct from the pink rival
+    // WHEN   the source is inspected
+    // THEN   it is drawn unconditionally (before any beat-gated `if`), so it
+    //        runs continuously through all 4 beats
+    test('lime-green runner is drawn unconditionally (outside beat gates)', () {
+      final src = _read('lib/widgets/intro/intro_defense_map.dart');
+      expect(src, contains('kLimeGreen'),
+          reason: 'a persistent lime-green defender runner must be drawn');
+      final limeIdx = src.indexOf('kLimeGreen');
+      final firstBeatIfIdx = src.indexOf('if (t >=');
+      expect(limeIdx, greaterThan(0));
+      expect(firstBeatIfIdx, greaterThan(0));
+      expect(limeIdx, lessThan(firstBeatIfIdx),
+          reason: 'the lime runner draw must be unconditional, not nested '
+              'inside a beat-specific if block');
+    });
+
+    // GIVEN  lib/theme.dart's color tokens
+    // WHEN   inspected
+    // THEN   kLimeGreen exists and is not an alias of an existing color
+    test('kLimeGreen theme constant is defined and distinct from kAccent2/kSea', () {
+      final src = _read('lib/theme.dart');
+      expect(src, contains('const Color kLimeGreen'));
+      expect(src, isNot(contains('kLimeGreen = kAccent2')));
+      expect(src, isNot(contains('kLimeGreen = kSea')));
+    });
+
+    // GIVEN  slide 4 must pan its camera independently of slides 2/3
+    // WHEN   the source is inspected
+    // THEN   a widget-local _kMapCenter is declared and wired into
+    //        buildIntroMap instead of the shared IntroContinuity.kMapCenter,
+    //        sitting roughly one block (~100-150m) southwest of it
+    test('IntroDefenseMapA uses its own camera center, southwest of the shared one', () {
+      final src = _read('lib/widgets/intro/intro_defense_map.dart');
+      expect(src, contains('_kMapCenter'),
+          reason: 'R-12: slide 4 must define its own independent camera center');
+      expect(src, contains('center: _kMapCenter'),
+          reason: 'R-12: buildIntroMap must be passed this widget-local '
+              'center, not the shared IntroContinuity.kMapCenter');
+
+      final match = RegExp(r'_kMapCenter = LatLng\(([\d.\-]+),\s*([\d.\-]+)\)')
+          .firstMatch(src);
+      expect(match, isNotNull,
+          reason: 'R-12: _kMapCenter must be declared as a LatLng literal');
+      final lat = double.parse(match!.group(1)!);
+      final lng = double.parse(match.group(2)!);
+
+      const sharedLat = 39.4650;
+      const sharedLng = -0.3756;
+      const metersPerDegLat = 111320.0;
+      final metersPerDegLng =
+          111320.0 * math.cos(sharedLat * math.pi / 180.0);
+
+      expect(lat, lessThan(sharedLat), reason: 'R-12: shift must be southward');
+      expect(lng, lessThan(sharedLng), reason: 'R-12: shift must be westward');
+
+      final dLatM = (sharedLat - lat) * metersPerDegLat;
+      final dLngM = (sharedLng - lng) * metersPerDegLng;
+      final distM = math.sqrt(dLatM * dLatM + dLngM * dLngM);
+      expect(distM, greaterThan(90),
+          reason: 'R-12: shift should be roughly one block (~100-150m)');
+      expect(distM, lessThan(150),
+          reason: 'R-12: shift should be roughly one block (~100-150m)');
     });
   });
 }

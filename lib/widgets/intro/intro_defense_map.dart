@@ -6,16 +6,16 @@ import 'intro_helpers.dart';
 import 'intro_phone_card_overlay.dart';
 
 // ---------------------------------------------------------------------------
-// 4. IntroDefenseMapA — 4-beat continuity scene, 8s loop (slide 4).
+// 4. IntroDefenseMapA - 4-beat continuity scene, 8s loop (slide 4).
 //
 //    0-1s     FORTIFY's (slide 2) final-lap ARMOR-3 terminal state, painted
 //             directly via IntroContinuity.kFortifyEndFillAlpha/
-//             kFortifyEndBorderWidth (never replays slide 2's controller) —
+//             kFortifyEndBorderWidth (never replays slide 2's controller) -
 //             inherited blocks underneath, gold border, "ARMOR 3" badge held
 //             statically for the beat.
 //    1-3.4s   A pink (kRunnerCPink) rival traces the SAME 4-edge closed loop
-//             the player traces in slide 3's (YOUR TURF) claim animation —
-//             IntroZones.kS1Block1's 4 vertices, closing back to the start —
+//             the player traces in slide 3's (YOUR TURF) claim animation -
+//             IntroZones.kS1Block1's 4 vertices, closing back to the start -
 //             at the same ~0.6s/edge pace as that slide's own comet trace.
 //             A "⚠ RAID" chip slides in as the hostile tell.
 //    3.4-5.4s IntroPhoneCardOverlay (a static Positioned widget, not part of
@@ -24,7 +24,7 @@ import 'intro_phone_card_overlay.dart';
 //             about to close; a blue dome ignites over the block.
 //    5.4-8s   The pink attack trace shatters into fading fragments and
 //             retreats; the block stays in its carried ARMOR-3 gold state
-//             throughout every beat — it is the same fortified block from
+//             throughout every beat - it is the same fortified block from
 //             Beat 1, never a fresh capture; a shield badge pins; a
 //             "DEFENDED" stamp appears.
 // ---------------------------------------------------------------------------
@@ -37,21 +37,29 @@ class IntroDefenseMapA extends StatefulWidget {
 
 class _IntroDefenseMapAState extends State<IntroDefenseMapA>
     with TickerProviderStateMixin, IntroMapMixin<IntroDefenseMapA> {
+  /// This slide's OWN independent camera center - 120 m (one block-length,
+  /// derived from IntroZones.kS1Block1's own ~120 m edges) southwest of the
+  /// shared IntroContinuity.kMapCenter. Moving the camera southwest pushes
+  /// the fixed block's on-screen projection northeast/top-right; the block's
+  /// real-world vertices (kS1Block1) are unchanged - same fortified block as
+  /// slide 2, only the camera pans.
+  static const _kMapCenter = LatLng(39.464238, -0.376587);
+
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  /// FORTIFY's (slide 2) inherited base — every kS1All block — carried into
+  /// FORTIFY's (slide 2) inherited base - every kS1All block - carried into
   /// this scene's opening beat, mirroring intro_fortify_map.dart's own
   /// static under-layer (drawInheritedBlocks).
   List<List<Offset>> _inheritedPts = [];
 
   List<Offset> _blockPoly = [];
 
-  /// The rival's raid trace — the SAME 4-edge closed loop the player traces
+  /// The rival's raid trace - the SAME 4-edge closed loop the player traces
   /// in slide 3's claim animation (IntroCaptureMap): kS1Block1's 4 vertices
   /// with the first point repeated at the end, so the trace closes back to
   /// its start exactly like the player's own claim geometry. Rendered in
-  /// kRunnerCPink instead of the player's accent — a rival attempting the
+  /// kRunnerCPink instead of the player's accent - a rival attempting the
   /// identical claim move against turf the player already fortified.
   List<Offset> _raidLoop = [];
 
@@ -115,7 +123,7 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: IntroContinuity.kMapCenter,
+            center: _kMapCenter,
             zoom: IntroContinuity.kMapZoom,
             onReady: _onMapReady,
           ),
@@ -150,7 +158,7 @@ class _IntroDefenseMapAState extends State<IntroDefenseMapA>
     );
   }
 
-  // Phone-card overlay — Positioned direct Stack child (protocol rule 7).
+  // Phone-card overlay - Positioned direct Stack child (protocol rule 7).
   // IntroPhoneCardOverlay animates its own opacity internally, so this call
   // site stays a single short expression.
   Widget _cardOverlay() => Positioned(
@@ -183,7 +191,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
   // Beat boundaries (8s loop, t in [0,1]). Beat 2's window was widened from
   // the old 2.0s single-edge approach to 2.4s so the fuller 4-edge loop
   // trace reads at the same ~0.6s/segment pace as slide 3's own capture
-  // comet (2.4s / 4 segments there too) — Beats 3/4 each shrink slightly to
+  // comet (2.4s / 4 segments there too) - Beats 3/4 each shrink slightly to
   // absorb the difference within the same 8s total.
   static const double _kBeat1End = 1.0 / 8; // 0-1s
   static const double _kBeat2End = 3.4 / 8; // 1-3.4s (2.4s raid loop trace)
@@ -208,6 +216,38 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
   Offset _topRightVertex(List<Offset> pts) {
     if (pts.isEmpty) return Offset.zero;
     return pts.reduce((a, b) => a.dy <= b.dy ? a : b);
+  }
+
+  /// Arc-length interpolation along a closed polyline - mirrors
+  /// intro_fortify_map.dart's own `_posOnClosedLoop` so the persistent lime
+  /// runner moves at constant screen speed around the block loop rather
+  /// than snapping between raw vertices (no shared helper exists in
+  /// intro_helpers.dart for this).
+  Offset _posOnClosedLoop(List<Offset> pts, double frac) {
+    if (pts.isEmpty) return Offset.zero;
+    if (pts.length == 1) return pts[0];
+    final segCount = pts.length;
+    double totalLen = 0;
+    final segLens = List<double>.filled(segCount, 0);
+    for (int i = 0; i < segCount; i++) {
+      final a = pts[i];
+      final b = pts[(i + 1) % pts.length];
+      final len = (b - a).distance;
+      segLens[i] = len;
+      totalLen += len;
+    }
+    if (totalLen == 0) return pts[0];
+    double target = frac.clamp(0.0, 1.0) * totalLen;
+    for (int i = 0; i < segCount; i++) {
+      final segLen = segLens[i];
+      if (target <= segLen) {
+        final a = pts[i];
+        final b = pts[(i + 1) % pts.length];
+        return Offset.lerp(a, b, segLen > 0 ? target / segLen : 0)!;
+      }
+      target -= segLen;
+    }
+    return pts[0];
   }
 
   Path _makePoly(List<Offset> pts) {
@@ -258,7 +298,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
     tp.paint(canvas, pos);
   }
 
-  /// The raid attempt visibly and unambiguously fails — the pink trace
+  /// The raid attempt visibly and unambiguously fails - the pink trace
   /// shatters into fading fragments and the runner retreats, rather than
   /// resolving off-screen or via a silent recolor.
   void _drawShatterRetreat(Canvas canvas, List<Offset> route, double retreatT) {
@@ -283,7 +323,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
       );
     }
     // The runner retreats back toward the route's start as the trace
-    // shatters — the attack never touches the block's fortified color.
+    // shatters - the attack never touches the block's fortified color.
     final retreatPos = Offset.lerp(route.last, route.first, retreatT)!;
     drawRunnerAt(canvas, retreatPos, kRunnerCPink.withValues(alpha: fade));
   }
@@ -295,13 +335,28 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
     final centroid = _centroid(blockPoly);
     final blockPath = _makePoly(blockPoly);
 
-    // FORTIFY's (slide 2) inherited base — every kS1All block — painted as a
+    // FORTIFY's (slide 2) inherited base - every kS1All block - painted as a
     // static under-layer, exactly mirroring intro_fortify_map.dart's own
     // opening treatment (drawInheritedBlocks) so the carried turf reads
     // identically across the cut.
     drawInheritedBlocks(canvas, inheritedPts);
 
-    // The block stays in its carried ARMOR-3 state through every beat — this
+    // Persistent lime-green player/defender runner - patrols the SAME
+    // blockPoly loop continuously through all 4 beats, independent of the
+    // pink rival's raid trace (Beat 2) and the shield/stamp beats (3-4).
+    // One lap every ~3s (t * 8/3) reads as "actively patrolling" without
+    // being distracting, in the same order of magnitude as FORTIFY's own
+    // 3-laps/8s cadence (slide 2).
+    if (blockPoly.length > 1) {
+      final closedBlock = [...blockPoly, blockPoly.first];
+      final lapPos = (t * (8.0 / 3.0)) % 1.0;
+      drawComet(canvas, closedBlock, lapPos,
+          tailLengthPx: tailLengthPx, color: kLimeGreen);
+      final runnerPos = _posOnClosedLoop(blockPoly, lapPos);
+      drawRunnerAt(canvas, runnerPos, kLimeGreen);
+    }
+
+    // The block stays in its carried ARMOR-3 state through every beat - this
     // is the same fortified block from Beat 1, not a fresh capture, so the
     // fill and border reuse IntroContinuity.kFortifyEndFillAlpha/
     // kFortifyEndBorderWidth (structurally shared with
@@ -333,8 +388,8 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
         ..strokeWidth = borderWidth,
     );
 
-    // Beat 1 (0-1s): FORTIFY's held terminal frame — the ARMOR 3 badge,
-    // static for the whole beat (no fade — it is a held shot, not a
+    // Beat 1 (0-1s): FORTIFY's held terminal frame - the ARMOR 3 badge,
+    // static for the whole beat (no fade - it is a held shot, not a
     // transition).
     if (t < _kBeat1End) {
       _drawLabel(canvas, centroid, '⌃⌃⌃ ARMOR 3', kAccent2);
@@ -366,7 +421,7 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
     }
 
     // Beat 3 (3.4-5.4s): shield hex flies from the phone-card position to
-    // the block centroid — firing right as the rival's loop-trace is about
+    // the block centroid - firing right as the rival's loop-trace is about
     // to close, intercepting the claim before it resolves; a blue dome
     // ignites over the still-fortified block.
     if (t >= _kBeat2End && t < _kBeat3End) {
