@@ -32,6 +32,12 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   /// comet/runner trace closes the loop back to its start.
   List<Offset> _blockLoop = [];
 
+  /// Slide 1's terminal captured territory (every kS1All block), projected to
+  /// screen space. Painted as a persistent under-layer so slide 2 opens on the
+  /// turf the player already holds — the pulse map's end state carried across
+  /// the cut — instead of a blank map that resets each loop.
+  List<List<Offset>> _carriedBlocks = [];
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +68,8 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
     markMapReady(() {
       _blockPoly = IntroZones.kS1Block1.map(toScreen).toList();
       _blockLoop = [..._blockPoly, _blockPoly.first];
+      _carriedBlocks =
+          IntroZones.kS1All.map((b) => b.map(toScreen).toList()).toList();
     });
   }
 
@@ -96,6 +104,7 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
                     accent: widget.accent,
                     blockLoop: _blockLoop,
                     blockPoly: _blockPoly,
+                    carriedBlocks: _carriedBlocks,
                     tailLengthPx: tailPx,
                   ),
                   child: const SizedBox.expand(),
@@ -114,6 +123,7 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
   final Color accent;
   final List<Offset> blockLoop;
   final List<Offset> blockPoly;
+  final List<List<Offset>> carriedBlocks;
   final double tailLengthPx;
 
   _IntroCaptureMapPainter({
@@ -121,6 +131,7 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.accent,
     required this.blockLoop,
     required this.blockPoly,
+    required this.carriedBlocks,
     required this.tailLengthPx,
   });
 
@@ -157,6 +168,28 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
   @override
   void paint(Canvas canvas, Size size) {
     if (blockLoop.isEmpty || blockPoly.isEmpty) return;
+
+    // ── Carried turf (slide 1's end state) ─────────────────────────────────
+    // Paint the pulse map's captured union directly as a persistent under-
+    // layer at IntroContinuity.kS1CapturedFillAlpha. This is slide 1's held
+    // territory arriving intact across the cut — it is NOT gated by the loop's
+    // fade envelope, so the turf stays put while the claim sequence replays on
+    // top of it. Unioned (protocol #5) so contiguous blocks read as one shape
+    // with no internal seams, exactly like the pulse map's terminal frame.
+    if (carriedBlocks.isNotEmpty) {
+      var carriedUnion = Path();
+      for (final block in carriedBlocks) {
+        if (block.isEmpty) continue;
+        carriedUnion =
+            Path.combine(PathOperation.union, carriedUnion, _makePoly(block));
+      }
+      canvas.drawPath(
+        carriedUnion,
+        Paint()
+          ..color = accent.withValues(alpha: IntroContinuity.kS1CapturedFillAlpha)
+          ..style = PaintingStyle.fill,
+      );
+    }
 
     // Reset window (4.2s-5.2s): everything fades to 0 while the base map
     // persists, so the next cycle restarts with no visible seam.
@@ -255,5 +288,6 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
       old.t != t ||
       old.blockLoop != blockLoop ||
       old.blockPoly != blockPoly ||
+      old.carriedBlocks != carriedBlocks ||
       old.tailLengthPx != tailLengthPx;
 }
