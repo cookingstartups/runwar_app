@@ -64,7 +64,16 @@ const _slides = [
     anim: _Anim.pulse,
     layout: _Layout.visualTopTextBottom,
   ),
-  // 2 — Provocation
+  // 2 — Mastery / Fortify
+  _Slide(
+    tag: 'FORTIFY',
+    tagColor: kAccent,
+    headline: 'Run it again. Make it armor.',
+    body: 'Every extra lap hardens your claim. Level 1, level 2, level 3. The streets remember who trained hardest.',
+    anim: _Anim.fortify,
+    layout: _Layout.visualTopTextBottom,
+  ),
+  // 3 — Provocation
   _Slide(
     tag: 'YOUR TURF',
     tagColor: kSea,
@@ -73,7 +82,7 @@ const _slides = [
     anim: _Anim.hexCapture,
     layout: _Layout.textTopVisualBottom,
   ),
-  // 3 — Shield (Variant A)
+  // 4 — Shield (Variant A)
   // SHIELD Variant A — winner. B and C archived (classes kept in intro_map_animations.dart).
   _Slide(
     tag: 'SHIELD',
@@ -83,15 +92,6 @@ const _slides = [
     anim: _Anim.defenseA,
     layout: _Layout.textTopVisualBottom,
     monoSubline: 'DEFEND FROM HOME, FROM WORK, FROM BED',
-  ),
-  // 4 — Mastery / Fortify
-  _Slide(
-    tag: 'FORTIFY',
-    tagColor: kAccent,
-    headline: 'Run it again. Make it armor.',
-    body: 'Every extra lap hardens your claim. Level 1, level 2, level 3. The streets remember who trained hardest.',
-    anim: _Anim.fortify,
-    layout: _Layout.visualTopTextBottom,
   ),
   // 5 — Superpowers
   _Slide(
