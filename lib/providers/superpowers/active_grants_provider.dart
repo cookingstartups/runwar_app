@@ -11,7 +11,7 @@ import '../repositories.dart';
 /// Live list of active superpower grants for [playerId].
 /// Drives SuperpowerInventoryStrip and SuperpowerRuntime.
 final activeGrantsProvider =
-    StreamProvider.family<List<SuperpowerGrant>, String>(
+    StreamProvider.autoDispose.family<List<SuperpowerGrant>, String>(
   (ref, playerId) =>
       ref.read(superpowersRepoProvider).watchActiveGrants(playerId),
 );

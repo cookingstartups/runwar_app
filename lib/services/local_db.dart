@@ -17,7 +17,7 @@ class LocalDb {
     final path = join(await getDatabasesPath(), 'runwar_local.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, _) async {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS outbox_queue (
@@ -42,7 +42,8 @@ class LocalDb {
             lng         REAL NOT NULL,
             accuracy    REAL,
             ts          TEXT NOT NULL,
-            session_id  TEXT
+            session_id  TEXT,
+            is_mocked   INTEGER
           )
         ''');
         await db.execute(
@@ -54,6 +55,11 @@ class LocalDb {
         if (oldVersion < 2) {
           await db.execute(
             'ALTER TABLE run_scratch ADD COLUMN session_id TEXT',
+          );
+        }
+        if (oldVersion < 3) {
+          await db.execute(
+            'ALTER TABLE run_scratch ADD COLUMN is_mocked INTEGER',
           );
         }
       },

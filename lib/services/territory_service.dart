@@ -2,12 +2,14 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:uuid/uuid.dart';
 import 'database_service.dart';
 import 'zones_service.dart';
 import 'supabase_service.dart';
 import 'telemetry_service.dart';
 import 'error_log_service.dart';
 import '../config/supabase_config.dart';
+import '../geo/lasso.dart' show pointInPolygon;
 
 enum TerritoryResult { claimed, conquered, disputed, failed }
 
@@ -184,11 +186,11 @@ class TerritoryService {
         if ((r['status'] as String?) == 'disputed') {
           var anyOverlap = false;
           for (final v in rivalPoints) {
-            if (_pointInRing(v, track)) { anyOverlap = true; break; }
+            if (pointInPolygon(v, track)) { anyOverlap = true; break; }
           }
           if (!anyOverlap) {
             for (final v in track) {
-              if (_pointInRing(v, rivalPoints)) { anyOverlap = true; break; }
+              if (pointInPolygon(v, rivalPoints)) { anyOverlap = true; break; }
             }
           }
           if (anyOverlap) {
@@ -203,7 +205,7 @@ class TerritoryService {
       // Full containment → direct conquest.
       var allInside = true;
       for (final v in rivalPoints) {
-        if (!_pointInRing(v, track)) { allInside = false; break; }
+        if (!pointInPolygon(v, track)) { allInside = false; break; }
       }
       if (allInside) {
         conqueredIds.add(r['id'] as String);
@@ -243,7 +245,7 @@ class TerritoryService {
 
       // Remainder = rival points not inside the intersection.
       final remainder = rivalPoints
-          .where((pt) => !_pointInRing(pt, intersection))
+          .where((pt) => !pointInPolygon(pt, intersection))
           .toList();
 
       if (remainder.length >= 3) {
@@ -263,7 +265,7 @@ class TerritoryService {
       }
 
       // New zone for attacker from the intersection polygon.
-      final newId = _uuidV4();
+      final newId = _uuid.v4();
       await ds.insertZone({
         'id': newId,
         'owner_id': userId,
@@ -300,7 +302,7 @@ class TerritoryService {
 
     ClaimOutcome outcome;
     if (!hasActivity) {
-      final newId = _uuidV4();
+      final newId = _uuid.v4();
       await ds.insertZone({
         'id': newId,
         'owner_id': userId,
@@ -642,29 +644,5 @@ class TerritoryService {
     return true;
   }
 
-  static bool _pointInRing(LatLng p, List<LatLng> ring) {
-    var inside = false;
-    final n = ring.length;
-    for (var i = 0, j = n - 1; i < n; j = i++) {
-      final xi = ring[i].longitude, yi = ring[i].latitude;
-      final xj = ring[j].longitude, yj = ring[j].latitude;
-      final dy = yj - yi;
-      final denom = dy == 0 ? 1e-12 : dy;
-      final intersect = ((yi > p.latitude) != (yj > p.latitude)) &&
-          (p.longitude < (xj - xi) * (p.latitude - yi) / denom + xi);
-      if (intersect) inside = !inside;
-    }
-    return inside;
-  }
-
-  static final math.Random _rng = math.Random.secure();
-
-  static String _uuidV4() {
-    final b = List<int>.generate(16, (_) => _rng.nextInt(256));
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    String h(int i) => b[i].toRadixString(16).padLeft(2, '0');
-    return '${h(0)}${h(1)}${h(2)}${h(3)}-${h(4)}${h(5)}-${h(6)}${h(7)}-'
-        '${h(8)}${h(9)}-${h(10)}${h(11)}${h(12)}${h(13)}${h(14)}${h(15)}';
-  }
+  static const _uuid = Uuid();
 }

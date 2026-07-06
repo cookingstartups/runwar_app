@@ -19,6 +19,17 @@ class AntiCheatOrientationService {
   AntiCheatOrientationService(this._repo);
   final AntiCheatRepository _repo;
 
+  /// Throttle the gyroscope stream instead of sampling at the platform's
+  /// raw hardware rate — the mean orientation summary needs no more than
+  /// 5 samples/sec, and an unthrottled stream on a long run accumulates
+  /// hundreds of thousands of readings for no anti-cheat benefit.
+  static const Duration _kSamplingPeriod = Duration(milliseconds: 200);
+
+  /// Hard cap on buffered gyro readings — bounds memory on a long run
+  /// regardless of duration. At 200 ms/sample this is ~30 minutes of data;
+  /// oldest readings are dropped first (rolling window).
+  static const int _kMaxGyroSamples = 9000;
+
   final List<GpsSample> _samples = [];
   final List<double> _gyroRx = [], _gyroRy = [], _gyroRz = [];
   StreamSubscription<GyroscopeEvent>? _gyroSub;
@@ -33,10 +44,16 @@ class AntiCheatOrientationService {
     _gyroRx.clear();
     _gyroRy.clear();
     _gyroRz.clear();
-    _gyroSub = gyroscopeEventStream().listen((e) {
+    _gyroSub = gyroscopeEventStream(samplingPeriod: _kSamplingPeriod)
+        .listen((e) {
       _gyroRx.add(e.x);
       _gyroRy.add(e.y);
       _gyroRz.add(e.z);
+      if (_gyroRx.length > _kMaxGyroSamples) {
+        _gyroRx.removeAt(0);
+        _gyroRy.removeAt(0);
+        _gyroRz.removeAt(0);
+      }
     });
   }
 
@@ -71,7 +88,10 @@ class AntiCheatOrientationService {
   ///   - No samples have been collected.
   ///   - The repository returns an [Err].
   ///
-  /// Does not call [stop] — the caller controls the session lifecycle.
+  /// On success, clears the accumulated GPS + gyro buffers so a caller that
+  /// submits periodically during a long run never resends the same data or
+  /// grows the buffers unbounded. Does not call [stop] — the caller controls
+  /// the session lifecycle, and gyro accumulation continues after a submit.
   Future<AntiCheatBatchResult?> submitBatch({
     required String runId,
     required String playerId,
@@ -87,9 +107,13 @@ class AntiCheatOrientationService {
       gpsPatternHash: gpsPatternHash,
       trigger: trigger,
     );
-    return switch (result) {
-      Ok<AntiCheatBatchResult> r => r.value,
-      Err<AntiCheatBatchResult> _ => null,
-    };
+    if (result is Ok<AntiCheatBatchResult>) {
+      _samples.clear();
+      _gyroRx.clear();
+      _gyroRy.clear();
+      _gyroRz.clear();
+      return result.value;
+    }
+    return null;
   }
 }

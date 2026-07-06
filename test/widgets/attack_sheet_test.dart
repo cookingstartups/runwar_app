@@ -1,45 +1,27 @@
 // test/widgets/attack_sheet_test.dart
 //
-// RED phase: imports resolve to files that do not yet exist.
 // Each test maps to one GIVEN/WHEN/THEN from design.md §4 + phase spec §8
 // (lines 974-977).
 //
 // Design contract (design.md §4 AttackSheet):
-//   - ConsumerWidget taking Zone zone
+//   - ConsumerWidget taking Zone zone and an onStartRun callback
 //   - Reads owner name via profileCacheProvider(zone.ownerId)
 //   - Window copy: "Level ${level} zone — attack window will be ${level * 20} minutes"
-//   - Primary CTA "Start a run": calls Navigator.pop then runRecorderProvider.notifier.start()
+//   - Primary CTA "Start a run": calls Navigator.pop then invokes onStartRun —
+//     the caller (MapScreen) routes this through the same guarded start path
+//     as the FAB, never straight into runRecorderProvider.notifier.start().
 //   - Shows DisputeCountdownLabel when zone.status == disputed
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mocktail/mocktail.dart';
 
 import 'package:runwar_app/widgets/attack_sheet.dart';
 import 'package:runwar_app/widgets/dispute_countdown_label.dart';
 import 'package:runwar_app/services/database/models/zone.dart';
 import 'package:runwar_app/providers/zones_provider.dart';
-import 'package:runwar_app/providers/run_recorder_provider.dart';
 
 import '../_helpers/test_container.dart';
-
-// ── Mock notifier ─────────────────────────────────────────────────────────────
-// We create a stub RunRecorderNotifier by extending it with a no-op constructor
-// so mocktail's `when` can intercept `start()`.
-
-class _FakeRef extends Fake implements Ref {}
-
-class StubRunRecorderNotifier extends RunRecorderNotifier {
-  bool startCalled = false;
-
-  StubRunRecorderNotifier() : super(_FakeRef());
-
-  @override
-  Future<void> start() async {
-    startCalled = true;
-  }
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -88,7 +70,10 @@ void main() {
       ]);
       addTearDown(container.dispose);
 
-      await tester.pumpWidget(_wrap(AttackSheet(zone: zone), container: container));
+      await tester.pumpWidget(_wrap(
+        AttackSheet(zone: zone, onStartRun: () {}),
+        container: container,
+      ));
       await tester.pumpAndSettle();
 
       expect(find.text('Alpha Runner'), findsOneWidget);
@@ -107,7 +92,10 @@ void main() {
       ]);
       addTearDown(container.dispose);
 
-      await tester.pumpWidget(_wrap(AttackSheet(zone: zone), container: container));
+      await tester.pumpWidget(_wrap(
+        AttackSheet(zone: zone, onStartRun: () {}),
+        container: container,
+      ));
       await tester.pumpAndSettle();
 
       // The sheet must render "60 min" (level 3 × 20 = 60).
@@ -117,27 +105,29 @@ void main() {
 
     // GIVEN the user taps "Start a run"
     // WHEN AttackSheet is displayed
-    // THEN calls runRecorderProvider.notifier.start()
-    testWidgets('"Start a run" button calls runRecorderProvider.notifier.start()', (tester) async {
+    // THEN invokes the onStartRun callback (the caller's guarded start path)
+    testWidgets('"Start a run" button invokes onStartRun', (tester) async {
       final zone = _makeZone();
-      final stubNotifier = StubRunRecorderNotifier();
+      var startCalled = false;
 
       final container = makeTestContainer(overrides: [
         profileCacheProvider(zone.ownerId).overrideWith(
           (_) async => {'display_name': 'Test Owner', 'id': zone.ownerId},
         ),
-        runRecorderProvider.overrideWith((_) => stubNotifier),
       ]);
       addTearDown(container.dispose);
 
-      await tester.pumpWidget(_wrap(AttackSheet(zone: zone), container: container));
+      await tester.pumpWidget(_wrap(
+        AttackSheet(zone: zone, onStartRun: () => startCalled = true),
+        container: container,
+      ));
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Start a run'));
       await tester.pumpAndSettle();
 
-      expect(stubNotifier.startCalled, isTrue,
-          reason: '"Start a run" must call runRecorderProvider.notifier.start()');
+      expect(startCalled, isTrue,
+          reason: '"Start a run" must invoke the onStartRun callback');
     });
 
     // GIVEN a zone with status='disputed'
@@ -153,7 +143,10 @@ void main() {
       ]);
       addTearDown(container.dispose);
 
-      await tester.pumpWidget(_wrap(AttackSheet(zone: zone), container: container));
+      await tester.pumpWidget(_wrap(
+        AttackSheet(zone: zone, onStartRun: () {}),
+        container: container,
+      ));
       await tester.pumpAndSettle();
 
       // DisputeCountdownLabel must be present in the widget tree.

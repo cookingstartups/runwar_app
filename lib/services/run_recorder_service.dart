@@ -194,6 +194,7 @@ class RunRecorderService {
         accuracy: pos.accuracy,
         ts: pos.timestamp.toIso8601String(),
         sessionId: _currentSessionId,
+        isMocked: pos.isMocked,
       ).catchError((_) {});
 
       // Stream this fix to gps_samples in real-time via the provider callback.
@@ -506,7 +507,9 @@ class RunRecorderService {
             'lng': row['lng'] as double,
             'ts': ts,
             'speed_ms': 0.0,
-            'is_mocked': false,
+            // Legacy scratch rows written before the is_mocked column existed
+            // have no value here — default to false only in that case.
+            'is_mocked': (row['is_mocked'] as int?) == 1,
           }).catchError((_) {});
         }
       }

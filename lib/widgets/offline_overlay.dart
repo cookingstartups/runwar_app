@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../providers/connectivity_provider.dart';
+import '../providers/run_recorder_provider.dart';
+import '../services/run_recorder_service.dart';
 import '../theme.dart';
 
 class OfflineOverlay extends ConsumerWidget {
@@ -11,6 +13,7 @@ class OfflineOverlay extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final connectivityAsync = ref.watch(connectivityProvider);
+    final isRecording = ref.watch(runRecorderProvider) == RecorderState.recording;
 
     final isOnline = connectivityAsync.when(
       data: (online) => online,
@@ -21,8 +24,56 @@ class OfflineOverlay extends ConsumerWidget {
       },
     );
 
-    if (!isOnline) return _OfflineScreen();
-    return child;
+    if (isOnline) return child;
+    // GPS tracking needs no network — never hide an active run behind a
+    // full-screen block. Degrade to a top banner instead.
+    if (isRecording) {
+      return Stack(
+        children: [
+          child,
+          const _OfflineBanner(),
+        ],
+      );
+    }
+    return _OfflineScreen();
+  }
+}
+
+class _OfflineBanner extends StatelessWidget {
+  const _OfflineBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        bottom: false,
+        child: Container(
+          width: double.infinity,
+          color: kDanger.withValues(alpha: 0.92),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.signal_wifi_off_rounded, size: 16, color: kFg),
+              SizedBox(width: 8),
+              Text(
+                'NO CONNECTION - GPS STILL TRACKING',
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 10,
+                  letterSpacing: 1.2,
+                  color: kFg,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

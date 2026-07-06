@@ -13,6 +13,7 @@ class RunScratchStore {
     double? accuracy,
     required String ts,
     String? sessionId,
+    bool? isMocked,
   }) async {
     final db = await LocalDb.instance.db;
     await db.insert('run_scratch', {
@@ -22,6 +23,7 @@ class RunScratchStore {
       'accuracy': accuracy,
       'ts': ts,
       if (sessionId != null) 'session_id': sessionId,
+      if (isMocked != null) 'is_mocked': isMocked ? 1 : 0,
     });
   }
 

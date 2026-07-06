@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -23,7 +24,7 @@ import '../widgets/battery_warning_banner.dart';
 import '../widgets/location_denied_gate.dart';
 import '../widgets/territory_overlay_painter.dart';
 import '../widgets/intro/intro_helpers.dart' show sharedEdgePolylines, formatSqm;
-import '../geo/lasso.dart' show polygonArea;
+import '../geo/lasso.dart' show polygonArea, pointInPolygon;
 import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
 import '../services/superpower_service.dart';
@@ -284,9 +285,25 @@ class _MapScreenState extends ConsumerState<MapScreen>
       );
     }
     if ((slugsAsync.valueOrNull ?? []).isEmpty) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: kBg,
-        body: Center(child: Text('No city joined yet')),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('No city joined yet', style: bodyStyle(color: kFgMuted)),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                // Re-evaluates _RouteGuard's gate order — invalidating this
+                // provider with no joined cities re-renders CitiesSelectionScreen.
+                // INVARIANT: never Navigator.pushReplacement over _RouteGuard.
+                onPressed: () =>
+                    ref.invalidate(joinedCitySlugsProvider(userId)),
+                child: const Text('CHOOSE YOUR CITY'),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
@@ -393,50 +410,64 @@ class _MapScreenState extends ConsumerState<MapScreen>
       BuildContext context, RecorderState s, String city) async {
     final notifier = ref.read(runRecorderProvider.notifier);
     if (s == RecorderState.idle) {
-      // Verify permission before startRun.
-      final perm = await Geolocator.checkPermission();
-      final canRecord = perm == LocationPermission.whileInUse ||
-          perm == LocationPermission.always;
-      if (!canRecord) {
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Location permission required to record runs')),
-        );
-        return;
-      }
-      if (_currentPosition == null) {
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Waiting for GPS fix — step outside and try again')),
-        );
-        return;
-      }
-      // Start trial clock on first FAB tap (no-op if already started).
-      final fabUserId = ref.read(authProvider).user?['id'] as String?;
-      if (fabUserId == null) {
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Not signed in — please restart the app')),
-        );
-        return;
-      }
-      await TrialService.instance.initTrial(fabUserId);
-      // Wire the active user ID before starting so scratch inserts and
-      // DailyMissions progress calls are never blocked by the null guard.
-      RunRecorderService.instance.setActiveUser(fabUserId);
-      // Request battery optimization exemption exactly once (AC-15).
-      await BatteryOptimizationService.requestOnce();
-      await notifier.start();
-      // Fire-and-forget tile pre-download. Run starts regardless.
-      TileCacheService.instance.prewarmRunArea(
-        LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-      ).listen(null);
+      await _startGuardedRun(context);
     } else if (s == RecorderState.recording) {
       // Tap always ends the session unconditionally. No validity gates.
+      HapticFeedback.lightImpact();
       await notifier.stop();
     }
+  }
+
+  /// Guarded run-start path: permission check, GPS-fix check, trial init,
+  /// setActiveUser, battery prompt, tile prewarm, then notifier.start().
+  ///
+  /// Every entry point that can start a recording — the FAB and
+  /// AttackSheet's "Start a run" CTA — must go through this helper so
+  /// neither bypasses these guards (a bypass leaves scratch/mission writes
+  /// blocked by the null-user guard with no feedback to the runner).
+  Future<void> _startGuardedRun(BuildContext context) async {
+    final notifier = ref.read(runRecorderProvider.notifier);
+    // Verify permission before startRun.
+    final perm = await Geolocator.checkPermission();
+    final canRecord = perm == LocationPermission.whileInUse ||
+        perm == LocationPermission.always;
+    if (!canRecord) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Location permission required to record runs')),
+      );
+      return;
+    }
+    if (_currentPosition == null) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Waiting for GPS fix — step outside and try again')),
+      );
+      return;
+    }
+    // Start trial clock on first tap (no-op if already started).
+    final fabUserId = ref.read(authProvider).user?['id'] as String?;
+    if (fabUserId == null) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Not signed in — please restart the app')),
+      );
+      return;
+    }
+    await TrialService.instance.initTrial(fabUserId);
+    // Wire the active user ID before starting so scratch inserts and
+    // DailyMissions progress calls are never blocked by the null guard.
+    RunRecorderService.instance.setActiveUser(fabUserId);
+    // Request battery optimization exemption exactly once (AC-15).
+    await BatteryOptimizationService.requestOnce();
+    HapticFeedback.lightImpact();
+    await notifier.start();
+    // Fire-and-forget tile pre-download. Run starts regardless.
+    TileCacheService.instance.prewarmRunArea(
+      LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+    ).listen(null);
   }
 
   /// Projects [latlngs] to screen Offsets using the current map camera.
@@ -550,18 +581,37 @@ class _MapScreenState extends ConsumerState<MapScreen>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  /// Distinct snackbar copy per claim outcome (guards against regressing the disputed-outcome message).
-  /// Positioned ahead of _onAutoClaimOutcome (its only call site) so the
-  /// `TerritoryResult.disputed` branch reads immediately after the first
-  /// `_showResultSnack(` occurrence in this file.
+  /// Distinct snackbar copy + haptic pulse per claim outcome (guards against
+  /// regressing the disputed-outcome message and gives the core claim moment
+  /// feel, not just a default-styled toast). Positioned ahead of
+  /// _onAutoClaimOutcome (its only call site) so the `TerritoryResult.disputed`
+  /// branch reads immediately after the first `_showResultSnack(` occurrence.
   void _showResultSnack(BuildContext context, ClaimOutcome outcome) {
-    final msg = switch (outcome.result) {
-      TerritoryResult.claimed => 'Territory claimed!',
-      TerritoryResult.conquered => 'Zone conquered!',
-      TerritoryResult.disputed => 'Zone disputed!',
-      TerritoryResult.failed => 'Could not claim zone — try again',
+    final (String msg, Color color, IconData icon) = switch (outcome.result) {
+      TerritoryResult.claimed => ('Territory claimed!', kAccent, Icons.flag),
+      TerritoryResult.conquered => ('Zone conquered!', kAccent2, Icons.bolt),
+      TerritoryResult.disputed => ('Zone disputed!', _kDisputedColor, Icons.warning_amber_rounded),
+      TerritoryResult.failed => ('Could not claim zone — try again', kDanger, Icons.error_outline),
     };
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    switch (outcome.result) {
+      case TerritoryResult.claimed:
+      case TerritoryResult.conquered:
+        HapticFeedback.heavyImpact();
+      case TerritoryResult.disputed:
+        HapticFeedback.mediumImpact();
+      case TerritoryResult.failed:
+        HapticFeedback.lightImpact();
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      backgroundColor: kSurface,
+      content: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 10),
+          Expanded(child: Text(msg, style: TextStyle(color: color))),
+        ],
+      ),
+    ));
   }
 
   /// Handles an auto-claim outcome emitted by RunRecorderNotifier.autoClaimOutcomes.
@@ -1438,7 +1488,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
         context: context,
         backgroundColor: kSurface,
         isScrollControlled: true,
-        builder: (_) => AttackSheet(zone: z),
+        builder: (_) => AttackSheet(
+          zone: z,
+          onStartRun: () => _startGuardedRun(context),
+        ),
       );
     }
   }
@@ -1654,26 +1707,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
 /// Used by MapOptions.onTap (no GestureDetector on polygons).
 Zone? _zoneAtPoint(LatLng tap, List<Zone> zones) {
   for (final z in zones) {
-    if (_pointInRing(tap, z.points)) return z;
+    if (pointInPolygon(tap, z.points)) return z;
   }
   return null;
-}
-
-bool _pointInRing(LatLng p, List<LatLng> ring) {
-  bool inside = false;
-  final n = ring.length;
-  for (var i = 0, j = n - 1; i < n; j = i++) {
-    final xi = ring[i].longitude;
-    final yi = ring[i].latitude;
-    final xj = ring[j].longitude;
-    final yj = ring[j].latitude;
-    final dy = yj - yi;
-    final intersect = ((yi > p.latitude) != (yj > p.latitude)) &&
-        (p.longitude <
-            (xj - xi) * (p.latitude - yi) / (dy == 0 ? 1e-12 : dy) + xi);
-    if (intersect) inside = !inside;
-  }
-  return inside;
 }
 
 /// Parses '#RRGGBB' or '#AARRGGBB' hex color strings.

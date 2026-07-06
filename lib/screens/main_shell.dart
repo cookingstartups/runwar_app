@@ -62,9 +62,6 @@ class _MainShellState extends ConsumerState<MainShell>
     final shown = prefs.getString('daily_login_modal_shown_date') ?? '';
     if (!DailyMissionsService.instance.shouldShowDailyLoginModal(shown)) return;
 
-    // Write pref BEFORE the async edge-function call (FR-10 / design.md §4).
-    await prefs.setString('daily_login_modal_shown_date', today);
-
     final userId = ref.read(authProvider).user?['id'] as String?;
     if (userId == null) return;
 
@@ -72,8 +69,15 @@ class _MainShellState extends ConsumerState<MainShell>
     try {
       result = await DailyMissionsService.instance.recordDailyLogin(userId);
     } catch (_) {
+      // Do not mark today as shown — a failed call must be retryable
+      // (next resume / next foreground) instead of losing the day's
+      // login/streak credit until tomorrow.
       return;
     }
+
+    // Write the pref only after the call succeeds — re-showing the modal
+    // on a failure is acceptable; silently losing the day's credit is not.
+    await prefs.setString('daily_login_modal_shown_date', today);
 
     TelemetryService.instance.logEvent(
       'daily_login_modal_shown',
