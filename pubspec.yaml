@@ -22,15 +22,8 @@ dependencies:
   # Share referral link
   share_plus: ^12.0.2
 
-  # Copy to clipboard (built into Flutter via Clipboard)
-  # url_launcher for deeplinks
-  url_launcher: ^6.3.0
-
   # Phone number input with country code
   intl_phone_field: ^3.2.0
-
-  # SVG rendering
-  flutter_svg: ^2.0.10
 
   # — PoC foundation (Spec 1) —
 
@@ -82,15 +75,6 @@ dependencies:
   # Foreground service — keeps GPS alive when screen locks (MIUI/Android)
   flutter_foreground_task: ^8.0.0
 
-  # Camera / gallery photo selection for profile avatar
-  image_picker: ^1.1.2
-
-  # HSV colour wheel picker
-  flutter_colorpicker: ^1.1.0
-
-  # EXIF metadata extraction (GPS, datetime, device info)
-  exif: ^3.3.0
-
   # App version + device info (used by ErrorLogService for client error logging)
   package_info_plus: ^8.0.0
   device_info_plus: ^11.0.0
@@ -124,10 +108,7 @@ flutter_launcher_icons:
 flutter:
   uses-material-design: true
   assets:
-    - assets/animations/
     - assets/cities/
-    - assets/icons/
-    - assets/maps/
     - assets/hero_photos/
     - assets/intro_tiles/15/16348/
     - assets/intro_tiles/15/16349/
@@ -143,4 +124,3 @@ flutter:
     - assets/intro_tiles/16/32703/
     - assets/intro_tiles/16/32704/
     - assets/intro_tiles/16/32705/
-    - assets/screenshots/

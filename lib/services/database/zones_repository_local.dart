@@ -99,8 +99,14 @@ class LocalZonesRepository implements ZonesRepository {
   Future<void> _emitForCity(String city) async {
     if (_disposed) return;
     final result = await fetchByCity(city);
-    if (result is Ok<List<Zone>>) {
-      _controllers[city]?.add(result.value);
+    switch (result) {
+      case Ok<List<Zone>>(value: final zones):
+        _controllers[city]?.add(zones);
+      case Err<List<Zone>>(error: final error, detail: final detail):
+        debugPrint('[LocalZonesRepository] _emitForCity error: $error $detail');
+        _controllers[city]?.addError(
+          Exception('zones fetch failed: $error${detail != null ? " ($detail)" : ""}'),
+        );
     }
   }
 }

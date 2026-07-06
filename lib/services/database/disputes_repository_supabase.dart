@@ -138,8 +138,15 @@ class SupabaseDisputesRepository implements DisputesRepository {
   Future<void> _fetchAndEmit(String zoneId) async {
     if (_disposed) return;
     final result = await fetchOpenForZone(zoneId);
-    if (result is Ok<Dispute?>) {
-      _controllers[zoneId]?.add(result.value);
+    switch (result) {
+      case Ok<Dispute?>(value: final dispute):
+        _controllers[zoneId]?.add(dispute);
+      case Err<Dispute?>(error: final error, detail: final detail):
+        debugPrint(
+            '[SupabaseDisputesRepository] _fetchAndEmit error: $error $detail');
+        _controllers[zoneId]?.addError(
+          Exception('dispute fetch failed: $error${detail != null ? " ($detail)" : ""}'),
+        );
     }
   }
 }

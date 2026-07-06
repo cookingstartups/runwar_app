@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:uuid/uuid.dart';
 import '../services/run_recorder_service.dart';
 import '../services/territory_service.dart';
 import '../services/supabase_service.dart';
@@ -259,18 +259,9 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   }
 }
 
-// UUID v4 generator. Duplicated from TerritoryService to avoid adding the
-// `uuid` package. Both copies removed at Supabase swap.
-final _rng = math.Random.secure();
+const _uuid = Uuid();
 
-String _uuidV4() {
-  final b = List<int>.generate(16, (_) => _rng.nextInt(256));
-  b[6] = (b[6] & 0x0f) | 0x40;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  String h(int i) => b[i].toRadixString(16).padLeft(2, '0');
-  return '${h(0)}${h(1)}${h(2)}${h(3)}-${h(4)}${h(5)}-${h(6)}${h(7)}-'
-      '${h(8)}${h(9)}-${h(10)}${h(11)}${h(12)}${h(13)}${h(14)}${h(15)}';
-}
+String _uuidV4() => _uuid.v4();
 
 // ── Notification gateway ──────────────────────────────────────────────────────
 

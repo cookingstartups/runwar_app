@@ -8,7 +8,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/database/models/zone.dart';
 import '../providers/zones_provider.dart';
-import '../providers/run_recorder_provider.dart';
 import 'dispute_countdown_label.dart';
 
 /// Bottom sheet for attacking a rival zone.
@@ -16,12 +15,16 @@ import 'dispute_countdown_label.dart';
 /// - ConsumerWidget taking [Zone zone].
 /// - Reads owner display name via profileCacheProvider(zone.ownerId).
 /// - Shows attack window copy: level × 20 minutes.
-/// - "Start a run" CTA: pops the sheet then starts a run recording.
+/// - "Start a run" CTA: pops the sheet then invokes [onStartRun], the same
+///   guarded start path the FAB uses (permission check, GPS-fix check,
+///   trial init, setActiveUser, battery prompt, tile prewarm) — never calls
+///   the recorder notifier directly.
 /// - Shows DisputeCountdownLabel when zone.status == ZoneStatus.disputed.
 class AttackSheet extends ConsumerWidget {
-  const AttackSheet({super.key, required this.zone});
+  const AttackSheet({super.key, required this.zone, required this.onStartRun});
 
   final Zone zone;
+  final VoidCallback onStartRun;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -88,7 +91,7 @@ class AttackSheet extends ConsumerWidget {
               child: FilledButton(
                 onPressed: () {
                   Navigator.of(context).pop();
-                  ref.read(runRecorderProvider.notifier).start();
+                  onStartRun();
                 },
                 child: const Text('Start a run'),
               ),

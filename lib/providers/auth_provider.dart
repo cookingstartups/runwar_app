@@ -46,7 +46,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
         state = state.copyWith(isLoading: false, user: user, error: null);
       }
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      // A thrown exception (not the null-credentials path above) means the
+      // request never reached the auth check — offline/outage, not a wrong
+      // password. Never tell an offline user their password is wrong.
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Connection error - check your signal and try again',
+      );
     }
   }
 

@@ -10,6 +10,6 @@ import '../repositories.dart';
 /// Live credit balance for [playerId].
 /// Rebuilds widgets on every balance change via Supabase Realtime.
 /// autoDispose ensures the subscription stops when all listeners unmount.
-final creditsBalanceProvider = StreamProvider.family<int, String>(
+final creditsBalanceProvider = StreamProvider.autoDispose.family<int, String>(
   (ref, playerId) => ref.read(creditsRepoProvider).watchBalance(playerId),
 );

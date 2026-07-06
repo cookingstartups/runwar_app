@@ -115,9 +115,17 @@ class SupabaseService {
         password: password,
       );
       return response.user?.id;
-    } catch (e) {
-      debugPrint('[SupabaseService] signInWithPassword error: $e');
+    } on AuthException catch (e) {
+      // Genuine credential rejection — safe to collapse to null so the
+      // caller shows "Invalid email or password".
+      debugPrint('[SupabaseService] signInWithPassword auth rejected: $e');
       return null;
+    } catch (e) {
+      // Connectivity / transport failure — rethrow so the caller can tell
+      // it apart from a real credential rejection and show a connection
+      // message instead of "Invalid email or password".
+      debugPrint('[SupabaseService] signInWithPassword error: $e');
+      rethrow;
     }
   }
 
