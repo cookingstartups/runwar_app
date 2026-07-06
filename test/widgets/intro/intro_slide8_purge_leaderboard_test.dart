@@ -148,13 +148,17 @@ void main() {
     // "no appeals" is wrong and must not appear.
     test('slide 8 headline/body match the corrected copy', () {
       final src = _read('lib/screens/intro_screen.dart');
-      expect(src, contains('Stay above the line.'),
+      expect(src, contains('THE PURGE BEGINS'),
           reason: 'R-22: slide 8 headline must be updated');
       expect(
         src,
-        contains('Without warning, a red line cuts the board. Land below it '
-            'and you lose everything: zones, rank, access to the app.'),
-        reason: 'R-22: slide 8 body must be updated (corrected copy)',
+        contains('Only the disciplined, competitive, and committed survive.'),
+        reason: 'R-22: slide 8 body must state the discipline requirement',
+      );
+      expect(
+        src,
+        contains('Stay above the line once the purge ends, or lose it all.'),
+        reason: 'R-22: slide 8 body must state the survival condition',
       );
     });
 
