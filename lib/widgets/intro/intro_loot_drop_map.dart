@@ -273,7 +273,7 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
           ..strokeWidth = 1.5);
   }
 
-  // ── Chest alpha lifecycle (AC-F3b-5) ──────────────────────────────────────
+  // ── Chest alpha lifecycle ──────────────────────────────────────
   // Returns full alpha before collection; decays 1.0→0.0 from t=0.45 to t=0.55.
   // At loop reset (t=0): (0-0.45)/0.10 = negative → clamped to 0 → 1-0 = 1.0 ✓
   double _chestAlpha() {
@@ -283,7 +283,7 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
     return decay * _globalFade();
   }
 
-  // ── Treasure chest vector glyph (AC-F3b-4) ────────────────────────────────
+  // ── Treasure chest vector glyph ────────────────────────────────
   // Box: 16×11 px centred rect, stroked kAccent2, strokeWidth 2.0
   // Lid: trapezoid - 24 px wide at base, 12 px wide at top, 7 px tall
   // Hasp: 4×5 px rect centred on lid/box seam
@@ -318,7 +318,7 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
     canvas.drawRect(haspRect, p);
   }
 
-  // ── Chest collection pulse (AC-F3b-5, adapted from _drawBeacon) ───────────
+  // ── Chest collection pulse (adapted from _drawBeacon) ───────────
   // 3 concentric kAccent2 rings expand from _dropPt over t ∈ [0.45, 0.53].
   // Ring i fires with delay i × (0.08/3).
   void _drawChestPulse(Canvas canvas, double fade) {
@@ -341,7 +341,7 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // AC-F3b-9: map-not-ready guard - must be first statement
+    // Map-not-ready guard - must be first statement
     if (routeA.isEmpty || routeBFull.isEmpty) return;
 
     final fade = _globalFade();
