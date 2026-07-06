@@ -5,17 +5,34 @@ import '../../theme.dart';
 import 'intro_helpers.dart';
 
 // ---------------------------------------------------------------------------
-// IntroLootDropMap — Runner B collects a loot chest in Ruzafa (F3b)
+// IntroLootDropMap - Runner B collects a loot chest in Ruzafa (F3b)
 //
-// Map centre: LatLng(39.4620, -0.3760) — Ruzafa neighbourhood, zoom 16
-// Chest:      LatLng(39.4626, -0.3758) — Carrer de Cuba × Carrer del Doctor
-//             Serrano area, inside viewport lat[39.458,39.466] lon[-0.381,-0.371]
+// Geometry sourced from real OpenStreetMap street data (Nominatim lookup on
+// the actual OSM ways, since the Overpass interpreter endpoint was down at
+// fetch time - same underlying OSM dataset either way):
+//   - Carrer de Buenos Aires (ways 12403610 + 52092204)
+//   - Carrer de Cuba (way 52091638)
+// Both streets genuinely intersect at LatLng(39.461576, -0.376751) in
+// Russafa - this node is also, not by coincidence but by construction, the
+// exact corner "B" of IntroZones.kS1Block1 in intro_helpers.dart, and the
+// route's own eastern waypoint LatLng(39.462077, -0.375522) matches corner
+// "A" of that same block - i.e. this slide's geometry traces two real edges
+// of the neighbourhood block already established by the rest of onboarding.
 //
-// Runner A (kAccent orange)  — straight west→east along Carrer de la Reina
-//                               level; does NOT react to chest.
-// Runner B (kSea blue)       — travels N→S along Carrer del Doctor Serrano,
-//                               branches east to collect the chest at t=0.45,
-//                               returns to main route and continues south.
+// Map centre: LatLng(39.4598, -0.3768) - zoom 16. Shifted south of the real
+// intersection so the chest/routes render in the upper ~35-45% of the
+// screen (this slide uses visualTopTextBottom; the text panel and bottom
+// gradient dissolve occupy the lower portion).
+// Chest:      LatLng(39.461576, -0.376751) - Carrer de Cuba × Carrer de
+//             Buenos Aires, inside the viewport at the above centre/zoom.
+//
+// Runner A (kAccent orange)  - straight west→east along Carrer de Buenos
+//                               Aires; passes through the intersection node
+//                               but does NOT react to the chest.
+// Runner B (kSea blue)       - travels N→S along Carrer de Cuba, passing
+//                               directly through the same intersection node
+//                               (the chest) at t=0.45 - no artificial branch
+//                               needed since the real streets cross there.
 //                               Single spliced _kRouteBFull list (ADN-4).
 // ---------------------------------------------------------------------------
 
@@ -29,53 +46,52 @@ class IntroLootDropMap extends StatefulWidget {
 class _IntroLootDropMapState extends State<IntroLootDropMap>
     with TickerProviderStateMixin, IntroMapMixin<IntroLootDropMap> {
   // ── Fixed coordinates ──────────────────────────────────────────────────────
-  static const _kCentre = LatLng(39.4620, -0.3760);
+  // Centre shifted south of the real intersection so the action reads in the
+  // upper portion of the screen (visualTopTextBottom layout - see file header).
+  static const _kCentre = LatLng(39.4598, -0.3768);
 
-  // Chest location: Carrer de Cuba × Carrer del Doctor Serrano area.
-  // Viewport constraint: lat ∈ [39.458, 39.466], lon ∈ [-0.381, -0.371] ✓
-  static const _kDropCoord = LatLng(39.4626, -0.3758);
+  // Chest location: real intersection of Carrer de Cuba × Carrer de Buenos
+  // Aires (OSM way 52091638 × ways 12403610/52092204). Same node as
+  // IntroZones.kS1Block1 corner "B" in intro_helpers.dart.
+  static const _kDropCoord = LatLng(39.461576, -0.376751);
 
-  // Runner A (kAccent orange) — straight west→east along ~Carrer de la Reina.
-  // Starts off-screen west (lon < -0.383), exits off-screen east (lon > -0.369).
-  // Does NOT pass through _kDropCoord (chest is north of this route).
+  // Runner A (kAccent orange) - west→east along the real Carrer de Buenos
+  // Aires alignment. Passes through the Cuba intersection (_kDropCoord) but
+  // does NOT react to the chest - collection is driven only by Runner B's
+  // timeline, so both routes may legitimately cross the same real node.
   static const _kRouteA = [
-    LatLng(39.4610, -0.3845), // 0: off-screen west start (~700 m west of centre)
-    LatLng(39.4612, -0.3810), // 1: entering viewport, Carrer de la Reina W
-    LatLng(39.4613, -0.3785), // 2: Carrer de la Reina mid-west
-    LatLng(39.4614, -0.3760), // 3: Carrer de la Reina centre
-    LatLng(39.4615, -0.3735), // 4: Carrer de la Reina mid-east
-    LatLng(39.4616, -0.3710), // 5: exiting viewport east
-    LatLng(39.4617, -0.3675), // 6: off-screen east exit
+    LatLng(39.4577, -0.3860),   // 0: off-screen west start (~700 m beyond street end)
+    LatLng(39.460846, -0.378471), // 1: Carrer de Buenos Aires - western real waypoint
+    LatLng(39.460901, -0.378366), // 2: Buenos Aires continuing east
+    LatLng(39.461554, -0.376799), // 3: Buenos Aires approaching the Cuba intersection
+    LatLng(39.461576, -0.376751), // 4: Cuba × Buenos Aires intersection (= _kDropCoord)
+    LatLng(39.462077, -0.375522), // 5: Buenos Aires continuing east (= kS1Block1 corner A)
+    LatLng(39.4652, -0.3680),   // 6: off-screen east exit (~700 m beyond street end)
   ];
 
-  // Runner B (kSea blue) — single spliced route (ADN-4):
-  //   pre-branch main route (wpt 0-3)  → north of centre, heading south along
-  //   Carrer del Doctor Serrano (~lon -0.3740)
-  //   branch toward chest (wpt 4-5)    → turns east at lat 39.4640
-  //   chest (wpt 6 = _kDropCoord)      → collected at t≈0.45
-  //   return to main route (wpt 7-9)   → heads back west then south
-  //   post-return main route (wpt 10-12) → continues south, exits off-screen
+  // Runner B (kSea blue) - single spliced route (ADN-4), real Carrer de Cuba
+  // alignment (OSM way 52091638), heading N→S and passing directly through
+  // the Buenos Aires intersection (the chest) - no artificial detour needed
+  // since the real streets genuinely cross at that node.
   //
   // Timing with arrivalB = 0.85, startT = 0.05, 13 waypoints (indices 0-12):
   //   progress(t) = (t - 0.05) / (0.85 - 0.05) = (t - 0.05) / 0.80
   //   waypoint index = progress * 12
-  //   t=0.30 → progress=0.3125 → wpt≈3.75  (between 3 and 4 → branch begins)
-  //   t=0.45 → progress=0.5    → wpt=6.0   (exactly _kDropCoord) ✓
-  //   t=0.70 → progress=0.8125 → wpt≈9.75  (between 9 and 10 → back on route) ✓
+  //   t=0.45 → progress=0.5 → wpt=6.0 (exactly _kDropCoord) ✓
   static const _kRouteBFull = [
-    LatLng(39.4700, -0.3740), //  0: off-screen north start (~740 m north of centre)
-    LatLng(39.4680, -0.3742), //  1: Carrer del Doctor Serrano heading south
-    LatLng(39.4660, -0.3743), //  2: mid-north section
-    LatLng(39.4643, -0.3742), //  3: pre-branch — about to detour east
-    LatLng(39.4636, -0.3742), //  4: branch begins — turning east toward chest
-    LatLng(39.4630, -0.3752), //  5: approaching chest from the west
-    LatLng(39.4626, -0.3758), //  6: _kDropCoord — chest collected at t≈0.45
-    LatLng(39.4628, -0.3748), //  7: returning west after collection
-    LatLng(39.4632, -0.3742), //  8: back at main route corridor
-    LatLng(39.4625, -0.3741), //  9: rejoined main route, heading south
-    LatLng(39.4610, -0.3740), // 10: continuing south
-    LatLng(39.4592, -0.3739), // 11: south section
-    LatLng(39.4570, -0.3738), // 12: off-screen south exit (~720 m south of centre)
+    LatLng(39.4700, -0.382760),   //  0: off-screen north start (~700 m beyond street end)
+    LatLng(39.463031, -0.377807), //  1: Carrer de Cuba - northern real waypoint
+    LatLng(39.462994, -0.377764), //  2: Cuba continuing south
+    LatLng(39.462925, -0.377711), //  3: Cuba continuing south
+    LatLng(39.462206, -0.377203), //  4: Cuba continuing south
+    LatLng(39.462155, -0.377171), //  5: Cuba approaching the Buenos Aires intersection
+    LatLng(39.461576, -0.376751), //  6: _kDropCoord - chest collected at t≈0.45
+    LatLng(39.461123, -0.376444), //  7: Cuba continuing south, past the intersection
+    LatLng(39.461100, -0.376426), //  8: Cuba continuing south
+    LatLng(39.461050, -0.376394), //  9: Cuba continuing south
+    LatLng(39.460947, -0.376322), // 10: Cuba continuing south
+    LatLng(39.460440, -0.375966), // 11: Carrer de Cuba - southern real waypoint
+    LatLng(39.4500, -0.368545),   // 12: off-screen south exit (~700 m beyond street end)
   ];
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -186,7 +202,7 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.tailLengthPx,
   });
 
-  // IntroPainterHelpers requires a Color get accent — use kAccent as default.
+  // IntroPainterHelpers requires a Color get accent - use kAccent as default.
   @override
   Color get accent => kAccent;
 
@@ -195,7 +211,7 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
   // t 0.05–0.85  : runners move along their routes
   //   Runner A: straight west→east, arrival=0.85 (passes through, exits)
   //   Runner B: N→S with detour; branch at t≈0.30, chest at t=0.45, rejoins t=0.70
-  // t 0.45       : chest collection — 3-ring pulse, chest fade begins
+  // t 0.45       : chest collection - 3-ring pulse, chest fade begins
   // t 0.55       : chest fully faded (alpha=0)
   // t 0.80–1.00  : _globalFade fade-out
   static const double _arrivalA = 0.85;
@@ -269,9 +285,9 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
 
   // ── Treasure chest vector glyph (AC-F3b-4) ────────────────────────────────
   // Box: 16×11 px centred rect, stroked kAccent2, strokeWidth 2.0
-  // Lid: trapezoid — 24 px wide at base, 12 px wide at top, 7 px tall
+  // Lid: trapezoid - 24 px wide at base, 12 px wide at top, 7 px tall
   // Hasp: 4×5 px rect centred on lid/box seam
-  // PaintingStyle.stroke only — no fill (hollow interior, dark tile shows through)
+  // PaintingStyle.stroke only - no fill (hollow interior, dark tile shows through)
   void _drawChest(Canvas canvas, Offset centre, double alpha) {
     if (alpha <= 0) return;
     final p = Paint()
@@ -283,7 +299,7 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
     final boxRect = Rect.fromCenter(center: centre, width: 16, height: 11);
     canvas.drawRect(boxRect, p);
 
-    // Lid — trapezoid
+    // Lid - trapezoid
     // Bottom edge of lid coincides with top edge of box: centre.dy - 5.5
     final lidPath = Path()
       ..moveTo(centre.dx - 12, centre.dy - 5.5) // bottom-left (+4 px each side vs 8)
@@ -293,7 +309,7 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
       ..close();
     canvas.drawPath(lidPath, p);
 
-    // Hasp — 4×5 px rect centred on lid/box seam midpoint
+    // Hasp - 4×5 px rect centred on lid/box seam midpoint
     final haspRect = Rect.fromCenter(
       center: Offset(centre.dx, centre.dy - 5.5),
       width: 4,
@@ -325,7 +341,7 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // AC-F3b-9: map-not-ready guard — must be first statement
+    // AC-F3b-9: map-not-ready guard - must be first statement
     if (routeA.isEmpty || routeBFull.isEmpty) return;
 
     final fade = _globalFade();
