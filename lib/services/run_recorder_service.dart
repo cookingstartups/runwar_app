@@ -20,6 +20,18 @@ enum RecorderState { idle, recording }
 /// give the operator distinct, non-blocking feedback per gate (R1).
 enum GateRejectionReason { areaFloor, sessionElapsed }
 
+/// One entry from a run replay fixture, as parsed from its `events` array.
+/// `type` is one of `run_start`, `gps_fix`, `claim_rejected`, or
+/// `user_stop_pressed`; see [RunRecorderService.runSimulationSequence] for
+/// how each type is handled.
+class SimulationFixEvent {
+  const SimulationFixEvent({required this.t, required this.type, required this.data});
+
+  final DateTime t;
+  final String type;
+  final Map<String, dynamic> data;
+}
+
 class RunRecorderService {
   RunRecorderService._();
   static final RunRecorderService instance = RunRecorderService._();
@@ -41,8 +53,27 @@ class RunRecorderService {
   String? _activeUserId;
   Timer? _notifTimer;
 
+  // Owns the scheduling of the NEXT synthetic fix during a simulation. This
+  // is a distinct handle from _posSub on purpose: cancelling one can never
+  // be confused with cancelling the other, and "is a simulation active" can
+  // be queried independent of stateNotifier (which both real and simulated
+  // recording share as `recording`).
+  Timer? _simTimer;
+
   // Durable session identity minted at startRun and recovered on crash/resume.
   String? _currentSessionId;
+
+  // True while a tester-only simulated replay is driving _onPosition instead
+  // of the real device GPS stream. This is the single switch that decides
+  // which source is live; see beginSimulation() for the isolation guarantee.
+  bool _simActive = false;
+
+  /// Whether a simulated replay is currently driving the recorder instead of
+  /// the real device GPS stream.
+  bool get isSimulationActive => _simActive;
+
+  @visibleForTesting
+  bool get hasRealGpsSubscriptionForTesting => _posSub != null;
 
   // Expose session ID so the provider layer can wire lasso_id + zone_id writes.
   String? get currentSessionId => _currentSessionId;
@@ -154,8 +185,13 @@ class RunRecorderService {
     if (pos.latitude.isNaN || pos.longitude.isNaN) return;
     if (pos.latitude.isInfinite || pos.longitude.isInfinite) return;
     final newLatLng = LatLng(pos.latitude, pos.longitude);
-    // Always update presence so rival comets stay live regardless of spacing filter.
-    RealtimePresenceService.instance.updatePosition(newLatLng);
+    // Always update presence so rival comets stay live regardless of spacing
+    // filter - except during a simulation, where the position is synthetic
+    // and must never be broadcast to other players as if it were a real
+    // runner moving through the city.
+    if (!_simActive) {
+      RealtimePresenceService.instance.updatePosition(newLatLng);
+    }
     // Proximity pre-check: if raw fix is within kProximityTriggerM of any prior
     // stored vertex (from _loopStartTrailIndex onward), bypass the spacing filter
     // so the closing fix is stored and _scanForAutoClaim can detect the closure.
@@ -165,11 +201,11 @@ class RunRecorderService {
         if (_equirectangularDistanceM(_track[i], newLatLng) < kProximityTriggerM) {
           _track.add(newLatLng);
           trackVersion.value++;
-          final uid = _activeUserId;
-          if (uid != null) {
+          final scratchUid = _scratchUserId();
+          if (scratchUid != null) {
             // Intentional: closing fix may be closer than kTrackPointSpacingM; invariant relaxed only at loop closure
             RunScratchStore.instance.insertPoint(
-              uid, pos.latitude, pos.longitude,
+              scratchUid, pos.latitude, pos.longitude,
               accuracy: pos.accuracy,
               ts: pos.timestamp.toIso8601String(),
             ).catchError((e) {
@@ -188,21 +224,27 @@ class RunRecorderService {
     }
     _track.add(newLatLng);
     trackVersion.value++;
-    // Persist point to scratch table for crash/process-kill recovery.
-    final uid = _activeUserId;
-    if (uid != null) {
+    // Persist point to scratch table for crash/process-kill recovery. A
+    // simulation writes under a namespaced scratch key (see _scratchUserId)
+    // so a killed app never resumes a simulated track as if it were a real
+    // interrupted run.
+    final scratchUid = _scratchUserId();
+    if (scratchUid != null) {
       RunScratchStore.instance.insertPoint(
-        uid,
+        scratchUid,
         pos.latitude,
         pos.longitude,
         accuracy: pos.accuracy,
         ts: pos.timestamp.toIso8601String(),
         sessionId: _currentSessionId,
-        isMocked: pos.isMocked,
+        isMocked: _simActive ? true : pos.isMocked,
       ).catchError((_) {});
+    }
 
-      // Stream this fix to gps_samples in real-time via the provider callback.
-      // Fire-and-forget: a write failure must never terminate the GPS loop.
+    // Stream this fix to gps_samples in real-time via the provider callback.
+    // Fire-and-forget: a write failure must never terminate the GPS loop.
+    final uid = _activeUserId;
+    if (uid != null) {
       final sid = _currentSessionId;
       final gpsCb = onGpsFix;
       if (gpsCb != null && sid != null) {
@@ -214,7 +256,11 @@ class RunRecorderService {
           'lng': pos.longitude,
           'ts': pos.timestamp.toIso8601String(),
           'speed_ms': pos.speed,
-          'is_mocked': pos.isMocked,
+          // Every row written during a simulation is forced true regardless
+          // of the fixture's own recorded value - this is the write-time
+          // guarantee, independent of whatever Position the replay driver
+          // happened to construct.
+          'is_mocked': _simActive ? true : pos.isMocked,
         }).catchError((e, st) {
           // Fire-and-forget stays non-blocking - the GPS loop must never
           // stall on a write failure - but the failure is now observable
@@ -288,12 +334,19 @@ class RunRecorderService {
   /// futures continue to completion independently.
   Future<void> stopRun() async {
     if (stateNotifier.value != RecorderState.recording) return;
+    final wasSimulation = _simActive;
+    final scratchUid = _scratchUserId();
+    _simActive = false;
+    _simTimer?.cancel();
+    _simTimer = null;
     _notifTimer?.cancel();
     _notifTimer = null;
     await _posSub?.cancel();
     _posSub = null;
-    RealtimePresenceService.instance.setRecording(false);
-    unawaited(FlutterForegroundTask.stopService());
+    if (!wasSimulation) {
+      RealtimePresenceService.instance.setRecording(false);
+      unawaited(FlutterForegroundTask.stopService());
+    }
     _closedAt = DateTime.now().toUtc();
     // Total distance from the recorded track, computed before the track is
     // cleared. ended_at and finalized_at both use the same moment as
@@ -321,15 +374,17 @@ class RunRecorderService {
     // is still using it. _clearTrackInternal runs on the NEXT startRun().
     // Scratch is cleared here so a future resumeFromScratch on a
     // killed-app path does not re-hydrate this finished session.
-    if (uid != null) {
+    if (scratchUid != null) {
       try {
-        await RunScratchStore.instance.deleteForUser(uid);
+        await RunScratchStore.instance.deleteForUser(scratchUid);
       } catch (_) {}
     }
     _loopStartTrailIndex = 0;
     _sessionStartTime = null;
     stateNotifier.value = RecorderState.idle;
-    TelemetryService.instance.logEvent('stop_run').catchError((_) {});
+    if (!wasSimulation) {
+      TelemetryService.instance.logEvent('stop_run').catchError((_) {});
+    }
   }
 
   /// Discards the current track and idles the recorder WITHOUT claiming.
@@ -340,12 +395,19 @@ class RunRecorderService {
   ///       scratch table cleared.
   Future<void> cancelRun() async {
     if (stateNotifier.value != RecorderState.recording) return;
+    final wasSimulation = _simActive;
+    final scratchUid = _scratchUserId();
+    _simActive = false;
+    _simTimer?.cancel();
+    _simTimer = null;
     _notifTimer?.cancel();
     _notifTimer = null;
     await _posSub?.cancel();
     _posSub = null;
-    RealtimePresenceService.instance.setRecording(false);
-    unawaited(FlutterForegroundTask.stopService());
+    if (!wasSimulation) {
+      RealtimePresenceService.instance.setRecording(false);
+      unawaited(FlutterForegroundTask.stopService());
+    }
     // A cancelled run still has a real end moment and real distance
     // travelled up to that point - it is just not claimed as territory.
     // Recording ended_at/distance_m/finalized_at for cancelled runs too
@@ -368,16 +430,18 @@ class RunRecorderService {
       }).catchError((_) {});
     }
     _currentSessionId = null;
-    if (uid != null) {
+    if (scratchUid != null) {
       try {
-        await RunScratchStore.instance.deleteForUser(uid);
+        await RunScratchStore.instance.deleteForUser(scratchUid);
       } catch (_) {}
     }
     _clearTrackInternal();
     _loopStartTrailIndex = 0;
     _sessionStartTime = null;
     stateNotifier.value = RecorderState.idle;
-    TelemetryService.instance.logEvent('cancel_run').catchError((_) {});
+    if (!wasSimulation) {
+      TelemetryService.instance.logEvent('cancel_run').catchError((_) {});
+    }
   }
 
   /// Runs detectSelfIntersection on the newest segment and dispatches an
@@ -464,6 +528,179 @@ class RunRecorderService {
         distanceFilter: 25, // skip updates when device hasn't moved 25 m+
       ),
     ).listen(_onPosition, onError: (_) {});
+  }
+
+  /// Scratch-table key used for the CURRENT fix. During a simulation this is
+  /// a namespaced key derived from the real user id (never the raw uid), so
+  /// simulated scratch rows can never be picked up by [resumeFromScratch],
+  /// which is always called with the real, unprefixed uid. Outside a
+  /// simulation this is just [_activeUserId].
+  String? _scratchUserId() {
+    final uid = _activeUserId;
+    if (uid == null) return null;
+    return _simActive ? 'sim:$uid' : uid;
+  }
+
+  /// Starts a tester-only simulated replay session. This is the ONLY entry
+  /// point into simulation mode and it enforces the position-source
+  /// isolation guarantee: any real GPS subscription is cancelled and nulled
+  /// out BEFORE recorder state is reset and BEFORE the caller can possibly
+  /// feed a single synthetic fix, so a real sensor fix can never land in
+  /// _track while a simulation is active.
+  ///
+  /// Does not start the foreground service/notification a real run uses -
+  /// a simulation is a short, foreground-only diagnostic the operator
+  /// watches live. If the app is backgrounded mid-simulation, the Dart timer
+  /// driving fix emission may be throttled or paused by the OS; it never
+  /// falls back to opening the real GPS stream, it simply advances slower
+  /// or stalls until the app is foregrounded again.
+  ///
+  /// Pre: state == idle; no simulation already active.
+  /// Post: real _posSub is null; _track is empty; a fresh _currentSessionId
+  ///       has been minted; state == recording; isSimulationActive == true.
+  Future<void> beginSimulation() async {
+    if (stateNotifier.value == RecorderState.recording || _simActive) return;
+    await _posSub?.cancel();
+    _posSub = null;
+    assert(_posSub == null,
+        'real GPS subscription must be closed before a simulation starts');
+    _simActive = true;
+    _clearTrackInternal();
+    _loopStartTrailIndex = 0;
+    _sessionStartTime = DateTime.now();
+    _startedAt = DateTime.now().toUtc();
+    trackVersion.value++;
+    _currentSessionId = _uuid.v4();
+    // Clear any leftover scratch from a previous simulation under the same
+    // namespaced key - mirrors startRun()'s clear of real scratch rows.
+    final scratchUid = _scratchUserId();
+    if (scratchUid != null) {
+      try {
+        await RunScratchStore.instance.deleteForUser(scratchUid);
+      } catch (_) {}
+    }
+    final sid = _currentSessionId!;
+    final uid = _activeUserId;
+    final cb = onRunUpdate;
+    if (cb != null && uid != null) {
+      cb(sid, {
+        'id': sid,
+        'user_id': uid,
+        'city': activeCity,
+        'started_at': _startedAt!.toIso8601String(),
+        'status': 'active',
+      }).catchError((_) {});
+    }
+    stateNotifier.value = RecorderState.recording;
+  }
+
+  /// Feeds one synthetic fixture-derived fix through the exact same
+  /// _onPosition pipeline a real GPS fix goes through (spacing filter,
+  /// proximity fast path, auto-claim scan). No-op unless a simulation is
+  /// active, so this can never be misused to inject a fix into a real run
+  /// or after a simulation has already ended.
+  void injectSimulatedFix(Position pos) {
+    if (!_simActive) return;
+    _onPosition(pos);
+  }
+
+  /// Plays [events] into the simulation one at a time, preserving each
+  /// event's original relative spacing (scaled by [multiplier]) so
+  /// animations stay visually intelligible instead of jumping instantly.
+  /// `claim_rejected` and `run_start` entries are historical context only
+  /// and are never replayed as commands. A `user_stop_pressed` entry ends
+  /// the simulation through the exact same finalize path a real Stop tap
+  /// uses ([stopRun]). Every scheduled emission is owned by [_simTimer],
+  /// the simulation's own subscription handle - never [_posSub] - so
+  /// cancelling one can never be confused with cancelling the other.
+  ///
+  /// The returned future completes once the fixture is exhausted or the
+  /// simulation ends early (stop/cancel/abort from any caller).
+  ///
+  /// Pre: beginSimulation() has already been called and completed.
+  Future<void> runSimulationSequence(
+    List<SimulationFixEvent> events, {
+    double multiplier = kSimulationAccelerationMultiplier,
+  }) {
+    final completer = Completer<void>();
+    var index = 0;
+
+    void step() {
+      if (!_simActive || index >= events.length) {
+        if (!completer.isCompleted) completer.complete();
+        return;
+      }
+      final delayMs = index == 0
+          ? 0
+          : _simDelayMs(events[index - 1].t, events[index].t, multiplier);
+      _simTimer = Timer(Duration(milliseconds: delayMs), () {
+        if (!_simActive) {
+          if (!completer.isCompleted) completer.complete();
+          return;
+        }
+        _applySimulationEvent(events[index]);
+        index++;
+        step();
+      });
+    }
+
+    step();
+    return completer.future;
+  }
+
+  void _applySimulationEvent(SimulationFixEvent event) {
+    switch (event.type) {
+      case 'gps_fix':
+        final data = event.data;
+        _onPosition(Position(
+          latitude: (data['lat'] as num).toDouble(),
+          longitude: (data['lng'] as num).toDouble(),
+          timestamp: event.t,
+          accuracy: 5.0,
+          altitude: 0.0,
+          altitudeAccuracy: 0.0,
+          heading: 0.0,
+          headingAccuracy: 0.0,
+          speed: (data['speed_ms'] as num?)?.toDouble() ?? 0.0,
+          speedAccuracy: 0.0,
+          // Forced true regardless of the fixture's own recorded value -
+          // every fix a simulation feeds into the pipeline is synthetic.
+          isMocked: true,
+        ));
+        break;
+      case 'user_stop_pressed':
+        // Fire-and-forget: this exercises the full stop/finalize path
+        // exactly as a real Stop tap would, including the runs-row
+        // completion write. stopRun() sets _simActive = false
+        // synchronously before its first await, so the sequence loop
+        // observes the end on the very next step.
+        unawaited(stopRun());
+        break;
+      default:
+        // run_start and claim_rejected are historical record only.
+        break;
+    }
+  }
+
+  /// Milliseconds to wait before emitting the fix at [next], given the
+  /// fixture's own timestamp for the [prev] fix, scaled by [multiplier] and
+  /// clamped to a sane on-screen-watchable range.
+  static int _simDelayMs(DateTime prev, DateTime next, double multiplier) {
+    final rawMs = next.difference(prev).inMilliseconds;
+    final scaledMs = rawMs <= 0 ? 0 : (rawMs / multiplier).round();
+    return scaledMs.clamp(kSimulationMinFixDelayMs, kSimulationMaxFixDelayMs);
+  }
+
+  /// Aborts the active simulation immediately: cancels the fix-emission
+  /// timer, discards the in-progress synthetic track without dispatching
+  /// any pending claim, and returns the recorder to idle via the same
+  /// terminal-status write path [cancelRun] already uses for a real
+  /// aborted run.
+  Future<void> abortSimulation() async {
+    if (!_simActive) return;
+    _simTimer?.cancel();
+    _simTimer = null;
+    await cancelRun();
   }
 
   /// Rehydrates [_track] from run_scratch rows for [userId], then restarts
@@ -659,6 +896,9 @@ class RunRecorderService {
     _loopStartTrailIndex = 0;
     _sessionStartTime = null;
     _currentSessionId = null;
+    _simActive = false;
+    _simTimer?.cancel();
+    _simTimer = null;
     _track.clear();
     activeCity = '';
     stateNotifier.value = RecorderState.idle;

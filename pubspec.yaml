@@ -110,6 +110,7 @@ flutter:
   assets:
     - assets/cities/
     - assets/hero_photos/
+    - assets/fixtures/
     - assets/intro_tiles/15/16348/
     - assets/intro_tiles/15/16349/
     - assets/intro_tiles/15/16350/
