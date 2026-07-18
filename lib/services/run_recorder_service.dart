@@ -9,7 +9,8 @@ import 'error_log_service.dart';
 import 'realtime_presence_service.dart';
 import 'run_scratch_store.dart';
 import 'telemetry_service.dart';
-import '../geo/lasso.dart' show detectSelfIntersection, computeCapture, polygonArea;
+import '../geo/lasso.dart'
+    show detectSelfIntersection, computeCapture, polygonArea, trackDistanceM;
 import '../utils/runwar_constants.dart';
 
 enum RecorderState { idle, recording }
@@ -294,6 +295,12 @@ class RunRecorderService {
     RealtimePresenceService.instance.setRecording(false);
     unawaited(FlutterForegroundTask.stopService());
     _closedAt = DateTime.now().toUtc();
+    // Total distance from the recorded track, computed before the track is
+    // cleared. ended_at and finalized_at both use the same moment as
+    // closed_at: this call is the only place a completed run's terminal
+    // state and metrics are written, so there is no separate later step
+    // that "finalizes" the row.
+    final distanceM = trackDistanceM(_track);
     // Write the completed status BEFORE clearing scratch so the outbox row
     // is enqueued even if scratch deletion fails.
     final sid = _currentSessionId;
@@ -303,6 +310,9 @@ class RunRecorderService {
       runCb(sid, {
         'status': 'completed',
         'closed_at': _closedAt!.toIso8601String(),
+        'ended_at': _closedAt!.toIso8601String(),
+        'distance_m': distanceM,
+        'finalized_at': _closedAt!.toIso8601String(),
         'user_id': uid,
       }).catchError((_) {});
     }
@@ -336,6 +346,13 @@ class RunRecorderService {
     _posSub = null;
     RealtimePresenceService.instance.setRecording(false);
     unawaited(FlutterForegroundTask.stopService());
+    // A cancelled run still has a real end moment and real distance
+    // travelled up to that point - it is just not claimed as territory.
+    // Recording ended_at/distance_m/finalized_at for cancelled runs too
+    // keeps the runs table meaningful for every terminal status instead of
+    // leaving cancelled rows permanently blank.
+    final cancelledAt = DateTime.now().toUtc();
+    final distanceM = trackDistanceM(_track);
     // Write the cancelled status BEFORE clearing scratch.
     final sid = _currentSessionId;
     final runCb = onRunUpdate;
@@ -343,7 +360,10 @@ class RunRecorderService {
     if (runCb != null && sid != null && uid != null) {
       runCb(sid, {
         'status': 'cancelled',
-        'closed_at': DateTime.now().toUtc().toIso8601String(),
+        'closed_at': cancelledAt.toIso8601String(),
+        'ended_at': cancelledAt.toIso8601String(),
+        'distance_m': distanceM,
+        'finalized_at': cancelledAt.toIso8601String(),
         'user_id': uid,
       }).catchError((_) {});
     }

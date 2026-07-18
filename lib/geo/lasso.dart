@@ -180,6 +180,40 @@ double _equirectangularDistanceM(LatLng a, LatLng b) {
 }
 
 // ---------------------------------------------------------------------------
+// trackDistanceM - total run distance
+//
+// Sums the great-circle (haversine) distance between every consecutive pair
+// of points in a recorded track. Uses haversine rather than the
+// equirectangular projection above because a run track can span distances
+// where the flat-plane approximation drifts noticeably, and distance_m is a
+// user-facing, persisted metric rather than an internal proximity threshold.
+// ---------------------------------------------------------------------------
+
+double _haversineDistanceM(LatLng a, LatLng b) {
+  const double earthRadiusM = 6371000.0;
+  final double lat1 = a.latitude * math.pi / 180;
+  final double lat2 = b.latitude * math.pi / 180;
+  final double dLat = (b.latitude - a.latitude) * math.pi / 180;
+  final double dLng = (b.longitude - a.longitude) * math.pi / 180;
+  final double sinLat = math.sin(dLat / 2);
+  final double sinLng = math.sin(dLng / 2);
+  final double h =
+      sinLat * sinLat + math.cos(lat1) * math.cos(lat2) * sinLng * sinLng;
+  return earthRadiusM * 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
+}
+
+/// Total great-circle distance in metres over consecutive points in [track].
+/// Returns 0 for tracks with fewer than two points.
+double trackDistanceM(List<LatLng> track) {
+  if (track.length < 2) return 0;
+  double total = 0;
+  for (int i = 1; i < track.length; i++) {
+    total += _haversineDistanceM(track[i - 1], track[i]);
+  }
+  return total;
+}
+
+// ---------------------------------------------------------------------------
 // segmentSegmentIntersection
 //
 // Parametric segment-segment intersection in lat/lng space (treated as planar
