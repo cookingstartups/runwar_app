@@ -85,16 +85,32 @@ class OutboxDrainer {
       }
       await OutboxService.instance.markSuccess(id);
     } on PostgrestException catch (e) {
-      // Permanent errors: RLS denial (42501, 401, 403) and schema violations
-      // (23502 NOT NULL, 23503 FK) — discard immediately rather than retrying.
+      // Permanent errors: RLS denial (42501, 401, 403) and FK violations
+      // (23503) — discard immediately rather than retrying, since retrying
+      // against a missing parent row or a denied policy will never succeed
+      // on its own.
+      //
+      // 23502 (NOT NULL violation) is a permanent discard for every table
+      // EXCEPT `runs`. For `runs`, a 23502 means this queued update is a
+      // partial payload that happened to hit Postgres as an INSERT (no
+      // existing row) instead of an UPDATE, so a required column (e.g.
+      // started_at) was missing from this particular payload. Discarding it
+      // here would silently and permanently lose the run update. Keep it
+      // queued so the existing backoff/retry mechanism in
+      // OutboxService.markFailure gets another chance once a fuller payload
+      // (e.g. the full stub re-sent by resumeFromScratch) has landed
+      // server-side and turned this row's upsert into a true UPDATE.
       final code = e.code ?? '';
       final msg = e.message;
-      if (code == '42501' ||
+      final isRlsDenial = code == '42501' ||
           code == '401' ||
           code == '403' ||
-          msg.contains('row-level security') ||
-          code == '23502' ||
-          code == '23503') {
+          msg.contains('row-level security');
+      final isForeignKeyViolation = code == '23503';
+      final isRetryableNotNullOnRuns = code == '23502' && tableName == 'runs';
+      final isPermanentNotNull = code == '23502' && !isRetryableNotNullOnRuns;
+
+      if (isRlsDenial || isForeignKeyViolation || isPermanentNotNull) {
         debugPrint(
           '[OutboxDrainer] permanent error $code on $tableName/$id — discarding',
         );
@@ -106,7 +122,13 @@ class OutboxDrainer {
         );
         await OutboxService.instance.markSuccess(id);
       } else {
-        // Retryable — increment attempt_count and update next_retry_at.
+        // Retryable (including 23502 on `runs`) — increment attempt_count
+        // and update next_retry_at; existing exponential backoff applies.
+        if (isRetryableNotNullOnRuns) {
+          debugPrint(
+            '[OutboxDrainer] NOT NULL violation on runs/$id kept queued for retry: $msg',
+          );
+        }
         await OutboxService.instance.markFailure(
           id,
           attemptCount,
