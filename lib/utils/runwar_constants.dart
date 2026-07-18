@@ -23,3 +23,20 @@ const int kMinProximityClosureTrailPoints = 4;
 // polygon. A genuine city-block-scale loop comfortably clears this; a
 // spurious closure between a handful of nearby fixes does not.
 const double kMinProximityClosureDiagonalM = 50.0;
+
+// Tester-only run replay simulation. Divides every real inter-fix delay by
+// this factor when the operator picks accelerated timing, so a run recorded
+// over tens of real minutes plays back in a few minutes on-device while
+// keeping the fixes in their original relative order and spacing. Named so
+// the multiplier is a single, discoverable knob rather than a magic number
+// scattered across the replay driver.
+const double kSimulationAccelerationMultiplier = 12.0;
+
+// Hard floor and ceiling on the delay between two simulated fixes, applied
+// after the acceleration multiplier. Keeps degenerate fixture gaps (a fix
+// captured a few seconds after the previous one, or a multi-minute gap while
+// the original device lost a GPS lock) from turning into either an
+// instantaneous jump or an unreasonably long stall during a replay the
+// operator is actively watching.
+const int kSimulationMinFixDelayMs = 120;
+const int kSimulationMaxFixDelayMs = 4000;

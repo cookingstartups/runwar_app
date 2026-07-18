@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_map/flutter_map.dart';
@@ -46,6 +47,7 @@ import '../widgets/first_zone_celebration_overlay.dart';
 import '../widgets/beam_pulse_dot.dart';
 import '../widgets/rival_runner_marker.dart';
 import '../widgets/runner_comet.dart';
+import '../widgets/simulation_control_panel.dart';
 // Phase 2 providers — written by @Backend-Developer (design.md §5.1).
 import '../providers/drops/active_drops_provider.dart';
 // Phase 2 repositories — written by @Backend-Developer.
@@ -353,16 +355,33 @@ class _MapScreenState extends ConsumerState<MapScreen>
           )
         : mapBody;
 
+    final screenBody = _locationRevoked
+        ? LocationDeniedGate(
+            // Re-run _initLocation (not just clear the flag) so the
+            // position stream actually restarts after re-granting -
+            // otherwise the map shows with no GPS dot or updates.
+            onGranted: _initLocation,
+          )
+        : body;
+
+    // Tester-only run replay simulation control. Debug builds AND
+    // players.is_tester (via isTesterProvider) both gate visibility - a
+    // debug build alone never surfaces this to a non-tester, and a tester
+    // flag alone never surfaces it in a release build.
+    final isTesterAsync =
+        kDebugMode && userId.isNotEmpty ? ref.watch(isTesterProvider(userId)) : null;
+    final showSimulationControl = kDebugMode && (isTesterAsync?.valueOrNull ?? false);
+
     return Scaffold(
       backgroundColor: kBg,
-      body: _locationRevoked
-          ? LocationDeniedGate(
-              // Re-run _initLocation (not just clear the flag) so the
-              // position stream actually restarts after re-granting -
-              // otherwise the map shows with no GPS dot or updates.
-              onGranted: _initLocation,
+      body: showSimulationControl
+          ? Stack(
+              children: [
+                screenBody,
+                const SimulationLauncherChip(),
+              ],
             )
-          : body,
+          : screenBody,
       floatingActionButton: _buildFab(context, city),
     );
   }

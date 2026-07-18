@@ -1,0 +1,1263 @@
+{
+  "fixture_version": 1,
+  "source": {
+    "run_id": "46e5a83c-e9bd-4b60-bd72-a6125cc9c377",
+    "user_id": "d28386f4-b621-4cea-92cb-8c4b6e74bee8",
+    "city": "valencia",
+    "captured_at": "2026-07-18T17:12:00Z",
+    "app_commit_during_capture": "4283cde"
+  },
+  "run": {
+    "id": "46e5a83c-e9bd-4b60-bd72-a6125cc9c377",
+    "city": "valencia",
+    "started_at": "2026-07-18T16:03:10.760017+00:00",
+    "ended_at": null,
+    "distance_m": null,
+    "credits_earned": 0,
+    "created_at": "2026-07-18T16:03:11.138854+00:00",
+    "finalized_at": null,
+    "user_id": "d28386f4-b621-4cea-92cb-8c4b6e74bee8",
+    "track_json": "{}",
+    "closed_at": null,
+    "zone_id": null,
+    "status": "active",
+    "session_id": null,
+    "lasso_id": null
+  },
+  "fidelity_warning": "gps_samples is NOT the full track the recorder scanned. The proximity fast path in run_recorder_service.dart never calls onGpsFix, so the fixes that triggered the claim rejections were never persisted. There are 69 GPS events but 58 rejections, and the rejections cannot be reproduced from these coordinates alone. A replay of this fixture will NOT reproduce the original failure. Treat it as a route, not as a faithful trace.",
+  "counts": {
+    "gps_fixes": 69,
+    "claim_rejections": 58,
+    "events": 129
+  },
+  "events": [
+    {
+      "t": "2026-07-18T16:03:10.760017+00:00",
+      "type": "run_start",
+      "data": {
+        "city": "valencia",
+        "run_id": "46e5a83c-e9bd-4b60-bd72-a6125cc9c377"
+      }
+    },
+    {
+      "t": "2026-07-18T16:03:14.34+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.519926,
+        "lng": -0.4343557,
+        "speed_ms": 0.0866868421435356,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:03:53.239+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5195018,
+        "lng": -0.4340852,
+        "speed_ms": 2.04341888427734,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:04:03.46881+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 25.2,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=25.2sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:04:26.915+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5189553,
+        "lng": -0.433515,
+        "speed_ms": 2.13746762275696,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:04:41.571476+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 37.0,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=37.0sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:05:09.361+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.518895,
+        "lng": -0.4327452,
+        "speed_ms": 2.27191090583801,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:05:38.135+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5193351,
+        "lng": -0.4322595,
+        "speed_ms": 1.78003931045532,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:06:11.441+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5198958,
+        "lng": -0.4321799,
+        "speed_ms": 2.08481955528259,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:06:44.395+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.520598,
+        "lng": -0.4324599,
+        "speed_ms": 1.97778737545013,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:07:26.48+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5206723,
+        "lng": -0.4332396,
+        "speed_ms": 2.24734687805176,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:07:54.894+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5202376,
+        "lng": -0.4338921,
+        "speed_ms": 2.14898061752319,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:08:42.922+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.519652,
+        "lng": -0.4342455,
+        "speed_ms": 1.07798790931702,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:08:55.587307+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 3.6,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=3.6sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:09:44.89+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5192051,
+        "lng": -0.4337953,
+        "speed_ms": 0.189536735415459,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:09:59.425306+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 1.5,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=1.5sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:10:46.891+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5188206,
+        "lng": -0.43338,
+        "speed_ms": 1.19028317928314,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:10:57.417181+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 1.0,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=1.0sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:11:32.86+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5182974,
+        "lng": -0.4330208,
+        "speed_ms": 1.44721353054047,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:11:46.062824+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 6.8,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=6.8sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:12:34.2+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5177281,
+        "lng": -0.4324787,
+        "speed_ms": 2.15669298171997,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:13:03.525598+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 7.9,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=7.9sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:13:21.698+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5168413,
+        "lng": -0.4314797,
+        "speed_ms": 2.25988221168518,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:13:42.037194+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 11.9,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=11.9sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:14:04.514+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5162858,
+        "lng": -0.4304931,
+        "speed_ms": 2.20251798629761,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:14:14.556681+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 24.5,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=24.5sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:14:37.92+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5163612,
+        "lng": -0.4296036,
+        "speed_ms": 2.14454364776611,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:14:48.142431+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 2.0,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=2.0sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:15:22.5+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5169064,
+        "lng": -0.429407,
+        "speed_ms": 1.34264552593231,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:15:32.696131+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 0.4,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=0.4sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:16:18.818+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5174065,
+        "lng": -0.4290512,
+        "speed_ms": 2.16729545593262,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:16:29.07525+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 40.8,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=40.8sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:16:55.889+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.517996,
+        "lng": -0.4287247,
+        "speed_ms": 1.46938264369965,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:17:53.924+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5186057,
+        "lng": -0.4285236,
+        "speed_ms": 1.53376722335815,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:18:09.436501+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 40.4,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=40.4sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:19:01.616+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5188141,
+        "lng": -0.4275657,
+        "speed_ms": 1.29265737533569,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:19:11.407349+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 3.4,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=3.4sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:19:49.516+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5193525,
+        "lng": -0.427274,
+        "speed_ms": 1.31947982311249,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:19:59.423453+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 0.8,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=0.8sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:20:40.292+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5199689,
+        "lng": -0.4271817,
+        "speed_ms": 1.38015723228455,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:20:50.036971+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 2.0,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=2.0sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:21:25.896+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5201625,
+        "lng": -0.4264816,
+        "speed_ms": 1.38680946826935,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:21:36.436091+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 7.2,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=7.2sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:22:32.738+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5204237,
+        "lng": -0.4258113,
+        "speed_ms": 1.61559402942657,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:22:42.541251+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 17.0,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=17.0sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:23:28.014+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5207736,
+        "lng": -0.4262843,
+        "speed_ms": 1.39187479019165,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:23:37.513186+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 12.6,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=12.6sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:24:09.679+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5213039,
+        "lng": -0.4260616,
+        "speed_ms": 1.52513873577118,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:24:19.308077+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 5.7,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=5.7sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:25:25.452+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.521821,
+        "lng": -0.4260523,
+        "speed_ms": 2.09901547431946,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:25:35.282923+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 7.1,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=7.1sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:26:03.018+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5223088,
+        "lng": -0.4256375,
+        "speed_ms": 1.56087040901184,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:26:13.341027+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 24.7,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=24.7sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:26:47.498+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5225604,
+        "lng": -0.4262948,
+        "speed_ms": 1.49049890041351,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:26:57.208924+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 4.7,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=4.7sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:27:33.053+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5231101,
+        "lng": -0.4266807,
+        "speed_ms": 1.43637371063232,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:27:42.852991+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 15.9,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=15.9sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:28:29.401+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5230201,
+        "lng": -0.4261485,
+        "speed_ms": 1.49106585979462,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:28:40.435756+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 7.3,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=7.3sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:29:13.121+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5226791,
+        "lng": -0.4254493,
+        "speed_ms": 1.50868773460388,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:29:23.129656+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 5.3,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=5.3sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:29:59.436+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5221845,
+        "lng": -0.4250631,
+        "speed_ms": 1.41780269145966,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:30:09.578604+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 1.9,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=1.9sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:30:46.854+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5216682,
+        "lng": -0.4246761,
+        "speed_ms": 1.466029047966,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:30:56.7702+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 1.0,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=1.0sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:31:33.721+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5212119,
+        "lng": -0.4242078,
+        "speed_ms": 1.46380043029785,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:31:43.330233+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 11.9,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=11.9sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:32:25.739+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5208929,
+        "lng": -0.4235533,
+        "speed_ms": 1.45413315296173,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:32:35.932378+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 13.1,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=13.1sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:33:09.499+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5206386,
+        "lng": -0.422888,
+        "speed_ms": 1.39108335971832,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:33:19.402538+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 13.6,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=13.6sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:34:03.481+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5202237,
+        "lng": -0.4222728,
+        "speed_ms": 0.184657871723175,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:34:14.373966+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 3.6,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=3.6sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:35:30.238+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5207022,
+        "lng": -0.4223327,
+        "speed_ms": 1.54674458503723,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:35:39.898101+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 2.7,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=2.7sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:36:34.714+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5207285,
+        "lng": -0.4216583,
+        "speed_ms": 1.4799952507019,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:36:45.265551+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 15.7,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=15.7sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:37:19.516+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5202281,
+        "lng": -0.4210646,
+        "speed_ms": 1.57787895202637,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:37:30.843749+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 10.0,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=10.0sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:38:35.459+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5196391,
+        "lng": -0.4207628,
+        "speed_ms": 1.36178052425385,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:38:45.568813+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 13.9,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=13.9sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:39:24.701+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5194927,
+        "lng": -0.4214891,
+        "speed_ms": 1.54291772842407,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:39:35.143974+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 0.4,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=0.4sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:40:05.394+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5197736,
+        "lng": -0.4221538,
+        "speed_ms": 1.46184158325195,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:40:14.971137+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 0.9,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=0.9sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:40:54.055+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5200707,
+        "lng": -0.4228461,
+        "speed_ms": 1.5488452911377,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:41:05.635568+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 1.2,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=1.2sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:41:45.313+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.520099,
+        "lng": -0.4236074,
+        "speed_ms": 1.42863821983337,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:41:55.723515+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 18.9,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=18.9sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:42:34.837+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5206208,
+        "lng": -0.4240991,
+        "speed_ms": 1.4226940870285,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:42:45.100971+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 0.1,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=0.1sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:43:21.014+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5210704,
+        "lng": -0.4245877,
+        "speed_ms": 1.44260907173157,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:43:30.608478+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 0.1,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=0.1sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:44:05.999+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5215409,
+        "lng": -0.4251711,
+        "speed_ms": 1.64876663684845,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:44:16.337889+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 5.7,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=5.7sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:45:05.137+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5220316,
+        "lng": -0.4255717,
+        "speed_ms": 1.45999276638031,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:45:15.147186+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 7.1,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=7.1sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:46:02.253+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5218403,
+        "lng": -0.4261214,
+        "speed_ms": 1.43821787834167,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:46:16.369355+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 5.8,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=5.8sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:48:26.575+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5217604,
+        "lng": -0.4267705,
+        "speed_ms": 1.46480774879456,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:48:36.335745+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 2.2,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=2.2sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:49:12.893+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5220503,
+        "lng": -0.4274386,
+        "speed_ms": 1.41443073749542,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:49:22.742184+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 1.8,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=1.8sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:50:04.433+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5223877,
+        "lng": -0.4280987,
+        "speed_ms": 1.41512775421143,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:50:14.405763+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 15.8,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=15.8sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:50:51.433+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5228375,
+        "lng": -0.4285863,
+        "speed_ms": 1.3607029914856,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:51:01.55039+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 2.7,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=2.7sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:51:38.052+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5232922,
+        "lng": -0.4291048,
+        "speed_ms": 1.41302466392517,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:51:47.888866+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 0.9,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=0.9sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:52:33.221+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.523399,
+        "lng": -0.4298311,
+        "speed_ms": 1.38111221790314,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:52:43.47415+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 8.7,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=8.7sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:53:29.894+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5229537,
+        "lng": -0.4303438,
+        "speed_ms": 1.43061292171478,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:53:44.04496+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 1.9,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=1.9sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:54:16.314+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5226112,
+        "lng": -0.4311792,
+        "speed_ms": 1.40188562870026,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:54:26.939101+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 5.5,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=5.5sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:55:03.475+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5221755,
+        "lng": -0.4317418,
+        "speed_ms": 1.41947078704834,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:55:46.255+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5216584,
+        "lng": -0.4321489,
+        "speed_ms": 1.33832824230194,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:56:51.417+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5211014,
+        "lng": -0.431954,
+        "speed_ms": 1.51145327091217,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:57:37.635+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5208707,
+        "lng": -0.4326222,
+        "speed_ms": 1.4056088924408,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:58:50.878+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5205542,
+        "lng": -0.4332491,
+        "speed_ms": 1.13531982898712,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:59:05.255866+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 3.1,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=3.1sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T16:59:39.88+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5201791,
+        "lng": -0.4338935,
+        "speed_ms": 1.17570328712463,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T16:59:50.562636+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 3.3,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=3.3sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T17:00:34.118+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.520152,
+        "lng": -0.4346138,
+        "speed_ms": 1.20244681835175,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T17:00:44.446566+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 0.8,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=0.8sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T17:01:24.437+00:00",
+      "type": "gps_fix",
+      "data": {
+        "lat": 39.5206115,
+        "lng": -0.4351328,
+        "speed_ms": 1.26837193965912,
+        "is_mocked": false
+      }
+    },
+    {
+      "t": "2026-07-18T17:01:35.174977+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": 16.4,
+        "floor_sqm": 200.0,
+        "message": "rejected: area=16.4sqm floor=200.0"
+      }
+    },
+    {
+      "t": "2026-07-18T17:10:14.100091+00:00",
+      "type": "claim_rejected",
+      "data": {
+        "area_sqm": null,
+        "floor_sqm": null,
+        "message": "permanent discard (23502): runs/46e5a83c-e9bd-4b60-bd72-a6125cc9c377 \u2014 null value in column \"started_at\" of relation \"runs\" violates not-null constraint"
+      }
+    },
+    {
+      "t": "2026-07-18T17:10:14.100091+00:00",
+      "type": "user_stop_pressed",
+      "data": {
+        "synthetic": true,
+        "note": "Not a real event. The live session lost connectivity and the run was never closed; the server row is still status=active. This synthetic stop lets a replay exercise the full finalize path."
+      }
+    }
+  ]
+}

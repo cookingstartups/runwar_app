@@ -96,3 +96,16 @@ final hasPhoneProvider =
     return false;
   }
 });
+
+/// Whether the signed-in player has `players.is_tester` set. Gates
+/// tester-only affordances (e.g. the run replay simulation control) so they
+/// never surface for an ordinary player, even on a debug build.
+final isTesterProvider =
+    FutureProvider.family<bool, String>((ref, userId) async {
+  try {
+    final profile = await DatabaseService.instance.getProfile(userId);
+    return (profile?['is_tester'] as int? ?? 0) == 1;
+  } catch (_) {
+    return false;
+  }
+});
