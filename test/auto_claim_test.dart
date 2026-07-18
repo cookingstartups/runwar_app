@@ -165,6 +165,86 @@ void main() {
     });
   });
 
+  group('lasso geometry - vertex-proximity closure filtering', () {
+    // GIVEN a candidate proximity closure that is within kProximityTriggerM
+    //   of an earlier vertex but spans fewer than the minimum required
+    //   trail points
+    // WHEN detectSelfIntersection runs the proximity fallback
+    // THEN it does not report a closure (ordinary consecutive fixes near an
+    //   old vertex must not be mistaken for a real loop)
+    test('proximity fallback ignores a near-vertex match with too few intervening points', () {
+      // A (idx0) -> a tiny 2-point detour back near A (idx1, idx2).
+      // k=2 at the point of interest: k - vertexIdx(0) = 2, below the
+      // minimum of 4 intervening trail points, so this must be rejected.
+      final path = [
+        const LatLng(34.700000, 33.000000), // idx0: A
+        const LatLng(34.700450, 33.000000), // idx1: 50 m north
+        const LatLng(34.700020, 33.000002), // idx2: back within ~2.2 m of A
+      ];
+      final result = detectSelfIntersection(path, 1);
+      expect(result, isNull,
+          reason: 'A near-vertex match spanning only 2 points must not be treated as a closure');
+    });
+
+    // GIVEN a candidate proximity closure with enough intervening points but
+    //   a bounding box too small to represent a genuine loop
+    // WHEN detectSelfIntersection runs the proximity fallback
+    // THEN it does not report a closure
+    test('proximity fallback ignores a near-vertex match with too small a bounding box', () {
+      // Non-crossing zigzag clustered within a ~6 m box - four intervening
+      // points clear the point-count filter, but the bounding box is far
+      // too small to represent a real captured area.
+      final path = [
+        const LatLng(34.700000, 33.000000), // idx0
+        const LatLng(34.700050, 33.000000), // idx1: ~5.5 m north
+        const LatLng(34.700050, 33.000030), // idx2: ~2.6 m east
+        const LatLng(34.700000, 33.000030), // idx3: ~5.5 m south
+        const LatLng(34.700010, 33.000002), // idx4: back within ~1.7 m of idx0
+      ];
+      final result = detectSelfIntersection(path, 1);
+      expect(result, isNull,
+          reason: 'A tightly clustered near-vertex match must not be treated as a closure');
+    });
+
+    // GIVEN a candidate proximity closure with enough intervening points AND
+    //   a large enough bounding box
+    // WHEN detectSelfIntersection runs the proximity fallback
+    // THEN it reports a valid, non-degenerate closure
+    test('proximity fallback accepts a genuine large near-vertex closure', () {
+      final path = [
+        const LatLng(34.700000, 33.000000), // idx0: A
+        const LatLng(34.700000, 33.001092), // idx1: ~100 m east
+        const LatLng(34.700905, 33.001092), // idx2: ~100 m north
+        const LatLng(34.700905, 33.000000), // idx3: ~100 m west
+        const LatLng(34.700020, 33.000002), // idx4: back within ~2.2 m of A
+      ];
+      final result = detectSelfIntersection(path, 1);
+      expect(result, isNotNull,
+          reason: 'A genuine block-scale loop closing near the start vertex must be detected');
+      expect(result!.isProximityClosure, isTrue);
+      expect(result.intersectingSegmentIdx, 0);
+
+      final k = path.length - 1;
+      final polygon = computeCapture(
+        path,
+        1,
+        result.intersectingSegmentIdx,
+        result.intersectionPoint,
+        k,
+        isProximityClosure: result.isProximityClosure,
+      );
+
+      // The leading vertex must not be duplicated for a proximity closure.
+      expect(polygon.first, equals(path[0]));
+      expect(polygon[1], isNot(equals(polygon.first)),
+          reason: 'computeCapture must not duplicate the leading vertex for a proximity closure');
+
+      final areaSqm = polygonArea(polygon) * 1e6;
+      expect(areaSqm, greaterThan(200.0),
+          reason: 'A genuine ~100 m block loop must clear the 200 m^2 floor');
+    });
+  });
+
   group('lasso geometry - polygonArea', () {
     // GIVEN a large square polygon with sides ~500 m
     // WHEN polygonArea is called (returns km^2; multiply by 1e6 for m^2)
@@ -569,6 +649,65 @@ void main() {
           reason: 'Area-floor check runs first and short-circuits before the session-elapsed check');
     });
   });
+
+  // =========================================================================
+  // Group 8: real-world regression - large genuine loop survives spurious
+  // near-vertex closures encountered earlier in the same session.
+  //
+  // Reproduces a live-run report: a runner completes a real, roughly
+  // 100 m x 100 m enclosing loop with a genuine segment/segment crossing,
+  // but earlier in the same trail a short near-vertex detour (well short of
+  // enclosing anything) passes close to an old vertex. Before this fix, any
+  // such near-miss that reached the area-floor gate would truncate
+  // _loopStartTrailIndex, permanently discarding the history the real loop
+  // later needed - so the genuine closure could never compute the full
+  // polygon. This test asserts the real loop still claims correctly.
+  // =========================================================================
+
+  group('real-world regression - genuine large loop survives an earlier near-vertex detour', () {
+    late RunRecorderService svc;
+    late _AutoClaimCapture claimCapture;
+    late _GateRejectionCapture rejectionCapture;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      claimCapture = _AutoClaimCapture();
+      rejectionCapture = _GateRejectionCapture();
+      svc.onAutoClaim = claimCapture.call;
+      svc.onGateRejected = rejectionCapture.call;
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
+      svc.injectState(RecorderState.recording);
+    });
+
+    tearDown(() {
+      svc.reset();
+    });
+
+    test('a genuine ~100 m loop still claims correctly after an earlier near-vertex detour', () async {
+      final fullPath = _detourThenLargeLoopPath();
+
+      // Feed the trail incrementally, exactly as GPS fixes arrive in the
+      // running app, scanning after every new point.
+      for (int i = 2; i < fullPath.length; i++) {
+        svc.injectTrackForTesting(fullPath.sublist(0, i + 1));
+        svc.runScanForAutoClaimForTesting();
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(rejectionCapture.captured, isEmpty,
+          reason: 'The early near-vertex detour must not even reach a gate rejection - '
+              'it must be filtered by the proximity closure guards before an area check');
+      expect(claimCapture.captured, hasLength(1),
+          reason: 'The genuine large loop at the end of the trail must dispatch exactly one claim');
+
+      final areaSqm = polygonArea(claimCapture.captured.first) * 1e6;
+      expect(areaSqm, greaterThan(200.0),
+          reason: 'The captured polygon must be the real, large loop - not a near-zero fragment');
+      expect(areaSqm, greaterThan(2000.0),
+          reason: 'A genuine ~100 m x 100 m loop must capture on the order of thousands of m^2, '
+              'not the tiny (1.5-37 m^2) fragments seen in the live-run regression');
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -588,6 +727,37 @@ List<LatLng> _buildMicroCrossPath() => [
       // index 3: D - crosses A->B at midpoint (34.700025, 33.000025); captured area ~63 m^2
       const LatLng(34.700000, 33.000050),
     ];
+
+// A short near-vertex detour (indices 0-2, far south so it can never
+// geometrically overlap the loop that follows) followed by a genuine
+// ~100 m x 100 m enclosing loop (indices 3-7) whose last edge crosses its
+// own first edge. Mirrors _figure8Path's proven relative shape, scaled down
+// to city-block size (100 m x 100 m instead of ~2 km x ~1.8 km).
+List<LatLng> _detourThenLargeLoopPath() {
+  const dLat100 = 0.0009046; // ~100 m of latitude at this scale
+  const dLng100 = 0.0010923; // ~100 m of longitude at 34.7 N
+  return [
+    // idx0: T0 - detour anchor, ~11 km south of the real loop so its
+    // bounding box never overlaps the loop below.
+    const LatLng(34.600000, 33.000000),
+    // idx1: T1 - ~50 m north of T0.
+    const LatLng(34.600453, 33.000000),
+    // idx2: T2 - back within ~2.2 m of T0. Only 2 points span T0->T2, so
+    // the point-count guard must reject this as a closure candidate.
+    const LatLng(34.600020, 33.000002),
+    // idx3: A - start of the real loop.
+    const LatLng(34.700000, 33.000000),
+    // idx4: B - ~100 m east of A.
+    const LatLng(34.700000, 33.000000 + dLng100),
+    // idx5: C - ~100 m north of B.
+    const LatLng(34.700000 + dLat100, 33.000000 + dLng100),
+    // idx6: D - ~100 m west of C, back to A's longitude.
+    const LatLng(34.700000 + dLat100, 33.000000),
+    // idx7: E - closes the loop by crossing segment A->B roughly at its
+    // midpoint, the same relative geometry validated by _figure8Path.
+    const LatLng(34.700000, 33.000000 + dLng100 / 2),
+  ];
+}
 
 // Extended figure-8 path: appends a second crossing loop after the first one.
 // Used in multi-lasso tests.

@@ -221,9 +221,15 @@ class SelfIntersection {
   final LatLng intersectionPoint;
   final int intersectingSegmentIdx;
 
+  // True when this hit came from the vertex-proximity fallback rather than a
+  // genuine parametric segment/segment crossing. computeCapture uses this to
+  // avoid duplicating the leading vertex of the captured polygon.
+  final bool isProximityClosure;
+
   const SelfIntersection({
     required this.intersectionPoint,
     required this.intersectingSegmentIdx,
+    this.isProximityClosure = false,
   });
 }
 
@@ -256,11 +262,26 @@ SelfIntersection? detectSelfIntersection(
   // segmentSegmentIntersection silently drops these; we catch them here.
   // Search range matches the segment scan: vertex[loopStartTrailIndex-1]
   // is the first vertex referenced when i = loopStartTrailIndex.
+  //
+  // A raw distance check alone fires on ordinary consecutive fixes that
+  // happen to pass near an old vertex without enclosing anything (a runner
+  // crossing a street they walked minutes earlier). Require the candidate
+  // closure to also span a minimum number of trail points and a minimum
+  // bounding-box diagonal before treating it as a real loop closure.
   for (int vertexIdx = loopStartTrailIndex - 1; vertexIdx <= k - 2; vertexIdx++) {
     if (_equirectangularDistanceM(trailPoints[vertexIdx], newB) <= kProximityTriggerM) {
+      if (k - vertexIdx < kMinProximityClosureTrailPoints) continue;
+      final candidate = trailPoints.sublist(vertexIdx, k + 1);
+      final bbox = polygonBbox(candidate);
+      final diagonal = _equirectangularDistanceM(
+        LatLng(bbox.minLat, bbox.minLng),
+        LatLng(bbox.maxLat, bbox.maxLng),
+      );
+      if (diagonal < kMinProximityClosureDiagonalM) continue;
       return SelfIntersection(
         intersectionPoint: trailPoints[vertexIdx],
         intersectingSegmentIdx: vertexIdx,
+        isProximityClosure: true,
       );
     }
   }
@@ -280,9 +301,13 @@ List<LatLng> computeCapture(
   int loopStartTrailIndex, // unused (_); kept for API parity with geo.ts
   int intersectingSegmentIdx,
   LatLng intersectionPoint,
-  int k,
-) {
-  final loop = <LatLng>[intersectionPoint];
+  int k, {
+  bool isProximityClosure = false,
+}) {
+  // For a proximity closure, intersectionPoint IS trailPoints[intersectingSegmentIdx]
+  // (see detectSelfIntersection), so prepending it again would duplicate the
+  // leading vertex. Start the polygon at the vertex itself instead.
+  final loop = <LatLng>[if (!isProximityClosure) intersectionPoint];
   for (int idx = intersectingSegmentIdx; idx <= k; idx++) {
     loop.add(trailPoints[idx]);
   }

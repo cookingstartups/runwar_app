@@ -47,7 +47,10 @@ class RunRecorderService {
   String? get currentSessionId => _currentSessionId;
 
   // Lower bound for the self-intersection scan. Set to 0 at startRun,
-  // advanced to _track.length after each successful or area-rejected claim.
+  // advanced to _track.length after each claim that is actually dispatched
+  // (accepted or failed downstream). A below-floor area rejection does NOT
+  // advance it, since the trail history is still needed for a later,
+  // genuinely large loop to close.
   int _loopStartTrailIndex = 0;
 
   // Wall-clock moment of the FAB Start tap. Used for the 60-second gate.
@@ -378,12 +381,18 @@ class RunRecorderService {
       hit.intersectingSegmentIdx,
       hit.intersectionPoint,
       k,
+      isProximityClosure: hit.isProximityClosure,
     );
 
     // Area floor (m^2). polygonArea returns km^2 -> convert.
     final areaSqm = polygonArea(polygon) * 1e6;
     if (areaSqm < _minCapturedAreaSqm) {
-      _loopStartTrailIndex = _track.length; // skip this crossing forever
+      // Do NOT advance _loopStartTrailIndex here. A below-floor result only
+      // means the newest edge did not close a big-enough loop yet - it does
+      // not mean the trail history is invalid. Truncating it would permanently
+      // discard the segments a later, genuinely large loop needs in order to
+      // be detected, so a real enclosing loop could never be claimed once a
+      // small spurious closure had been rejected first.
       ErrorLogService.logClientError(
         provider: '_scanForAutoClaim.area_floor_gate',
         error: 'rejected: area=${areaSqm.toStringAsFixed(1)}sqm floor=$_minCapturedAreaSqm',
@@ -472,22 +481,26 @@ class RunRecorderService {
       trackVersion.value++;
 
       // Restore durable session_id or mint a fresh one for legacy null rows.
-      if (durableSessionId != null) {
-        _currentSessionId = durableSessionId;
-      } else {
-        _currentSessionId = _uuid.v4();
-        // Write a new stub runs row since there is no server-side session yet.
-        final runCb = onRunUpdate;
-        if (runCb != null) {
-          final legacySid = _currentSessionId!;
-          runCb(legacySid, {
-            'id': legacySid,
-            'user_id': userId,
-            'city': activeCity,
-            'started_at': _startedAt!.toIso8601String(),
-            'status': 'active',
-          }).catchError((_) {});
-        }
+      _currentSessionId = durableSessionId ?? _uuid.v4();
+
+      // Always re-send the full stub runs row, regardless of whether the
+      // session_id was already durable. writeRunUpdate is an idempotent
+      // upsert (onConflict: 'id'), so re-sending id/user_id/city/started_at/
+      // status here is safe even when the row already exists server-side,
+      // and it guarantees started_at is present if a later partial update
+      // (e.g. a confirmClaim or stopRun field merge) ever lands as a fresh
+      // INSERT instead of an UPDATE - which would otherwise violate the
+      // runs.started_at NOT NULL constraint.
+      final runCb = onRunUpdate;
+      if (runCb != null) {
+        final sid = _currentSessionId!;
+        runCb(sid, {
+          'id': sid,
+          'user_id': userId,
+          'city': activeCity,
+          'started_at': _startedAt!.toIso8601String(),
+          'status': 'active',
+        }).catchError((_) {});
       }
 
       // Replay all scratch rows into gps_samples outbox so they reach
