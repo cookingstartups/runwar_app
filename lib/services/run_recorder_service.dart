@@ -589,6 +589,9 @@ class RunRecorderService {
         'city': activeCity,
         'started_at': _startedAt!.toIso8601String(),
         'status': 'active',
+        // Marks the row as replay output, mirroring the forced is_mocked on
+        // simulated gps_samples. Excludes it from leaderboards and analytics.
+        'is_simulated': true,
       }).catchError((_) {});
     }
     stateNotifier.value = RecorderState.recording;

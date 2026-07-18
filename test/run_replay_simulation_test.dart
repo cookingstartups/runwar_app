@@ -161,6 +161,17 @@ void main() {
       }
     });
 
+    test('the runs row created by a simulation is marked is_simulated',
+        () async {
+      await svc.beginSimulation();
+
+      final stub = runCapture.writes.first;
+      expect(stub.fields['is_simulated'], isTrue,
+          reason: 'a replay run must be distinguishable from a real run at '
+              'the run level, not only through its gps samples');
+      expect(stub.fields['status'], 'active');
+    });
+
     test('the fixture user_stop_pressed event exercises the real '
         'stop/finalize path', () async {
       await svc.beginSimulation();
