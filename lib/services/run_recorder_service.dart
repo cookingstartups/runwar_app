@@ -108,9 +108,15 @@ class RunRecorderService {
   // confirmClaim lasso link). Arguments: sessionId, field map.
   Future<void> Function(String sessionId, Map<String, dynamic> fields)? onRunUpdate;
 
-  // Area floor for auto-claim. Below this, GPS jitter micro-loops are
-  // silently discarded.
-  static const double _minCapturedAreaSqm = 200.0;
+  // Area floor for auto-claim. Below this, a captured loop is silently
+  // discarded (no claim dispatched, onGateRejected fires with areaFloor).
+  //
+  // Must stay numerically equal to the server-side floor in
+  // supabase/functions/claim_territory/index.ts (minCapturedAreaSqm) - the
+  // two are enforced independently (client gates before dispatch, server
+  // gates again on receipt) and a mismatch lets a claim pass one side and
+  // fail the other. If this value changes, change the server value too.
+  static const double _minCapturedAreaSqm = 4.0;
 
   /// Minimum distance in metres between consecutive stored track points.
   /// A new GPS fix within this distance of _track.last is dropped before

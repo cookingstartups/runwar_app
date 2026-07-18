@@ -155,14 +155,28 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Total track length gate — must be at least 200 m
-    let totalDist = 0;
-    for (let i = 1; i < coords.length; i++) {
-      const [lng1, lat1] = coords[i - 1];
-      const [lng2, lat2] = coords[i];
-      totalDist += haversineM(lat1, lng1, lat2, lng2);
+    // Enclosed-area gate - the client's lasso-detection floor is an enclosed
+    // area, not a perimeter/distance, so the server must gate on the same
+    // quantity or a track that passes the client can still be rejected here.
+    // Uses the same turfArea helper already relied on elsewhere in this file
+    // for merged-zone area (survivorAreaM2 below) so the area math stays a
+    // single source of truth instead of a second hand-rolled projection.
+    //
+    // Must stay numerically equal to the client-side floor in
+    // lib/services/run_recorder_service.dart (_minCapturedAreaSqm) - the two
+    // are enforced independently (client gates before dispatch, server gates
+    // again on receipt) and a mismatch lets a claim pass one side and fail
+    // the other. If this value changes, change the client value too.
+    //
+    // 4 sqm (a 2x2 m loop) is a data-sanity floor against a degenerate or
+    // near-zero-area polygon, not a meaningful anti-jitter gate - ordinary
+    // phone GPS noise routinely produces spurious loops well above this size.
+    const minCapturedAreaSqm = 4;
+    const closedNewRing = closedRing(coords);
+    const capturedAreaSqm = turfArea({ type: 'Polygon', coordinates: [closedNewRing] });
+    if (capturedAreaSqm < minCapturedAreaSqm) {
+      return ok({ result: 'failed', reason: 'too_short' });
     }
-    if (totalDist < 200) return ok({ result: 'failed', reason: 'too_short' });
 
     // Load existing zones for this city
     const { data: existingZones } = await supabase

@@ -241,7 +241,8 @@ void main() {
 
       final areaSqm = polygonArea(polygon) * 1e6;
       expect(areaSqm, greaterThan(200.0),
-          reason: 'A genuine ~100 m block loop must clear the 200 m^2 floor');
+          reason: 'A genuine ~100 m block loop must clear a 200 m^2 reference size '
+              '(well above the current 4 m^2 area-floor gate)');
     });
   });
 
@@ -249,21 +250,28 @@ void main() {
     // GIVEN a large square polygon with sides ~500 m
     // WHEN polygonArea is called (returns km^2; multiply by 1e6 for m^2)
     // THEN the area in m^2 is >= 200.0
+    //
+    // 200 m^2 here is a geometry-sanity reference size for "clearly large",
+    // not the current auto-claim area-floor gate value (see
+    // RunRecorderService._minCapturedAreaSqm, currently 4.0).
     test('returns area >= 200 m^2 for a valid large lasso polygon', () {
       final poly = _largePolygon();
       final areaSqm = polygonArea(poly) * 1e6;
       expect(areaSqm, greaterThanOrEqualTo(200.0),
-          reason: 'Large square polygon must exceed the 200 m^2 auto-claim floor');
+          reason: 'Large square polygon must exceed the 200 m^2 reference size');
     });
 
     // GIVEN a micro polygon with side ~11 m
     // WHEN polygonArea is called
-    // THEN the area in m^2 is < 200.0
+    // THEN the area in m^2 is < 200.0, but note it is still ABOVE the
+    // current 4 m^2 auto-claim area-floor gate - this test only verifies
+    // polygonArea's numeric output, not gate behaviour (see the tiny-cross
+    // fixtures below for a polygon that actually falls below the gate).
     test('returns area < 200 m^2 for a GPS-jitter micro-polygon', () {
       final poly = _microPolygon();
       final areaSqm = polygonArea(poly) * 1e6;
       expect(areaSqm, lessThan(200.0),
-          reason: 'Micro-polygon must fall below the 200 m^2 floor');
+          reason: 'Micro-polygon must fall below the 200 m^2 reference size');
     });
   });
 
@@ -341,7 +349,7 @@ void main() {
   // Group 3: Area floor gate
   // =========================================================================
 
-  group('area floor gate - 200 m^2 minimum', () {
+  group('area floor gate - 4 m^2 minimum', () {
     late RunRecorderService svc;
     late _AutoClaimCapture capture;
 
@@ -358,35 +366,35 @@ void main() {
       svc.reset();
     });
 
-    // GIVEN a captured polygon whose area is < 200 m^2
+    // GIVEN a captured polygon whose area is < 4 m^2
     // WHEN the auto-claim handler evaluates the area
     // THEN no claim is triggered
-    test('auto-claim does not fire for a captured polygon with area below 200 m^2', () async {
-      // Build a micro-loop path (tiny triangle) that produces a near-zero polygon.
+    test('auto-claim does not fire for a captured polygon with area below 4 m^2', () async {
+      // Build a tiny-loop path that produces a near-zero polygon.
       // We inject it directly via the track seam.
-      // The intersection is faked by using a known crossing micro-path.
-      // Because the polygon area is < 200, the claim must be suppressed.
-      final microPath = _buildMicroCrossPath();
-      svc.injectTrackForTesting(microPath);
+      // The intersection is faked by using a known crossing tiny-path.
+      // Because the polygon area is < 4, the claim must be suppressed.
+      final tinyPath = _buildTinyCrossPath();
+      svc.injectTrackForTesting(tinyPath);
       svc.runScanForAutoClaimForTesting();
 
       await Future<void>.delayed(Duration.zero);
 
       expect(capture.captured, isEmpty,
-          reason: 'Micro-loop with area < 200 m^2 must not trigger an auto-claim');
+          reason: 'Tiny loop with area < 4 m^2 must not trigger an auto-claim');
     });
 
-    // GIVEN a captured polygon whose area is >= 200 m^2
+    // GIVEN a captured polygon whose area is >= 4 m^2
     // WHEN the auto-claim handler evaluates the area
     // THEN the claim fires with the captured polygon
-    test('auto-claim fires for a captured polygon with area >= 200 m^2', () async {
+    test('auto-claim fires for a captured polygon with area >= 4 m^2', () async {
       svc.injectTrackForTesting(_figure8Path());
       svc.runScanForAutoClaimForTesting();
 
       await Future<void>.delayed(Duration.zero);
 
       expect(capture.captured, hasLength(1),
-          reason: 'Large lasso (>= 200 m^2) must trigger an auto-claim');
+          reason: 'Large lasso (>= 4 m^2) must trigger an auto-claim');
       expect(capture.captured.first.length, greaterThanOrEqualTo(3));
     });
   });
@@ -587,7 +595,7 @@ void main() {
       svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
       svc.injectState(RecorderState.recording);
 
-      svc.injectTrackForTesting(_buildMicroCrossPath());
+      svc.injectTrackForTesting(_buildTinyCrossPath());
       svc.runScanForAutoClaimForTesting();
       await Future<void>.delayed(Duration.zero);
 
@@ -639,7 +647,7 @@ void main() {
       svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 10)));
       svc.injectState(RecorderState.recording);
 
-      svc.injectTrackForTesting(_buildMicroCrossPath());
+      svc.injectTrackForTesting(_buildTinyCrossPath());
       svc.runScanForAutoClaimForTesting();
       await Future<void>.delayed(Duration.zero);
 
@@ -715,17 +723,17 @@ void main() {
 // ---------------------------------------------------------------------------
 
 // A tiny X-crossing path: segment C->D crosses segment A->B at their midpoints.
-// Captured polygon is roughly a 5m x 4m quadrilateral (~63 m^2), well below 200 m^2.
-// At lat 34.7: 0.00005 deg lat = ~5.5m, 0.00005 deg lng = ~4.3m.
-List<LatLng> _buildMicroCrossPath() => [
+// Captured polygon is roughly a 1.75m x 1.4m quadrilateral (~2.5 m^2), below
+// the 4 m^2 area-floor gate (_minCapturedAreaSqm).
+List<LatLng> _buildTinyCrossPath() => [
       // index 0: A - origin
       const LatLng(34.700000, 33.000000),
-      // index 1: B - ~7m NE
-      const LatLng(34.700050, 33.000050),
-      // index 2: C - ~5.5m north of A, same longitude
-      const LatLng(34.700050, 33.000000),
-      // index 3: D - crosses A->B at midpoint (34.700025, 33.000025); captured area ~63 m^2
-      const LatLng(34.700000, 33.000050),
+      // index 1: B - ~1.75m NE
+      const LatLng(34.7000125, 33.0000125),
+      // index 2: C - ~1.4m north of A, same longitude
+      const LatLng(34.7000125, 33.000000),
+      // index 3: D - crosses A->B at midpoint; captured area ~2.5 m^2
+      const LatLng(34.700000, 33.0000125),
     ];
 
 // A short near-vertex detour (indices 0-2, far south so it can never
