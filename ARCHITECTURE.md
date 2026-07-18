@@ -48,3 +48,43 @@ All Supabase calls go through `DatabaseService` or `SupabaseService`. Screens an
 providers never import `supabase_flutter` directly.
 
 See [docs/DATA-LAYER.md](docs/DATA-LAYER.md) for service contracts and provider patterns.
+
+## Deployment
+
+### Backend
+
+| Item | Value |
+|---|---|
+| Supabase project ref | `glwsmxjptgmxaiyvdqzp` |
+| Region | `eu-central-1` (Frankfurt) |
+| Migration history | `runwar_app/supabase/` (canonical; `runwar_database` is reference only) |
+
+Core tables: `players`, `runs`, `gps_samples`, `hex_ownership`, `zones`,
+`player_economy`, `client_errors`, `ctf_events`, `drops`.
+
+### Mobile app
+
+There is no automated app release pipeline. Builds are produced and side-loaded
+manually from the primary checkout on `main` after a branch is merged:
+
+```
+flutter build apk --debug
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```
+
+The device connects over wireless ADB, whose port changes each session. A full
+build takes roughly 5 minutes. Artifacts land in
+`build/app/outputs/flutter-apk/`.
+
+### Landing site
+
+The landing page lives in the separate `runwar_landing` repo (Next.js). It is
+linked to a Vercel project (`runwar_landing`, org `cookingstartupscoms-projects`)
+which builds from GitHub `main`.
+
+Note that the public domain `runwar.app` does not currently resolve to that
+Vercel project. It is a Netlify site: `www.runwar.app` is a CNAME to
+`runwar-territory-game.netlify.app`, and the apex resolves to Netlify
+(`75.2.60.5`). The Vercel production deployments sit behind deployment
+protection and are not publicly reachable. As a result the content served at
+`runwar.app` is not built from the current `runwar_landing` source.
