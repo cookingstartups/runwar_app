@@ -17,6 +17,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../services/error_log_service.dart';
 import '../services/run_recorder_service.dart';
 import '../utils/runwar_constants.dart';
 import 'auth_provider.dart';
@@ -141,7 +142,17 @@ class RunSimulationNotifier extends StateNotifier<RunSimulationState> {
       if (state.status == SimulationStatus.running) {
         state = state.copyWith(status: SimulationStatus.done);
       }
-    } catch (e) {
+    } catch (e, st) {
+      // Never let a fixture load/parse/replay failure fail silently - the
+      // caller-facing half of this contract is the SnackBar listener on
+      // SimulationLauncherChip (see simulation_control_panel.dart).
+      ErrorLogService.logClientError(
+        provider: 'runSimulationProvider',
+        error: e,
+        stackTrace: st,
+        retryCount: 0,
+        userId: _ref.read(authProvider).user?['id'] as String?,
+      );
       state = state.copyWith(status: SimulationStatus.aborted, error: e.toString());
     }
   }
