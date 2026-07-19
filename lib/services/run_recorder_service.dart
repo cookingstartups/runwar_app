@@ -676,8 +676,23 @@ class RunRecorderService {
   /// Pre: state == idle; no simulation already active.
   /// Post: real _posSub is null; _track is empty; a fresh _currentSessionId
   ///       has been minted; state == recording; isSimulationActive == true.
-  Future<void> beginSimulation() async {
-    if (stateNotifier.value == RecorderState.recording || _simActive) return;
+  ///
+  /// Returns false when refused (a real run is already recording, or a
+  /// simulation is already active) instead of failing silently - the caller
+  /// must be able to tell the difference between "started" and "refused" so
+  /// the UI layer can surface it rather than leaving the operator staring at
+  /// a picker sheet that does nothing.
+  Future<bool> beginSimulation() async {
+    final alreadyRecording = stateNotifier.value == RecorderState.recording;
+    if (alreadyRecording || _simActive) {
+      ErrorLogService.logClientError(
+        provider: 'beginSimulation.recording_guard',
+        error: 'refused: ${_simActive ? 'a simulation is already active' : 'a real run is already recording'}',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+      return false;
+    }
     await _posSub?.cancel();
     _posSub = null;
     assert(_posSub == null,
@@ -713,6 +728,7 @@ class RunRecorderService {
       }).catchError((_) {});
     }
     stateNotifier.value = RecorderState.recording;
+    return true;
   }
 
   /// Feeds one synthetic fixture-derived fix through the exact same

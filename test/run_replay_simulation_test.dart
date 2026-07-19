@@ -258,4 +258,45 @@ void main() {
       svc.reset();
     });
   });
+
+  group('run replay simulation - refuses observably instead of silently', () {
+    late RunRecorderService svc;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      svc.setActiveUser('tester-1');
+      svc.onRunUpdate = (_, __) async {};
+    });
+
+    tearDown(() => svc.reset());
+
+    test('beginSimulation refuses and returns false while a real run is '
+        'recording, instead of returning void and doing nothing', () async {
+      // Drive the recorder into the exact state a live real run leaves it
+      // in: stateNotifier == recording. beginSimulation() must not silently
+      // no-op here - it must tell its caller it refused.
+      svc.stateNotifier.value = RecorderState.recording;
+
+      final started = await svc.beginSimulation();
+
+      expect(started, isFalse,
+          reason: 'a caller that gets past the UI guard must still be able '
+              'to observe the refusal rather than a silent no-op');
+      expect(svc.isSimulationActive, isFalse,
+          reason: 'a refused beginSimulation must never flip _simActive');
+
+      svc.stateNotifier.value = RecorderState.idle;
+    });
+
+    test('beginSimulation still succeeds normally from idle', () async {
+      expect(svc.stateNotifier.value, RecorderState.idle);
+
+      final started = await svc.beginSimulation();
+
+      expect(started, isTrue);
+      expect(svc.isSimulationActive, isTrue);
+
+      await svc.abortSimulation();
+    });
+  });
 }
