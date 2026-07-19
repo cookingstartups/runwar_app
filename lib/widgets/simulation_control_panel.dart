@@ -29,6 +29,20 @@ class SimulationLauncherChip extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Surface any fixture load/parse/start failure as a visible message -
+    // a simulation that aborts with an error must never fail silently.
+    // ErrorLogService.logClientError already runs inside the provider's
+    // catch block; this listener is the UI-facing half of that contract.
+    ref.listen<RunSimulationState>(runSimulationProvider, (prev, next) {
+      if (next.status == SimulationStatus.aborted &&
+          next.error != null &&
+          prev?.error != next.error) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(next.error!)),
+        );
+      }
+    });
+
     final simState = ref.watch(runSimulationProvider);
     if (simState.isActive) return const SimulationActiveBanner();
 
@@ -126,7 +140,20 @@ class _FixturePickerSheetState extends State<_FixturePickerSheet> {
                 title: Text(fixture.label, style: bodyStyle(color: kFg)),
                 subtitle: Text(fixture.city, style: monoStyle(color: kFgFaint)),
                 trailing: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: kSea),
+                  // The app-wide ElevatedButtonThemeData sets
+                  // minimumSize: Size(double.infinity, 52) (see theme.dart)
+                  // for full-width primary CTAs. Left unset here, that
+                  // infinite-width minimum collides with ListTile.trailing's
+                  // bounded width and throws "Trailing widget consumes the
+                  // entire tile width" during layout - which aborts the
+                  // whole sheet's render, leaving only the modal scrim
+                  // visible before the route auto-dismisses. Override both
+                  // dimensions explicitly so this row never depends on the
+                  // ambient button theme.
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kSea,
+                    minimumSize: const Size(72, 36),
+                  ),
                   onPressed: () {
                     Navigator.of(context).pop();
                     widget.ref
