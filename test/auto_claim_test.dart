@@ -242,7 +242,7 @@ void main() {
       final areaSqm = polygonArea(polygon) * 1e6;
       expect(areaSqm, greaterThan(200.0),
           reason: 'A genuine ~100 m block loop must clear a 200 m^2 reference size '
-              '(well above the current 4 m^2 area-floor gate)');
+              '(well above the current 500 m^2 area-floor gate)');
     });
   });
 
@@ -253,7 +253,7 @@ void main() {
     //
     // 200 m^2 here is a geometry-sanity reference size for "clearly large",
     // not the current auto-claim area-floor gate value (see
-    // RunRecorderService._minCapturedAreaSqm, currently 4.0).
+    // RunRecorderService._minCapturedAreaSqm, currently 500.0).
     test('returns area >= 200 m^2 for a valid large lasso polygon', () {
       final poly = _largePolygon();
       final areaSqm = polygonArea(poly) * 1e6;
@@ -263,10 +263,10 @@ void main() {
 
     // GIVEN a micro polygon with side ~11 m
     // WHEN polygonArea is called
-    // THEN the area in m^2 is < 200.0, but note it is still ABOVE the
-    // current 4 m^2 auto-claim area-floor gate - this test only verifies
+    // THEN the area in m^2 is < 200.0, and is now also BELOW the current
+    // 500 m^2 auto-claim area-floor gate - this test only verifies
     // polygonArea's numeric output, not gate behaviour (see the tiny-cross
-    // fixtures below for a polygon that actually falls below the gate).
+    // fixtures below for a polygon that exercises gate behaviour directly).
     test('returns area < 200 m^2 for a GPS-jitter micro-polygon', () {
       final poly = _microPolygon();
       final areaSqm = polygonArea(poly) * 1e6;
@@ -724,7 +724,7 @@ void main() {
 
 // A tiny X-crossing path: segment C->D crosses segment A->B at their midpoints.
 // Captured polygon is roughly a 1.75m x 1.4m quadrilateral (~2.5 m^2), below
-// the 4 m^2 area-floor gate (_minCapturedAreaSqm).
+// the 500 m^2 area-floor gate (_minCapturedAreaSqm).
 List<LatLng> _buildTinyCrossPath() => [
       // index 0: A - origin
       const LatLng(34.700000, 33.000000),

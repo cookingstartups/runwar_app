@@ -43,6 +43,21 @@ function haversineM(lat1: number, lng1: number, lat2: number, lng2: number) {
   return R * 2 * Math.asin(Math.sqrt(a));
 }
 
+// Bounding-box diagonal in metres for a ring of [lng, lat] pairs. Mirrors
+// polygonBboxDiagonalM in lib/geo/lasso.dart - rejects a thin sliver that
+// clears the area floor only because it is long and narrow, not because it
+// encloses a real block-scale loop.
+function ringBboxDiagonalM(ring: number[][]) {
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (const [lng, lat] of ring) {
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+  }
+  return haversineM(minLat, minLng, maxLat, maxLng);
+}
+
 // Ray-cast point-in-polygon (lng/lat coords)
 function pointInRing(px: number, py: number, ring: number[][]) {
   let inside = false;
@@ -168,13 +183,52 @@ Deno.serve(async (req) => {
     // again on receipt) and a mismatch lets a claim pass one side and fail
     // the other. If this value changes, change the client value too.
     //
-    // 4 sqm (a 2x2 m loop) is a data-sanity floor against a degenerate or
-    // near-zero-area polygon, not a meaningful anti-jitter gate - ordinary
-    // phone GPS noise routinely produces spurious loops well above this size.
-    const minCapturedAreaSqm = 4;
+    // 1500 sqm is a jitter/real-loop separation floor derived from a single
+    // observed live run (n=1): the one genuine loop closure measured about
+    // 24 972 sqm, while every spurious/jitter closure logged in that same
+    // run measured between 0.4 and 40.8 sqm - a separation factor over 600x.
+    //
+    // The value sits above the client accuracy gate's own worst case rather
+    // than just above observed noise. A stationary phone pinned at that 20 m
+    // gate could in theory enclose roughly pi * 20^2, about 1257 sqm, through
+    // jitter alone, so any floor below that figure would sit inside the
+    // envelope it is meant to backstop. Against measured jitter 1500 carries
+    // about a 37x margin.
+    //
+    // This server check is also the backstop against a client shipping a
+    // debug threshold: it rejects independently of whatever the client
+    // allowed through.
+    const minCapturedAreaSqm = 1500;
     const closedNewRing = closedRing(coords);
     const capturedAreaSqm = turfArea({ type: 'Polygon', coordinates: [closedNewRing] });
     if (capturedAreaSqm < minCapturedAreaSqm) {
+      return ok({ result: 'failed', reason: 'too_short' });
+    }
+
+    // Bounding-box diagonal floor, checked alongside the area floor above.
+    // Rejects a thin sliver that clears the area floor only because it is
+    // long and narrow, not because it encloses a real block-scale loop.
+    // Mirrors kMinCapturedAreaDiagonalM in
+    // lib/utils/runwar_constants.dart / RunRecorderService._minCapturedAreaDiagonalM.
+    const minCapturedAreaDiagonalM = 30;
+    const capturedDiagonalM = ringBboxDiagonalM(closedNewRing);
+    if (capturedDiagonalM < minCapturedAreaDiagonalM) {
+      return ok({ result: 'failed', reason: 'too_short' });
+    }
+
+    // Compactness floor. The diagonal check above does not catch a long thin
+    // sliver that clears both the area and diagonal floors on its own - for
+    // example a shape with enough area stretched over a very long diagonal.
+    // Dividing area by diagonal squared separates them: a square scores 0.5,
+    // a 1:4 rectangle about 0.19, a needle near zero. 0.15 still admits the
+    // elongated rectangular loops real street grids produce. Mirrors
+    // kMinCapturedAreaCompactness in lib/utils/runwar_constants.dart - if
+    // this value changes, change the client value too.
+    const minCapturedAreaCompactness = 0.15;
+    const capturedCompactness = capturedDiagonalM > 0
+      ? capturedAreaSqm / (capturedDiagonalM * capturedDiagonalM)
+      : 0;
+    if (capturedCompactness < minCapturedAreaCompactness) {
       return ok({ result: 'failed', reason: 'too_short' });
     }
 
