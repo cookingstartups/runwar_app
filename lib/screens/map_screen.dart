@@ -595,6 +595,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
     if (!mounted) return;
     final msg = switch (ev.reason) {
       GateRejectionReason.areaFloor => 'Loop too small - min 200 m²',
+      GateRejectionReason.diagonalFloor => 'Loop too small - run a wider path',
+      GateRejectionReason.compactness => 'Loop too thin - run a wider path',
+      GateRejectionReason.pathLength => 'Loop too short - keep running',
       GateRejectionReason.sessionElapsed => 'Keep running - claims unlock after 1 min',
     };
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
