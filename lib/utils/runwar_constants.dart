@@ -24,6 +24,38 @@ const int kMinProximityClosureTrailPoints = 4;
 // spurious closure between a handful of nearby fixes does not.
 const double kMinProximityClosureDiagonalM = 50.0;
 
+// Minimum bounding-box diagonal (metres) of a captured auto-claim polygon,
+// checked alongside kMinCapturedAreaSqm-equivalent area floor in
+// RunRecorderService (client) and claim_territory (server). Rejects thin
+// slivers that clear the area floor only because they are long and narrow,
+// not because they enclose a real block-scale loop. Same reasoning as
+// kMinProximityClosureDiagonalM above, generalised to the main auto-claim
+// path rather than only the vertex-proximity fallback.
+//
+// Derived from a single observed live run (n=1): the one genuine loop
+// closure measured about 24 972 sqm with a diagonal far above this; every
+// spurious closure logged in the same run measured 0.4-40.8 sqm and never
+// approached a real block-scale extent. 30 m sits comfortably below a real
+// loop's diagonal while still rejecting degenerate slivers.
+const double kMinCapturedAreaDiagonalM = 30.0;
+
+// Minimum compactness ratio (area_sqm / diagonal_m^2) an auto-claim polygon
+// must clear, checked alongside the area and diagonal floors above. The
+// diagonal floor alone does not catch a long thin sliver that has enough
+// area and enough diagonal to pass both checks individually - a perfect
+// square scores 0.5, a 1:4 rectangle scores about 0.19, a needle-thin shape
+// scores near zero. 0.15 still admits the elongated rectangular loops real
+// street grids naturally produce (e.g. down one street, back along a
+// parallel one), so it is deliberately not set any higher.
+const double kMinCapturedAreaCompactness = 0.15;
+
+// Minimum distance (metres) actually travelled along the trail to close an
+// auto-claim loop, measured with trackDistanceM over the captured polygon's
+// own vertices. Unlike area or diagonal, path length cannot be gamed by
+// shape alone - it requires the phone to have physically moved that far.
+// 150 m in player terms is well under a single lap of a real city block.
+const double kMinCapturedPathLengthM = 150.0;
+
 // Tester-only run replay simulation. Divides every real inter-fix delay by
 // this factor when the operator picks accelerated timing, so a run recorded
 // over tens of real minutes plays back in a few minutes on-device while

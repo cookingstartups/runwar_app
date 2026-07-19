@@ -51,6 +51,17 @@ bool pointInBbox(double lat, double lng, BBox bbox) {
       lng <= bbox.maxLng;
 }
 
+// Bounding-box diagonal in metres for a polygon (or any point set). Shared by
+// the vertex-proximity closure fallback below and by RunRecorderService's
+// main auto-claim path, so both diagonal gates use the same projection.
+double polygonBboxDiagonalM(List<LatLng> poly) {
+  final bbox = polygonBbox(poly);
+  return _equirectangularDistanceM(
+    LatLng(bbox.minLat, bbox.minLng),
+    LatLng(bbox.maxLat, bbox.maxLng),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // polygonArea — shoelace formula with lat/lng → metre projection
 // Returns area in km².
@@ -306,11 +317,7 @@ SelfIntersection? detectSelfIntersection(
     if (_equirectangularDistanceM(trailPoints[vertexIdx], newB) <= kProximityTriggerM) {
       if (k - vertexIdx < kMinProximityClosureTrailPoints) continue;
       final candidate = trailPoints.sublist(vertexIdx, k + 1);
-      final bbox = polygonBbox(candidate);
-      final diagonal = _equirectangularDistanceM(
-        LatLng(bbox.minLat, bbox.minLng),
-        LatLng(bbox.maxLat, bbox.maxLng),
-      );
+      final diagonal = polygonBboxDiagonalM(candidate);
       if (diagonal < kMinProximityClosureDiagonalM) continue;
       return SelfIntersection(
         intersectionPoint: trailPoints[vertexIdx],

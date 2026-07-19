@@ -10,7 +10,12 @@ import 'realtime_presence_service.dart';
 import 'run_scratch_store.dart';
 import 'telemetry_service.dart';
 import '../geo/lasso.dart'
-    show detectSelfIntersection, computeCapture, polygonArea, trackDistanceM;
+    show
+        detectSelfIntersection,
+        computeCapture,
+        polygonArea,
+        polygonBboxDiagonalM,
+        trackDistanceM;
 import '../utils/runwar_constants.dart';
 
 enum RecorderState { idle, recording }
@@ -18,7 +23,13 @@ enum RecorderState { idle, recording }
 /// Reason an auto-claim scan silently rejected a detected loop closure.
 /// Surfaced via [RunRecorderService.onGateRejected] so the UI layer can
 /// give the operator distinct, non-blocking feedback per gate (R1).
-enum GateRejectionReason { areaFloor, sessionElapsed }
+enum GateRejectionReason {
+  areaFloor,
+  diagonalFloor,
+  compactness,
+  pathLength,
+  sessionElapsed,
+}
 
 /// One entry from a run replay fixture, as parsed from its `events` array.
 /// `type` is one of `run_start`, `gps_fix`, `claim_rejected`, or
@@ -116,7 +127,42 @@ class RunRecorderService {
   // two are enforced independently (client gates before dispatch, server
   // gates again on receipt) and a mismatch lets a claim pass one side and
   // fail the other. If this value changes, change the server value too.
-  static const double _minCapturedAreaSqm = 4.0;
+  //
+  // 1500 sqm is a jitter/real-loop separation floor derived from a single
+  // observed live run (n=1): the one genuine loop closure measured about
+  // 24 972 sqm, while every spurious/jitter closure logged in that same run
+  // measured between 0.4 and 40.8 sqm - a separation factor over 600x.
+  //
+  // The value is set above the accuracy gate's own worst case rather than
+  // just above observed noise. At the 20 m accuracy gate below, a stationary
+  // phone pinned at that boundary can in theory enclose roughly pi * 20^2,
+  // about 1257 sqm, through jitter alone. A floor below that figure would sit
+  // inside the envelope it is meant to backstop, so 1500 is chosen to clear
+  // it. Against measured jitter it carries about a 37x margin.
+  //
+  // In player terms 1500 sqm is roughly a 39 m square, about 155 m of
+  // perimeter, realistically 200 to 250 m of movement once real streets and
+  // corners are involved. That keeps the area floor, rather than the 60 s
+  // session gate, as the binding constraint on effort.
+  static const double _minCapturedAreaSqm = 1500.0;
+
+  // Minimum bounding-box diagonal (metres) a captured auto-claim polygon
+  // must span, checked alongside the area floor above. Rejects thin slivers
+  // that clear the area floor only because they are long and narrow, not
+  // because they enclose a real block-scale loop. See
+  // kMinCapturedAreaDiagonalM in runwar_constants.dart, which generalises
+  // the same reasoning already used for kMinProximityClosureDiagonalM on the
+  // vertex-proximity closure path.
+  static const double _minCapturedAreaDiagonalM = kMinCapturedAreaDiagonalM;
+
+  // GPS accuracy gate (metres). A position fix reporting accuracy worse than
+  // this is rejected before it ever reaches _track, before the proximity
+  // fast path, and before the spacing filter. This is the primary
+  // anti-jitter defence - see the honesty note on _minCapturedAreaSqm above:
+  // the area floor alone cannot rule out a stationary phone enclosing a
+  // spurious loop through jitter, but a stationary phone reporting under
+  // 20 m accuracy cannot enclose enough area through jitter to matter.
+  static const double _gpsAccuracyMaxM = 20.0;
 
   /// Minimum distance in metres between consecutive stored track points.
   /// A new GPS fix within this distance of _track.last is dropped before
@@ -190,6 +236,14 @@ class RunRecorderService {
     // Defensive guard: discard non-finite coordinates.
     if (pos.latitude.isNaN || pos.longitude.isNaN) return;
     if (pos.latitude.isInfinite || pos.longitude.isInfinite) return;
+    // Accuracy gate: reject any fix reporting worse than _gpsAccuracyMaxM
+    // before it enters _track, before the proximity fast path, and before
+    // the spacing filter. This is the primary anti-jitter defence (see the
+    // honesty note on _minCapturedAreaSqm above). Every synthetic fix a
+    // simulation feeds through this same pipeline is stamped with a fixed,
+    // good accuracy value in _applySimulationEvent, so this gate never
+    // blocks a simulated replay.
+    if (pos.accuracy > _gpsAccuracyMaxM) return;
     final newLatLng = LatLng(pos.latitude, pos.longitude);
     // Always update presence so rival comets stay live regardless of spacing
     // filter - except during a simulation, where the position is synthetic
@@ -493,7 +547,65 @@ class RunRecorderService {
       return;
     }
 
-    // 60-second gate (per session, not per loop).
+    // Bounding-box diagonal floor. Rejects a thin sliver that clears the
+    // area floor only because it is long and narrow, not because it
+    // encloses a real block-scale loop. Same non-advancement reasoning as
+    // the area-floor branch above: the trail history is still needed for a
+    // later, genuinely large loop to close.
+    final diagonalM = polygonBboxDiagonalM(polygon);
+    if (diagonalM < _minCapturedAreaDiagonalM) {
+      ErrorLogService.logClientError(
+        provider: '_scanForAutoClaim.diagonal_floor_gate',
+        error: 'rejected: diagonal=${diagonalM.toStringAsFixed(1)}m floor=$_minCapturedAreaDiagonalM',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+      onGateRejected?.call(GateRejectionReason.diagonalFloor, {'diagonal_m': diagonalM});
+      return;
+    }
+
+    // Compactness floor. The diagonal check above does not catch a long thin
+    // sliver that clears both the area and diagonal floors on its own - for
+    // example a 1500 sqm shape stretched over a 200 m diagonal. Dividing area
+    // by diagonal squared separates them: a square scores 0.5, a 1:4
+    // rectangle about 0.19, a needle near zero. Same non-advancement
+    // reasoning as the branches above.
+    final compactness = diagonalM > 0 ? areaSqm / (diagonalM * diagonalM) : 0.0;
+    if (compactness < kMinCapturedAreaCompactness) {
+      ErrorLogService.logClientError(
+        provider: '_scanForAutoClaim.compactness_gate',
+        error: 'rejected: compactness=${compactness.toStringAsFixed(3)} '
+            'floor=$kMinCapturedAreaCompactness',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+      onGateRejected?.call(
+          GateRejectionReason.compactness, {'compactness': compactness});
+      return;
+    }
+
+    // Path-length floor, measured along the captured loop's own vertices.
+    // Unlike area, diagonal and compactness, this one cannot be satisfied by
+    // shape alone - it requires the phone to have physically travelled that
+    // far, which is what makes it the anti-farming check rather than an
+    // anti-jitter one.
+    final loopPathM = trackDistanceM(polygon);
+    if (loopPathM < kMinCapturedPathLengthM) {
+      ErrorLogService.logClientError(
+        provider: '_scanForAutoClaim.path_length_gate',
+        error: 'rejected: path=${loopPathM.toStringAsFixed(1)}m '
+            'floor=$kMinCapturedPathLengthM',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+      onGateRejected?.call(
+          GateRejectionReason.pathLength, {'path_m': loopPathM});
+      return;
+    }
+
+    // 60-second gate (per session, not per loop). Note this is no longer the
+    // binding constraint on effort: a loop clearing the area and path floors
+    // above already implies well over a minute of movement.
     final start = _sessionStartTime;
     if (start == null ||
         DateTime.now().difference(start).inSeconds < _minSessionElapsedSec) {
@@ -824,6 +936,11 @@ class RunRecorderService {
       );
       final areaSqm = polygonArea(polygon) * 1e6;
       if (areaSqm < _minCapturedAreaSqm) {
+        _loopStartTrailIndex = len;
+        continue;
+      }
+      final diagonalM = polygonBboxDiagonalM(polygon);
+      if (diagonalM < _minCapturedAreaDiagonalM) {
         _loopStartTrailIndex = len;
         continue;
       }
