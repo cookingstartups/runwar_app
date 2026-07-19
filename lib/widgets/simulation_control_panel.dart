@@ -12,10 +12,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../providers/run_recorder_provider.dart';
 import '../providers/run_simulation_provider.dart';
+import '../services/run_recorder_service.dart' show RecorderState;
 import '../theme.dart';
 
 /// Small always-available launcher chip. Opens the fixture picker sheet.
+///
+/// Disabled (dimmed, non-interactive) while a real run is recording, since
+/// a simulation can never start on top of one - see the guard in
+/// RunRecorderService.beginSimulation(). Tapping it in that state must never
+/// open the fixture picker sheet; it only tells the operator why the chip
+/// is inactive.
 class SimulationLauncherChip extends ConsumerWidget {
   const SimulationLauncherChip({super.key});
 
@@ -24,31 +32,46 @@ class SimulationLauncherChip extends ConsumerWidget {
     final simState = ref.watch(runSimulationProvider);
     if (simState.isActive) return const SimulationActiveBanner();
 
+    final recState = ref.watch(runRecorderProvider);
+    final blocked = recState == RecorderState.recording;
+
     return SafeArea(
       child: Align(
         alignment: Alignment.topRight,
         child: Padding(
           padding: const EdgeInsets.only(top: 8, right: 12),
           child: GestureDetector(
-            onTap: () => _openPicker(context, ref),
+            onTap: () => blocked ? _showBlockedMessage(context) : _openPicker(context, ref),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: kSurface.withValues(alpha: 0.92),
+                color: kSurface.withValues(alpha: blocked ? 0.5 : 0.92),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: kSea.withValues(alpha: 0.6)),
+                border: Border.all(
+                  color: (blocked ? kFgFaint : kSea).withValues(alpha: 0.6),
+                ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.science_outlined, color: kSea, size: 14),
+                  Icon(Icons.science_outlined,
+                      color: blocked ? kFgFaint : kSea, size: 14),
                   const SizedBox(width: 4),
-                  Text('SIM', style: monoStyle(size: 10, color: kSea)),
+                  Text('SIM',
+                      style: monoStyle(size: 10, color: blocked ? kFgFaint : kSea)),
                 ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _showBlockedMessage(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Stop the current run before starting a simulation'),
       ),
     );
   }

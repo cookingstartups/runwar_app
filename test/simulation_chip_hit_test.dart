@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:runwar_app/models/mission_step.dart';
+import 'package:runwar_app/services/run_recorder_service.dart';
 import 'package:runwar_app/widgets/mission_mode_overlay.dart';
 import 'package:runwar_app/widgets/simulation_control_panel.dart';
 
@@ -81,6 +82,51 @@ void main() {
       expect(find.text('REPLAY SIMULATION'), findsOneWidget,
           reason: 'a real tap on the SIM chip must open the fixture picker '
               'sheet, not just a directly-invoked callback');
+    },
+  );
+
+  testWidgets(
+    'the SIM chip is disabled while a real run is recording and tapping it '
+    'never opens the fixture picker',
+    (tester) async {
+      addTearDown(
+        () => RunRecorderService.instance.stateNotifier.value = RecorderState.idle,
+      );
+
+      await tester.pumpWidget(
+        const ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              backgroundColor: Colors.black,
+              body: SimulationLauncherChip(),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Drive the shared recorder service into the same state a live real
+      // run leaves it in, once the provider tree already exists so its
+      // listener picks up the change.
+      RunRecorderService.instance.stateNotifier.value = RecorderState.recording;
+      await tester.pump();
+
+      expect(find.text('SIM'), findsOneWidget);
+
+      await tester.tap(find.text('SIM'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('REPLAY SIMULATION'), findsNothing,
+          reason: 'the fixture picker must never open while a real run is '
+              'recording - this is exactly the dead end that misled the '
+              'operator');
+      expect(
+        find.text('Stop the current run before starting a simulation'),
+        findsOneWidget,
+        reason: 'tapping the disabled chip must surface a message '
+            'explaining why, not fail silently',
+      );
     },
   );
 }

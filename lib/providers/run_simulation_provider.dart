@@ -119,7 +119,14 @@ class RunSimulationNotifier extends StateNotifier<RunSimulationState> {
       svc.activeCity =
           (slugs != null && slugs.isNotEmpty) ? slugs.first : fixture.city;
 
-      await svc.beginSimulation();
+      final started = await svc.beginSimulation();
+      if (!started) {
+        state = state.copyWith(
+          status: SimulationStatus.aborted,
+          error: 'Stop the current run before starting a simulation',
+        );
+        return;
+      }
       state = RunSimulationState(
         status: SimulationStatus.running,
         fixtureLabel: fixture.label,
