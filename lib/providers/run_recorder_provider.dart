@@ -4,6 +4,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:uuid/uuid.dart';
+import '../services/database/models/zone.dart';
 import '../services/run_recorder_service.dart';
 import '../services/territory_service.dart';
 import '../services/supabase_service.dart';
@@ -61,6 +62,21 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         fields,
         networkUp: up,
       );
+    };
+    // Push a fresh snapshot of the runner's own owned-zone outlines into the
+    // plain-Dart service on every scan call. This is the one legitimate
+    // Riverpod (ref) access point in the chain - lasso.dart and
+    // run_recorder_service.dart never import zonesProvider themselves.
+    svc.ownedZoneEdgesProvider = () {
+      final city = RunRecorderService.instance.activeCity;
+      if (city.isEmpty) return const [];
+      final userId = _ref.read(authProvider).user?['id'] as String?;
+      if (userId == null) return const [];
+      final zones = _ref.read(zonesProvider(city)).valueOrNull ?? const [];
+      return zones
+          .where((z) => z.status == ZoneStatus.owned && z.ownerId == userId)
+          .expand((z) => z.outlines)
+          .toList();
     };
   }
 
@@ -251,6 +267,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   void dispose() {
     RunRecorderService.instance.onAutoClaim = null;
     RunRecorderService.instance.onGateRejected = null;
+    RunRecorderService.instance.ownedZoneEdgesProvider = null;
     RunRecorderService.instance.stateNotifier.removeListener(_onServiceState);
     RunRecorderService.instance.trackVersion.removeListener(_onTrackVersion);
     _autoClaimOutcomeController.close();

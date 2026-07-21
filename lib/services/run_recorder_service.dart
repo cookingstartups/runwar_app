@@ -150,6 +150,15 @@ class RunRecorderService {
   // importing connectivity or Riverpod.
   Future<void> Function(Map<String, dynamic> sample)? onGpsFix;
 
+  // Supplies a fresh snapshot of the runner's own owned-zone outlines (one
+  // entry per outline, closed ring, same city as the active run) at the
+  // moment _scanForAutoClaim asks for it. Set by the provider layer at
+  // run-start, same push-don't-pull pattern as onAutoClaim/onGpsFix - this
+  // service never imports zonesProvider or any Riverpod type itself.
+  // Left unset by default: the scan then treats "no owned-zone data" exactly
+  // as it did before this field existed (regression safety net).
+  List<List<LatLng>> Function()? ownedZoneEdgesProvider;
+
   // Callback invoked when the runs row needs a partial update (stop/cancel/
   // confirmClaim lasso link). Arguments: sessionId, field map.
   Future<void> Function(String sessionId, Map<String, dynamic> fields)? onRunUpdate;
@@ -611,14 +620,28 @@ class RunRecorderService {
     // When _loopStartTrailIndex is 0 (initial state), clamp to 1 so the
     // first segment of the track is included in the scan.
     final scanStart = math.max(1, _loopStartTrailIndex);
-    final hit = detectSelfIntersection(_track, scanStart);
+    final ownedZoneEdges = ownedZoneEdgesProvider?.call() ?? const [];
+    final hit = detectSelfIntersection(
+      _track,
+      scanStart,
+      ownedZoneEdges: ownedZoneEdges,
+    );
     if (hit == null) return;
 
     final k = _track.length - 1;
+    // An owned-zone-wall hit has no earlier trail segment to anchor to (see
+    // lasso.dart's -1 sentinel doc comment); computeCapture's anchor is the
+    // RAW loop-start index instead (not the >=1-clamped scanStart used only
+    // to satisfy detectSelfIntersection's own precondition), so the captured
+    // polygon includes every trail point run so far, not just the newest
+    // segment's own two endpoints - the same span a self-closure would use
+    // when loopStartTrailIndex is still 0 at the very start of a run.
+    final captureAnchorIdx =
+        hit.isOwnedZoneWall ? _loopStartTrailIndex : hit.intersectingSegmentIdx;
     final polygon = computeCapture(
       _track,
       scanStart,
-      hit.intersectingSegmentIdx,
+      captureAnchorIdx,
       hit.intersectionPoint,
       k,
       isProximityClosure: hit.isProximityClosure,
@@ -1314,6 +1337,7 @@ class RunRecorderService {
     onGateRejected = null;
     onGpsFix = null;
     onRunUpdate = null;
+    ownedZoneEdgesProvider = null;
     _lastFixTimestamp = null;
     _deferredCrossings.clear();
     _clockGuardTrips = 0;

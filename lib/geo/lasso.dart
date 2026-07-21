@@ -271,17 +271,26 @@ class SelfIntersection {
   // avoid duplicating the leading vertex of the captured polygon.
   final bool isProximityClosure;
 
+  // True when this hit came from the newest trail segment crossing the edge
+  // of a zone the runner already owns, rather than a self-crossing of the
+  // trail itself. intersectingSegmentIdx has no meaning for this case (there
+  // is no earlier trail segment to anchor it to); callers building the
+  // captured polygon must use loopStartTrailIndex as the anchor instead.
+  final bool isOwnedZoneWall;
+
   const SelfIntersection({
     required this.intersectionPoint,
     required this.intersectingSegmentIdx,
     this.isProximityClosure = false,
+    this.isOwnedZoneWall = false,
   });
 }
 
 SelfIntersection? detectSelfIntersection(
   List<LatLng> trailPoints,
-  int loopStartTrailIndex,
-) {
+  int loopStartTrailIndex, {
+  List<List<LatLng>> ownedZoneEdges = const [],
+}) {
   final k = trailPoints.length - 1;
   if (k < 2) return null;
   if (loopStartTrailIndex < 1 || k - 1 < loopStartTrailIndex) return null;
@@ -298,6 +307,32 @@ SelfIntersection? detectSelfIntersection(
         intersectionPoint: pt,
         intersectingSegmentIdx: i,
       );
+    }
+  }
+
+  // Owned-zone-edge wall pass: tests the newest segment against every edge
+  // of every ring supplied in ownedZoneEdges (a caller-pushed snapshot of
+  // the runner's own zone outlines - this function never reaches for zone
+  // data itself). On a hit, the wall's own vertices are never harvested;
+  // only the single computed intersection point is returned, so
+  // computeCapture's trail-slice output stays trail-only (no borrowed
+  // geometry). intersectingSegmentIdx is a -1 sentinel here since there is
+  // no earlier trail segment to anchor to - the caller is expected to use
+  // loopStartTrailIndex as computeCapture's anchor instead, mirroring a
+  // self-closure's own earliest-in-range index.
+  for (final ring in ownedZoneEdges) {
+    if (ring.length < 2) continue;
+    for (int e = 0; e < ring.length; e++) {
+      final edgeA = ring[e];
+      final edgeB = ring[(e + 1) % ring.length];
+      final pt = segmentSegmentIntersection(edgeA, edgeB, newA, newB);
+      if (pt != null) {
+        return SelfIntersection(
+          intersectionPoint: pt,
+          intersectingSegmentIdx: -1,
+          isOwnedZoneWall: true,
+        );
+      }
     }
   }
 

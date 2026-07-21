@@ -73,6 +73,15 @@ const double kSimulationAccelerationMultiplier = 12.0;
 const int kSimulationMinFixDelayMs = 120;
 const int kSimulationMaxFixDelayMs = 4000;
 
+// Minimum area (sqm) a split-off remainder fragment must clear when a
+// re-run retraces part of a same-level-fused zone's own edge (see
+// computeZoneSplit in supabase/functions/claim_territory/merge_geometry.ts).
+// A dedicated constant, not a reuse of kProximityTriggerM/the 25 m merge
+// threshold - area and distance are different quantities. One quarter of
+// the 1500 sqm fresh-claim floor. Must stay numerically equal to the
+// server-side kMinSplitFragmentAreaSqm in claim_territory/index.ts.
+const double kMinSplitFragmentAreaSqm = 375.0;
+
 // Maximum number of session-elapsed-deferred loop closures held at once.
 // SPEC-0143.
 const int kMaxDeferredCrossings = 8;

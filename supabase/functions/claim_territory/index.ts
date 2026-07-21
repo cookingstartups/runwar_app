@@ -3,6 +3,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // loaded lazily below, strictly inside the `if (!disputedId)` guard, so the
 // merge routine can never execute on a disputed outcome.
 import type { ZoneInput } from './merge_geometry.ts';
+// Type-only imports for the split/cooldown pure exports (Section 0.6 design
+// correction) - the runtime bindings, like computeZoneMerges above, are
+// loaded lazily below, inside the `if (!disputedId)` guard.
+import type { ZoneSplitResult } from './merge_geometry.ts';
 // Area of the merged geometry is always recomputed from the merge result,
 // never summed from source zones (overlapping/adjacent source zones would
 // double-count their shared area if simply added together).
@@ -13,6 +17,22 @@ import { area as turfArea } from 'https://esm.sh/@turf/area@7';
 // same-city zone within this distance merges into one continuous zone
 // (sealed via morphological closing); beyond it, zones stay separate rows.
 const kMergeThresholdMeters = 25;
+
+// Repeat-run damping / level-up cooldown (AC-8). Server-only: kDemoMode is a
+// client-only Dart const with no server equivalent (confirmed by grep), so
+// the same demo/production duality is reproduced here via a per-deployment
+// Deno env var instead of a request-supplied flag - a client-controlled
+// cooldown value would be a trivial exploit. 24h default is the safe
+// production fallback; set LEVEL_UP_COOLDOWN_MS=15000 in the demo/dev
+// project's function env vars for fast E2E iteration.
+const kLevelUpCooldownMs = Number(Deno.env.get('LEVEL_UP_COOLDOWN_MS') ?? 24 * 3600 * 1000);
+
+// Minimum area (sqm) a split-off remainder fragment must clear when a
+// re-run retraces part of a same-level-fused zone's own edge (AC-7). A
+// dedicated constant, not a reuse of kMergeThresholdMeters - area and
+// distance are different quantities. Must stay numerically equal to the
+// client-side kMinSplitFragmentAreaSqm in lib/utils/runwar_constants.dart.
+const kMinSplitFragmentAreaSqm = 375.0;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -326,7 +346,9 @@ Deno.serve(async (req) => {
     let zoneGeomJson = JSON.stringify({ type: 'Polygon', coordinates: [ring] });
 
     if (!disputedId) {
-      const { computeZoneMerges } = await import('./merge_geometry.ts');
+      const { computeZoneMerges, computeZoneSplit, computeLevelUpOutcome } = await import(
+        './merge_geometry.ts'
+      );
       const { data: candidateRows } = await supabase
         .from('zones')
         .select(
@@ -361,9 +383,58 @@ Deno.serve(async (req) => {
             id: r.id as string,
             ring: r2,
             createdAt: r.created_at as string,
+            influenceLevel: (r.influence_level as number | null) ?? 1,
           }));
         })
         .flat();
+
+      // AC-7: reversible split on re-run of part of a same-level-fused zone.
+      // Detected BEFORE the merge/level-up scan below - does this claim's own
+      // new ring retrace PART of an existing same-owner zone's stored edge
+      // (a genuine partial overlap), rather than either missing it entirely
+      // or wholly enclosing it from outside (the pre-existing ownedOverlapIds
+      // containment path, untouched by this feature, AC-14's note)? Runs
+      // per-candidate-zone, not assuming exactly one overlap.
+      for (const candidate of inputs) {
+        if (candidate.id === newId) continue;
+        const splitResult: ZoneSplitResult = computeZoneSplit(
+          candidate.ring,
+          ring,
+          kMinSplitFragmentAreaSqm,
+        );
+        if (splitResult.case !== 'partialOverlap') continue;
+
+        if (splitResult.remainderDiscarded || !splitResult.remainder) {
+          // Nothing meaningful survives of the old boundary below the
+          // sliver-tolerance floor - the re-run's own polygon (already
+          // inserted above as newId) absorbs the whole prior area, and the
+          // old row is deleted outright rather than persisted as a
+          // near-zero-area remainder.
+          await supabase.from('zones').delete().eq('id', candidate.id);
+          continue;
+        }
+
+        // Write the untouched remainder back to the original survivor row -
+        // same id, same influence_level, created_at untouched. A dedicated
+        // RPC distinct from apply_zone_merge: one UPDATE, no absorbed-row
+        // DELETE, mirroring the same atomic-write discipline.
+        // computeZoneSplit's own contract guarantees `remainder` is a real
+        // GeoJSON Polygon/MultiPolygon whenever it is non-null (only the
+        // `unknown`-typed `coordinates` field is loosened for the pure
+        // module's own external type-independence) - narrowed here for
+        // toWkt/turfArea, which need the concrete coordinate array shape.
+        const remainderGeom = splitResult.remainder as
+          | { type: 'Polygon'; coordinates: number[][][] }
+          | { type: 'MultiPolygon'; coordinates: number[][][][] };
+        const { error: splitErr } = await supabase.rpc('apply_zone_split', {
+          p_zone_id: candidate.id,
+          p_geom_wkt: toWkt(remainderGeom),
+          p_geom_json: JSON.stringify(remainderGeom),
+          p_area_m2: turfArea(remainderGeom),
+          p_updated_at: now,
+        });
+        if (splitErr) return err(`Zone split failed: ${splitErr.message}`, 500);
+      }
 
       const groups = computeZoneMerges(inputs, kMergeThresholdMeters);
       const group = groups.find((g) => g.survivorId === newId || g.absorbedIds.includes(newId));
@@ -379,30 +450,37 @@ Deno.serve(async (req) => {
 
         const groupIds = [group.survivorId, ...uniqueAbsorbedIds];
 
-        // influence_level: MAX across the group, never summed. Merging never
-        // grants a free fortification level - the survivor inherits the
-        // highest level already earned by any member, capped at 15 by the
-        // column's own CHECK constraint (a MAX of already-valid values can
-        // never exceed that cap by construction).
-        const survivorInfluenceLevel = groupIds.reduce(
-          (max, id) => Math.max(max, influenceLevelById.get(id) ?? 1),
-          1,
-        );
-
-        // credits_earned: additive, same rationale as influence above.
-        const survivorCreditsEarned = groupIds.reduce(
-          (sum, id) => sum + (creditsEarnedById.get(id) ?? 0),
-          0,
-        );
-
         // last_active_at: most-recent activity across the merged group, not
-        // just the survivor's own value.
+        // just the survivor's own value. Read from lastActiveAtById, which
+        // was populated from the candidate-row SELECT executed above, before
+        // any write this claim makes - so this already IS each member's
+        // PRIOR (pre-this-claim) last_active_at, exactly what AC-8's cooldown
+        // check needs to compare against.
         const survivorLastActiveAt = groupIds.reduce<string | null>((max, id) => {
           const v = lastActiveAtById.get(id) ?? null;
           if (!v) return max;
           if (!max || v > max) return v;
           return max;
         }, null);
+
+        // influence_level: MAX across the group (never summed - merging
+        // never grants a free fortification level on its own), THEN subject
+        // to AC-8's level-up cooldown gate: a re-claim while the group's
+        // most recent prior activity is still within kLevelUpCooldownMs
+        // keeps the already-held level; once the cooldown has elapsed, the
+        // re-claim is an ordinary level-up event, clamped at 15 by
+        // computeLevelUpOutcome (matching the column's own CHECK
+        // constraint).
+        const survivorInfluenceLevel = computeLevelUpOutcome(
+          survivorLastActiveAt, Date.now(), kLevelUpCooldownMs,
+          groupIds.reduce((max, id) => Math.max(max, influenceLevelById.get(id) ?? 1), 1),
+        ).nextLevel;
+
+        // credits_earned: additive, same rationale as influence above.
+        const survivorCreditsEarned = groupIds.reduce(
+          (sum, id) => sum + (creditsEarnedById.get(id) ?? 0),
+          0,
+        );
 
         // shield_active: the merged zone is shielded if ANY group member was
         // shielded; when so, shield_expires_at is the latest expiry among the
