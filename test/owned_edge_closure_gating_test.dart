@@ -6,13 +6,19 @@
 // an ownedZoneEdgesProvider field, so every test below fails to compile
 // until the implementation lands.
 //
-// Geometry: the wall and trail fixtures below were hand-derived (no working
-// implementation exists yet to verify numerically against) to clear all
-// four floors with a reasonable margin, assuming the captured polygon is
-// [intersectionPoint, ...trail points from run start through the crossing
-// fix]. If the eventual implementation slices the captured polygon
-// differently, these fixtures may need re-tuning during GREEN-phase
-// verification - flagged explicitly, not silently assumed correct.
+// Geometry: the wall and trail fixtures below are derived against the
+// captured polygon RunRecorderService actually produces for an owned-zone-
+// wall closure: [wallHitPoint, ...every trail point from index 0 through
+// the crossing fix], anchored at _loopStartTrailIndex rather than at the
+// crossing segment alone. Each fixture's four gate values (area, diagonal,
+// compactness, path length) were computed against that real polygon before
+// being asserted on here, not assumed from an earlier convention.
+//
+// One geometric constraint shapes every fixture below: for a bounding-box
+// diagonal d, area is at most d^2 / 2, so any polygon clearing the 1500 sqm
+// area floor always has a diagonal of at least about 54.8 m - well above
+// the 30 m diagonal floor. The diagonal floor can therefore never be
+// isolated on its own; only compactness and path length can be.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
@@ -57,22 +63,32 @@ class _GateRejectionCapture {
   return (wall: wall, trail: [r0, r1, r2]);
 }
 
-// A deliberately elongated variant: the wall offset and the north excursion
-// past it are equal, producing a shape whose area and diagonal both clear
-// their floors but whose compactness (area / diagonal^2) falls under 0.15 -
-// this isolates the compactness gate specifically, distinct from area/
-// diagonal, mirroring auto_claim_test.dart's existing elongated-sliver
-// pattern applied to an owned-edge closure instead of a self-closure.
+// A deliberately elongated variant, re-derived by measuring the actual
+// captured polygon rather than assuming a slicing convention: for an
+// owned-zone-wall closure, RunRecorderService anchors computeCapture at
+// _loopStartTrailIndex (0 here), so the captured polygon is always
+// [wallHitPoint, r0, r1, r2] - the whole trail, not just the crossing
+// segment's own two endpoints. To isolate compactness under that real
+// slicing rule, r0 is placed far from the wall crossing along a near-
+// collinear run, stretching the bounding-box diagonal much further than
+// the enclosed area grows, while r1/r2 stay close enough together to keep
+// the polygon narrow. Measured against the real computeCapture output:
+// area ~8154 sqm (clears the 1500 sqm floor with a wide margin), diagonal
+// ~422 m (clears the 30 m floor - a diagonal that large can never be the
+// gate that fails here, see the module-level derivation note below),
+// compactness ~0.046 (well under the 0.15 floor), loop path ~844 m
+// (clears the 150 m floor). Only compactness is anywhere near its floor.
 ({List<LatLng> wall, List<LatLng> trail}) _elongatedWallCrossingFixture() {
   const originLat = 34.700000;
   const originLng = 33.000000;
-  const wallOffsetLat = 0.0008141; // ~90 m
-  const wallSpanLng = 0.0009832; // ~90 m
-  const excursionLat = 0.0008141; // ~90 m past the wall too - doubles the N-S span
+  const wallOffsetLat = 0.00062; // ~69 m - trail start's offset south of the wall
+  const wallSpanLng = 0.0026; // ~238 m - wall span, also r0->r1's run east
+  const excursionLat = 0.00315; // ~348 m north - stretches the bounding box
+  const crossingLng = 0.0007; // ~64 m - keeps the crossing within the wall span
 
   final r0 = LatLng(originLat - wallOffsetLat, originLng);
   final r1 = LatLng(originLat - wallOffsetLat, originLng + wallSpanLng);
-  final r2 = LatLng(originLat - wallOffsetLat + excursionLat, originLng + wallSpanLng * 0.9);
+  final r2 = LatLng(originLat - wallOffsetLat + excursionLat, originLng + crossingLng);
 
   final wall = [
     LatLng(originLat, originLng),
