@@ -624,6 +624,17 @@ void main() {
       expect(rejectionCapture.captured.first.reason, GateRejectionReason.sessionElapsed);
       expect(rejectionCapture.captured.first.details['elapsed_sec'], isNotNull,
           reason: 'Rejection details must carry the elapsed-seconds value for diagnostics');
+      // SPEC-0143 scenario 1: a real run must reject the SAME way after the
+      // clock-source fix lands, and the guard must never trip for a real fix.
+      // Numeric assertion, not outcome-only - a guard-tripped wall-clock
+      // fallback could also land near 25s and hide a broken clock domain.
+      final elapsedSec = rejectionCapture.captured.first.details['elapsed_sec'] as int;
+      expect(elapsedSec, closeTo(25, 2),
+          reason: 'A real run must measure elapsed time from the fix that produced the '
+              'crossing, on the wall-clock domain - approximately 25s, not a guard fallback');
+      expect(svc.clockGuardTripsForTesting, 0,
+          reason: 'A real GPS fix is always on the wall-clock domain and must never trip '
+              'the clock-domain guard');
     });
 
     // R1-AC3: gate feedback must not fire on a successful claim path
@@ -716,6 +727,296 @@ void main() {
               'not the tiny (1.5-37 m^2) fragments seen in the live-run regression');
     });
   });
+
+  // =========================================================================
+  // Group 9 (SPEC-0143 Part A): clock-domain guard against a mixed-domain
+  // elapsed computation. These drive the gate through the injectLastFixTimestamp
+  // seam directly, bypassing _onPosition's capture guard, so they exercise
+  // _elapsedSecForGate's plausibility check on its own regardless of what
+  // feeds it. All three currently fail because injectLastFixTimestamp is a
+  // no-op (no field is read by the gate yet) and clockGuardTripsForTesting
+  // never increments.
+  // =========================================================================
+
+  group('clock-domain guard - implausible fix timestamps fall back safely', () {
+    late RunRecorderService svc;
+    late _AutoClaimCapture claimCapture;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      claimCapture = _AutoClaimCapture();
+      svc.onAutoClaim = claimCapture.call;
+      svc.injectState(RecorderState.recording);
+    });
+
+    tearDown(() => svc.reset());
+
+    // Scenario 5a: an epoch-zero fix stamp must never poison the session
+    // clock into computing a decades-long elapsed and passing unconditionally.
+    test('epoch-zero fix timestamp trips the guard and falls back to wall clock', () async {
+      final t0 = DateTime.now();
+      svc.injectSessionStartTime(t0);
+      svc.injectLastFixTimestamp(DateTime.fromMillisecondsSinceEpoch(0));
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty,
+          reason: 'An epoch-zero stamp must never make the gate pass unconditionally');
+      expect(svc.clockGuardTripsForTesting, greaterThan(0),
+          reason: 'The clock-domain guard must trip on an epoch-zero timestamp');
+    });
+
+    // Scenario 5b: a fix stamp earlier than session start (negative elapsed,
+    // device clock skew) must trip the guard, restoring real-run behavior.
+    test('fix timestamp earlier than session start trips the guard', () async {
+      final t0 = DateTime.now();
+      svc.injectSessionStartTime(t0);
+      svc.injectLastFixTimestamp(t0.subtract(const Duration(seconds: 5)));
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty);
+      expect(svc.clockGuardTripsForTesting, greaterThan(0),
+          reason: 'A negative elapsed value means the two operands are not on one '
+              'timeline and must trip the guard');
+    });
+
+    // Scenario 5c: a deliberately mis-seeded multi-day skew (the primary
+    // failure mode named in the operator brief) must trip the guard rather
+    // than silently passing with a multi-day elapsed value.
+    test('fix timestamp more than 24 hours ahead of session start trips the guard', () async {
+      final t0 = DateTime.now();
+      svc.injectSessionStartTime(t0);
+      svc.injectLastFixTimestamp(t0.add(const Duration(days: 3)));
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty,
+          reason: 'A mis-seeded multi-day-ahead stamp must never pass the gate silently');
+      expect(svc.clockGuardTripsForTesting, greaterThan(0),
+          reason: 'A implausible elapsed value above 24h must trip the guard');
+    });
+  });
+
+  // =========================================================================
+  // Group 10 (SPEC-0143 Part B): deferred crossing retry. A crossing that
+  // clears all four geometric gates but fails only the session-elapsed gate
+  // must be retained and later dispatched, instead of being lost once the
+  // trail advances past the segment pair that produced it. All four tests
+  // currently fail: deferredCrossingCountForTesting never leaves 0 because
+  // nothing populates the (inert, RED-phase) _deferredCrossings list yet.
+  // =========================================================================
+
+  group('deferred crossing retry - a session-elapsed-only rejection is retained and later dispatched', () {
+    late RunRecorderService svc;
+    late _AutoClaimCapture claimCapture;
+    late _GateRejectionCapture rejectionCapture;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      claimCapture = _AutoClaimCapture();
+      rejectionCapture = _GateRejectionCapture();
+      svc.onAutoClaim = claimCapture.call;
+      svc.onGateRejected = rejectionCapture.call;
+      svc.injectState(RecorderState.recording);
+    });
+
+    tearDown(() => svc.reset());
+
+    // Non-crossing extension of _figure8Path: the newest segment after this
+    // extension no longer touches the original crossing pair, so a direct
+    // rescan from the unchanged loopStartTrailIndex cannot rediscover it -
+    // only the retained deferred entry can.
+    List<LatLng> extended() => [
+          ..._figure8Path(),
+          const LatLng(34.700, 33.030),
+          const LatLng(34.700, 33.040),
+        ];
+
+    // Scenario 6: dispatches once the elapsed threshold passes.
+    test('a deferred crossing dispatches once the elapsed threshold passes, with no new crossing', () async {
+      final t0 = DateTime.now();
+      svc.injectSessionStartTime(t0);
+      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 20)));
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty);
+      expect(svc.deferredCrossingCountForTesting, 1,
+          reason: 'A crossing that clears all four geometric gates but fails only the '
+              'elapsed gate must be retained, not discarded');
+
+      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 70)));
+      svc.injectTrackForTesting(extended());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, hasLength(1),
+          reason: 'The originally-detected polygon must dispatch once the threshold passes, '
+              'even though the newest segment no longer touches the original crossing pair');
+      expect(svc.deferredCrossingCountForTesting, 0);
+    });
+
+    // Scenario 7: at-most-once dispatch.
+    test('a dispatched deferred crossing never dispatches a second time on later scans', () async {
+      final t0 = DateTime.now();
+      svc.injectSessionStartTime(t0);
+      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 20)));
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 70)));
+      svc.injectTrackForTesting(extended());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, hasLength(1),
+          reason: 'A dispatched deferred crossing must never fire a second onAutoClaim call');
+    });
+
+    // Scenario 8: a session boundary discards a pending deferral.
+    test('cancelRun discards a pending deferred crossing; it never resurrects in a later session', () async {
+      svc.onRunUpdate = (_, __) async {};
+      final t0 = DateTime.now();
+      svc.injectSessionStartTime(t0);
+      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 20)));
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(svc.deferredCrossingCountForTesting, 1);
+
+      await svc.cancelRun();
+      expect(svc.deferredCrossingCountForTesting, 0,
+          reason: 'cancelRun must discard any pending deferred crossing');
+
+      svc.injectState(RecorderState.recording);
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty,
+          reason: 'A crossing deferred in a cancelled session must never claim in a later, unrelated session');
+    });
+
+    // Scenario 9: two independent crossings in one session are tracked and
+    // dispatched independently.
+    test('two independent crossings in one session are each retained and dispatched exactly once', () async {
+      final t0 = DateTime.now();
+      svc.injectSessionStartTime(t0);
+      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 20)));
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(svc.deferredCrossingCountForTesting, 1);
+
+      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 45)));
+      svc.injectTrackForTesting(_figure8PathExtended());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(svc.deferredCrossingCountForTesting, 2,
+          reason: 'A second, later, geometrically distinct crossing must be tracked '
+              'independently of the first');
+
+      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 70)));
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, hasLength(2),
+          reason: 'Both deferred crossings must eventually dispatch independently, each once');
+      expect(svc.deferredCrossingCountForTesting, 0);
+    });
+  });
+
+  // =========================================================================
+  // Group 11 (SPEC-0143 Part B + F1): crash/resume rescan path. F1 is
+  // safety-critical: _rescanRehydratedTrack currently checks only area and
+  // diagonal, so deferring from it as literally specified would let a thin
+  // sliver claim once 60s elapses. The design adds the compactness and
+  // path-length gates to this path before it is allowed to defer anything.
+  // =========================================================================
+
+  group('rehydration rescan path - retains instead of discarding, and never skips the safety gates', () {
+    late RunRecorderService svc;
+    late _AutoClaimCapture claimCapture;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      claimCapture = _AutoClaimCapture();
+      svc.onAutoClaim = claimCapture.call;
+    });
+
+    tearDown(() => svc.reset());
+
+    // Scenario 10.
+    test('a crossing clearing all four geometric gates but failing only elapsed is retained, not dropped', () async {
+      svc.injectTrackForTesting(_figure8Path());
+      svc.injectSessionStartTime(DateTime.now());
+      await svc.rescanRehydratedTrackForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty);
+      expect(svc.deferredCrossingCountForTesting, 1,
+          reason: 'The rescan path must retain a session-elapsed-only rejection instead of '
+              'the dead-end continue it uses today');
+    });
+
+    // F1 safety test: a long thin sliver clears area (1500 sqm+) and diagonal
+    // (30 m+) but fails compactness (0.15) - the rescan path must still
+    // reject it, exactly as the live path already does, even though the
+    // elapsed threshold has passed.
+    test('a thin sliver clearing only area and diagonal is still rejected by the rescan path', () async {
+      svc.injectTrackForTesting(_elongatedSliverPath());
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
+      await svc.rescanRehydratedTrackForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty,
+          reason: 'F1: the rescan path must apply the same compactness and path-length '
+              'floors as the live path - a sliver that only clears area and diagonal must '
+              'never claim via rehydration, even after the elapsed threshold has passed');
+    });
+  });
+
+  // =========================================================================
+  // Group 12: non-regression lock - the four geometric gates and their order
+  // are unaffected by this change. This test is expected to pass already
+  // (the compactness gate predates this spec); it documents the invariant so
+  // a future edit to the deferred-crossing plumbing cannot silently weaken it.
+  // =========================================================================
+
+  group('non-regression - an elongated sliver is still rejected by compactness on the live path', () {
+    test('an elongated sliver never reaches the session-elapsed gate', () async {
+      final svc = RunRecorderService.instanceForTesting();
+      final claimCapture = _AutoClaimCapture();
+      final rejectionCapture = _GateRejectionCapture();
+      svc.onAutoClaim = claimCapture.call;
+      svc.onGateRejected = rejectionCapture.call;
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
+      svc.injectState(RecorderState.recording);
+
+      svc.injectTrackForTesting(_elongatedSliverPath());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty);
+      expect(rejectionCapture.captured, hasLength(1));
+      expect(rejectionCapture.captured.first.reason, GateRejectionReason.compactness,
+          reason: 'The compactness floor must still reject a thin sliver before the '
+              'session-elapsed gate is ever reached, unaffected by this change');
+      svc.reset();
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -766,6 +1067,19 @@ List<LatLng> _detourThenLargeLoopPath() {
     const LatLng(34.700000, 33.000000 + dLng100 / 2),
   ];
 }
+
+// A long thin sliver, same A-B-C-D-E shape as _figure8Path but squashed on
+// the short axis by 100x: clears the area floor (1500 sqm) and the diagonal
+// floor (30 m) but fails compactness (0.15) badly. Used to prove the
+// rehydration rescan path (F1) applies the same compactness/path-length
+// floors the live path already enforces.
+List<LatLng> _elongatedSliverPath() => [
+      const LatLng(34.700000, 33.000000),
+      const LatLng(34.700000, 33.040000),
+      const LatLng(34.700200, 33.040000),
+      const LatLng(34.700200, 33.000000),
+      const LatLng(34.700000, 33.020000),
+    ];
 
 // Extended figure-8 path: appends a second crossing loop after the first one.
 // Used in multi-lasso tests.

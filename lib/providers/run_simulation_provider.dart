@@ -120,7 +120,13 @@ class RunSimulationNotifier extends StateNotifier<RunSimulationState> {
       svc.activeCity =
           (slugs != null && slugs.isNotEmpty) ? slugs.first : fixture.city;
 
-      final started = await svc.beginSimulation();
+      // The fixture's own first event time is the session-elapsed gate's
+      // reference point for this replay (SPEC-0143). An empty events list
+      // yields null and therefore today's wall-clock seed, which is
+      // harmless because no fix is ever emitted.
+      final fixtureStart = events.isEmpty ? null : events.first.t;
+      final started =
+          await svc.beginSimulation(simulatedSessionStart: fixtureStart);
       if (!started) {
         state = state.copyWith(
           status: SimulationStatus.aborted,
