@@ -72,3 +72,13 @@ const double kSimulationAccelerationMultiplier = 12.0;
 // operator is actively watching.
 const int kSimulationMinFixDelayMs = 120;
 const int kSimulationMaxFixDelayMs = 4000;
+
+// Maximum number of session-elapsed-deferred loop closures held at once.
+// SPEC-0143.
+const int kMaxDeferredCrossings = 8;
+
+// Upper bound (seconds) on a plausible session elapsed value. A computed
+// elapsed above this, or below zero, means the two sides of the subtraction
+// are not on the same timeline (a mis-seeded simulation start, or a skewed
+// device clock) and the value must not be trusted. SPEC-0143.
+const int kMaxPlausibleSessionElapsedSec = 86400; // 24 h

@@ -598,7 +598,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       GateRejectionReason.diagonalFloor => 'Loop too small - run a wider path',
       GateRejectionReason.compactness => 'Loop too thin - run a wider path',
       GateRejectionReason.pathLength => 'Loop too short - keep running',
-      GateRejectionReason.sessionElapsed => 'Keep running - claims unlock after 1 min',
+      GateRejectionReason.sessionElapsed => 'Loop captured - claims unlock 1 min into a run',
     };
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }

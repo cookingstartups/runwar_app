@@ -100,6 +100,25 @@ class RunRecorderService {
   // Persists across multiple auto-claims within the same session.
   DateTime? _sessionStartTime;
 
+  // Timestamp of the most recent fix admitted into the pipeline. For a real
+  // run this is the device fix time (same wall-clock domain as
+  // DateTime.now(), differing only by fix latency). For a simulation this is
+  // the fixture's own recorded time, already stamped on every synthetic
+  // Position by _applySimulationEvent. Null until the first fix of a
+  // session. SPEC-0143.
+  DateTime? _lastFixTimestamp;
+
+  // Crossings that cleared all four geometric gates and failed ONLY the
+  // session-elapsed gate. Retained for later dispatch. Session-scoped; never
+  // carried across sessions. Capped at kMaxDeferredCrossings, FIFO.
+  // SPEC-0143.
+  final List<_DeferredCrossing> _deferredCrossings = <_DeferredCrossing>[];
+
+  // Number of times the clock-domain guard rejected an implausible elapsed
+  // value and fell back to DateTime.now(). Session-scoped, reset with the
+  // session. A correct simulation must leave this at 0. SPEC-0143.
+  int _clockGuardTrips = 0;
+
   // Callback invoked when an auto-claim should fire. Set by the provider
   // during construction; the service does not import the provider layer.
   Future<void> Function(List<LatLng> capturedPolygon)? onAutoClaim;
@@ -201,6 +220,9 @@ class RunRecorderService {
     _closedAt = null;
     _loopStartTrailIndex = 0;
     _sessionStartTime = DateTime.now();
+    _lastFixTimestamp = null;
+    _deferredCrossings.clear();
+    _clockGuardTrips = 0;
     trackVersion.value++;
     // Mint a stable session identity for this run.
     _currentSessionId = _uuid.v4();
@@ -244,6 +266,15 @@ class RunRecorderService {
     // good accuracy value in _applySimulationEvent, so this gate never
     // blocks a simulated replay.
     if (pos.accuracy > _gpsAccuracyMaxM) return;
+    // Clock source for the session-elapsed gate. Captured after the
+    // validity guards above so a NaN/infinite/low-accuracy fix can never
+    // poison the session clock, and only when the stamp is itself
+    // plausible: an epoch-zero or negative stamp is a broken OS/platform
+    // value, and keeping the previous good stamp is strictly better than
+    // adopting it. SPEC-0143.
+    if (pos.timestamp.millisecondsSinceEpoch > 0) {
+      _lastFixTimestamp = pos.timestamp;
+    }
     final newLatLng = LatLng(pos.latitude, pos.longitude);
     // Always update presence so rival comets stay live regardless of spacing
     // filter - except during a simulation, where the position is synthetic
@@ -441,6 +472,9 @@ class RunRecorderService {
     }
     _loopStartTrailIndex = 0;
     _sessionStartTime = null;
+    _lastFixTimestamp = null;
+    _deferredCrossings.clear();
+    _clockGuardTrips = 0;
     stateNotifier.value = RecorderState.idle;
     if (!wasSimulation) {
       TelemetryService.instance.logEvent('stop_run').catchError((_) {});
@@ -498,6 +532,9 @@ class RunRecorderService {
     _clearTrackInternal();
     _loopStartTrailIndex = 0;
     _sessionStartTime = null;
+    _lastFixTimestamp = null;
+    _deferredCrossings.clear();
+    _clockGuardTrips = 0;
     stateNotifier.value = RecorderState.idle;
     if (!wasSimulation) {
       TelemetryService.instance.logEvent('cancel_run').catchError((_) {});
@@ -511,6 +548,7 @@ class RunRecorderService {
   /// Pre: state == recording; _track.length >= 1; _sessionStartTime != null.
   /// Post: at most one onAutoClaim future is dispatched per call.
   void _scanForAutoClaim() {
+    _drainDeferredCrossings();
     // detectSelfIntersection requires loopStartTrailIndex >= 1.
     // When _loopStartTrailIndex is 0 (initial state), clamp to 1 so the
     // first segment of the track is included in the scan.
@@ -607,18 +645,24 @@ class RunRecorderService {
     // binding constraint on effort: a loop clearing the area and path floors
     // above already implies well over a minute of movement.
     final start = _sessionStartTime;
-    if (start == null ||
-        DateTime.now().difference(start).inSeconds < _minSessionElapsedSec) {
-      // Leave _loopStartTrailIndex unchanged so this crossing re-evaluates
-      // on the next fix once the 60-second wall-clock threshold passes.
-      final elapsedSec =
-          start == null ? -1 : DateTime.now().difference(start).inSeconds;
+    final elapsedSec = start == null ? -1 : _elapsedSecForGate(start);
+    if (start == null || elapsedSec < _minSessionElapsedSec) {
+      // Do NOT advance _loopStartTrailIndex here, and do NOT discard this
+      // crossing. All four geometric gates above have already passed; the
+      // only thing missing is elapsed time. The polygon is retained in
+      // _deferredCrossings and re-dispatched by _drainDeferredCrossings() on
+      // a later fix once the threshold passes. That retention is what makes
+      // the crossing recoverable: detectSelfIntersection only ever tests
+      // the NEWEST segment against history (lasso.dart), so once the trail
+      // advances past this point the same segment pair is never evaluated
+      // again and the crossing could not re-fire on its own.
       ErrorLogService.logClientError(
         provider: '_scanForAutoClaim.session_elapsed_gate',
         error: 'rejected: elapsed=${elapsedSec}s floor=$_minSessionElapsedSec',
         stackTrace: StackTrace.current,
         retryCount: 0,
       );
+      _retainDeferredCrossing(polygon, k, hit.intersectingSegmentIdx, elapsedSec);
       onGateRejected?.call(GateRejectionReason.sessionElapsed, {'elapsed_sec': elapsedSec});
       return;
     }
@@ -626,6 +670,10 @@ class RunRecorderService {
     // Advance index BEFORE dispatching the claim so a fast second fix
     // does not re-fire the same crossing.
     _loopStartTrailIndex = _track.length;
+    // A live claim consumes trail span [0 .. _track.length-1], which
+    // contains every earlier deferred polygon's span. Claiming them
+    // afterward would double-claim overlapping ground.
+    _deferredCrossings.clear();
 
     final cb = onAutoClaim;
     if (cb != null) {
@@ -633,6 +681,100 @@ class RunRecorderService {
       // does not crash the GPS recording loop. The provider layer catches
       // errors and surfaces them via _autoClaimOutcomeController.
       cb(polygon).catchError((_) {});
+    }
+  }
+
+  /// Seconds elapsed since [start], measured on the clock domain of the fix
+  /// currently under evaluation. Returns the wall-clock value as a fallback
+  /// whenever the fix-derived value is not trustworthy.
+  ///
+  /// Both operands are normalised with toUtc() so a local-dated
+  /// _sessionStartTime (startRun, resumeFromScratch) and a UTC-dated fix
+  /// stamp are compared on one absolute timeline rather than by accident.
+  ///
+  /// The guard is the defence against the primary failure mode of this
+  /// change: if _sessionStartTime were left wall-clock-dated while the fix
+  /// stamp is fixture-dated, the subtraction would produce several DAYS and
+  /// the gate would pass unconditionally while appearing healthy. Falling
+  /// back to DateTime.now() in that case produces a near-zero elapsed and
+  /// therefore a REJECTION, so the failure is loud and conservative instead
+  /// of silent and permissive. SPEC-0143.
+  int _elapsedSecForGate(DateTime start) {
+    final fixTs = _lastFixTimestamp;
+    if (fixTs != null) {
+      final candidate = fixTs.toUtc().difference(start.toUtc()).inSeconds;
+      if (candidate >= 0 && candidate <= kMaxPlausibleSessionElapsedSec) {
+        return candidate;
+      }
+      _clockGuardTrips++;
+      ErrorLogService.logClientError(
+        provider: '_scanForAutoClaim.clock_domain_guard',
+        error: 'implausible elapsed=${candidate}s '
+            'fix=${fixTs.toIso8601String()} start=${start.toIso8601String()} '
+            'sim=$_simActive - falling back to wall clock',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+    }
+    return DateTime.now().toUtc().difference(start.toUtc()).inSeconds;
+  }
+
+  /// Retains a crossing that cleared all four geometric gates and failed
+  /// only the session-elapsed gate, so it can be dispatched later by
+  /// [_drainDeferredCrossings] once genuinely enough time has elapsed.
+  /// SPEC-0143.
+  void _retainDeferredCrossing(
+      List<LatLng> polygon, int k, int intersectingSegmentIdx, int elapsedSec) {
+    if (polygon.length < 3) return; // cannot be claimed; nothing to retain
+    final identity = '$intersectingSegmentIdx:$k';
+    for (final d in _deferredCrossings) {
+      if (d.identity == identity) return; // already pending, do not duplicate
+    }
+    if (_deferredCrossings.length >= kMaxDeferredCrossings) {
+      _deferredCrossings.removeAt(0); // FIFO: drop the oldest
+      ErrorLogService.logClientError(
+        provider: '_scanForAutoClaim.deferred_overflow',
+        error: 'deferred crossing buffer full at $kMaxDeferredCrossings, '
+            'oldest dropped',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+    }
+    _deferredCrossings.add(_DeferredCrossing(
+      polygon: List<LatLng>.unmodifiable(polygon),
+      detectedAtTrailIndex: k,
+      intersectingSegmentIdx: intersectingSegmentIdx,
+      detectedAtElapsedSec: elapsedSec,
+    ));
+  }
+
+  /// Dispatches every retained session-elapsed-only rejection whose
+  /// threshold has now passed. At most once per crossing. SPEC-0143.
+  void _drainDeferredCrossings() {
+    if (_deferredCrossings.isEmpty) return;
+    final start = _sessionStartTime;
+    if (start == null) {
+      _deferredCrossings.clear(); // no session: nothing may claim
+      return;
+    }
+    if (_elapsedSecForGate(start) < _minSessionElapsedSec) return;
+
+    // Detach BEFORE dispatching. onAutoClaim is provider code that can run
+    // synchronously up to its first await; if it re-entered _scanForAutoClaim
+    // it must not see these entries again.
+    final pending = List<_DeferredCrossing>.of(_deferredCrossings);
+    _deferredCrossings.clear();
+
+    for (final d in pending) {
+      if (d.dispatched) continue; // second guard, belt and braces
+      d.dispatched = true;
+      if (d.polygon.length < 3) continue;
+      // Consume the trail span this polygon covers, mirroring the live
+      // path's "advance before dispatch" rule. max() so a live claim that
+      // already advanced further is never rolled back.
+      _loopStartTrailIndex =
+          math.max(_loopStartTrailIndex, d.detectedAtTrailIndex + 1);
+      onAutoClaim?.call(d.polygon).catchError((_) {});
     }
   }
 
@@ -682,7 +824,13 @@ class RunRecorderService {
   /// must be able to tell the difference between "started" and "refused" so
   /// the UI layer can surface it rather than leaving the operator staring at
   /// a picker sheet that does nothing.
-  Future<bool> beginSimulation() async {
+  ///
+  /// [simulatedSessionStart], when provided, seeds the session-elapsed
+  /// gate's reference point from the FIXTURE's own timeline instead of wall
+  /// clock, so the gate and every synthetic fix's timestamp share one clock
+  /// domain. It is unreachable from any real-run path: startRun() is a
+  /// separate method and never calls beginSimulation(). SPEC-0143.
+  Future<bool> beginSimulation({DateTime? simulatedSessionStart}) async {
     final alreadyRecording = stateNotifier.value == RecorderState.recording;
     if (alreadyRecording || _simActive) {
       ErrorLogService.logClientError(
@@ -700,8 +848,18 @@ class RunRecorderService {
     _simActive = true;
     _clearTrackInternal();
     _loopStartTrailIndex = 0;
-    _sessionStartTime = DateTime.now();
+    _sessionStartTime = simulatedSessionStart ?? DateTime.now();
+    // _startedAt stays wall-clock-dated even when _sessionStartTime becomes
+    // fixture-dated. _startedAt feeds runs.started_at, stopRun's
+    // ended_at/finalized_at and the foreground notification elapsed
+    // counter. A runs row dated days in the past (from a fixture's own
+    // timeline) would misrepresent when the replay actually ran and could
+    // fall outside server-side time windows. Deliberate divergence -
+    // SPEC-0143 design.md section 1. Do not "fix" this.
     _startedAt = DateTime.now().toUtc();
+    _lastFixTimestamp = null;
+    _deferredCrossings.clear();
+    _clockGuardTrips = 0;
     trackVersion.value++;
     _currentSessionId = _uuid.v4();
     // Clear any leftover scratch from a previous simulation under the same
@@ -872,6 +1030,9 @@ class RunRecorderService {
       // Wall-clock session start reconstructed from earliest sample so the
       // 60-second gate behaves correctly across kill+resume.
       _sessionStartTime = earliest?.toLocal() ?? DateTime.now();
+      _lastFixTimestamp = null;
+      _deferredCrossings.clear();
+      _clockGuardTrips = 0;
       trackVersion.value++;
 
       // Restore durable session_id or mint a fresh one for legacy null rows.
@@ -960,13 +1121,37 @@ class RunRecorderService {
         _loopStartTrailIndex = len;
         continue;
       }
+      // F1 (SPEC-0143 design.md): the rescan path must apply the same
+      // compactness and path-length floors the live path already enforces,
+      // so a "deferred" crossing provably means "cleared all four gates" on
+      // every path, not just the live one. Without these two, a thin sliver
+      // or a short-path loop could claim once 60 s elapsed via rehydration
+      // even though the live path has always refused it.
+      final compactness = diagonalM > 0 ? areaSqm / (diagonalM * diagonalM) : 0.0;
+      if (compactness < kMinCapturedAreaCompactness) {
+        _loopStartTrailIndex = len;
+        continue;
+      }
+      final loopPathM = trackDistanceM(polygon);
+      if (loopPathM < kMinCapturedPathLengthM) {
+        _loopStartTrailIndex = len;
+        continue;
+      }
       // 60-second gate at the timestamp of partial.last (approximate via
-      // _sessionStartTime, which was set above from the earliest scratch ts).
+      // _sessionStartTime, which was set above from the earliest scratch
+      // ts). This path stays wall-clock (finding F2 in design.md): scratch
+      // ts values are real device wall-clock stamps on the same absolute
+      // timeline as DateTime.now(), so there is no mixed-domain comparison
+      // here to repair.
       final start = _sessionStartTime;
       if (start == null ||
           DateTime.now().difference(start).inSeconds < _minSessionElapsedSec) {
-        // Edge: scratch was rehydrated very fast after start. Skip - the
-        // crossing will re-fire from live GPS once 60 s elapses.
+        // All four geometric gates passed and only elapsed time is missing.
+        // Retain the polygon so it dispatches from _drainDeferredCrossings
+        // on the first live fix after the threshold passes. Do NOT advance
+        // _loopStartTrailIndex: the trail history is still needed, and the
+        // polygon is already captured.
+        _retainDeferredCrossing(polygon, len - 1, hit.intersectingSegmentIdx, -1);
         continue;
       }
       _loopStartTrailIndex = len;
@@ -994,6 +1179,9 @@ class RunRecorderService {
     _startedAt = null;
     _closedAt = null;
     _sessionStartTime = null;
+    _lastFixTimestamp = null;
+    _deferredCrossings.clear();
+    _clockGuardTrips = 0;
     trackVersion.value++;
   }
 
@@ -1033,6 +1221,24 @@ class RunRecorderService {
   @visibleForTesting
   int get trackLengthForTesting => _track.length;
 
+  // RED-phase test seams for SPEC-0143 (design.md section 5.6). Each seam
+  // exposes state or a code path the fix will populate; none of them run
+  // any new gate/retry/drain logic themselves.
+  @visibleForTesting
+  void injectLastFixTimestamp(DateTime? t) => _lastFixTimestamp = t;
+
+  @visibleForTesting
+  DateTime? get sessionStartTimeForTesting => _sessionStartTime;
+
+  @visibleForTesting
+  int get deferredCrossingCountForTesting => _deferredCrossings.length;
+
+  @visibleForTesting
+  int get clockGuardTripsForTesting => _clockGuardTrips;
+
+  @visibleForTesting
+  Future<void> rescanRehydratedTrackForTesting() => _rescanRehydratedTrack();
+
   @visibleForTesting
   void reset() {
     _loopStartTrailIndex = 0;
@@ -1048,7 +1254,30 @@ class RunRecorderService {
     onGateRejected = null;
     onGpsFix = null;
     onRunUpdate = null;
+    _lastFixTimestamp = null;
+    _deferredCrossings.clear();
+    _clockGuardTrips = 0;
   }
+}
+
+/// RED-phase data-only placeholder for SPEC-0143's deferred-crossing value
+/// type (design.md section 2.2). Holds a snapshot only; no code path
+/// constructs or consumes an instance until the fix lands.
+class _DeferredCrossing {
+  _DeferredCrossing({
+    required this.polygon,
+    required this.detectedAtTrailIndex,
+    required this.intersectingSegmentIdx,
+    required this.detectedAtElapsedSec,
+  });
+
+  final List<LatLng> polygon;
+  final int detectedAtTrailIndex;
+  final int intersectingSegmentIdx;
+  final int detectedAtElapsedSec;
+  bool dispatched = false;
+
+  String get identity => '$intersectingSegmentIdx:$detectedAtTrailIndex';
 }
 
 /// Equirectangular distance in metres between two LatLng points.

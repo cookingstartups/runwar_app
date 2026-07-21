@@ -7,6 +7,8 @@
 // the stop/finalize and abort/cancel paths, and that a closing loop still
 // drives the same auto-claim callback a real run uses.
 
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -75,6 +77,27 @@ List<SimulationFixEvent> _straightLineFixture({required bool fixtureIsMocked}) {
       data: const {},
     ),
   ];
+}
+
+// Same A-B-C-D-E crossing shape as auto_claim_test.dart's _figure8Path
+// (already proven to clear all four geometric gates), fed as SimulationFixEvents
+// with fixture timestamps at [offsets] seconds past [base]. Used by SPEC-0143
+// scenarios 3 and 4 to prove the session-elapsed gate reads the fixture's own
+// timeline instead of real wall-clock replay time.
+List<SimulationFixEvent> _figure8SimFixture({
+  required DateTime base,
+  required List<int> offsets,
+}) {
+  const lats = [34.700, 34.700, 34.720, 34.720, 34.700];
+  const lngs = [33.000, 33.020, 33.020, 33.000, 33.010];
+  return List<SimulationFixEvent>.generate(
+    offsets.length,
+    (i) => SimulationFixEvent(
+      t: base.add(Duration(seconds: offsets[i])),
+      type: 'gps_fix',
+      data: {'lat': lats[i], 'lng': lngs[i], 'speed_ms': 2.0},
+    ),
+  );
 }
 
 void main() {
@@ -297,6 +320,132 @@ void main() {
       expect(svc.isSimulationActive, isTrue);
 
       await svc.abortSimulation();
+    });
+  });
+
+  // =========================================================================
+  // SPEC-0143 Part A: the session-elapsed gate reads the fixture's own
+  // timeline during a simulation, not real wall-clock replay time. Scenarios
+  // 3 and 4 below (and the mis-seed mirror-image) all call
+  // beginSimulation(simulatedSessionStart: ...), which does not exist yet -
+  // every test in this group fails to compile ("no named parameter") until
+  // beginSimulation's signature change lands. That is expected: the two are
+  // compile-coupled by design (design.md section 4).
+  // =========================================================================
+
+  group('simulated clock - the session-elapsed gate reads fixture time, not wall-clock replay time', () {
+    late RunRecorderService svc;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      svc.setActiveUser('tester-1');
+      svc.onRunUpdate = (_, __) async {};
+    });
+
+    tearDown(() => svc.reset());
+
+    // Scenario 3.
+    test('a loop closing after 60s of fixture time claims, even though real wall-clock replay '
+        'time is well under a second', () async {
+      final base = DateTime.parse('2026-07-18T16:00:00.000Z');
+      final events = _figure8SimFixture(base: base, offsets: [5, 10, 15, 20, 65]);
+      var claims = 0;
+      final started = await svc.beginSimulation(simulatedSessionStart: base);
+      expect(started, isTrue);
+      svc.onAutoClaim = (_) async => claims++;
+
+      await svc.runSimulationSequence(events, multiplier: 200.0);
+
+      expect(claims, 1,
+          reason: 'The gate must read the fixture timeline (65s elapsed) rather than real '
+              'wall-clock replay time, which stays under a second at this multiplier');
+    });
+
+    // Scenario 4. The numeric elapsed_sec assertion is mandatory, not
+    // optional: a guard-tripped wall-clock fallback could also land near 0s
+    // and reject, which would make this test pass for the wrong reason.
+    test('a loop closing before 60s of fixture time is rejected, with elapsed_sec exactly '
+        'matching the fixture clock', () async {
+      final base = DateTime.parse('2026-07-18T16:00:00.000Z');
+      final events = _figure8SimFixture(base: base, offsets: [5, 10, 15, 20, 30]);
+      final rejections = <Map<String, dynamic>>[];
+      var claims = 0;
+      await svc.beginSimulation(simulatedSessionStart: base);
+      svc.onAutoClaim = (_) async => claims++;
+      svc.onGateRejected = (reason, details) async {
+        if (reason == GateRejectionReason.sessionElapsed) rejections.add(details);
+      };
+
+      await svc.runSimulationSequence(events, multiplier: 200.0);
+
+      expect(claims, 0);
+      expect(rejections, hasLength(1));
+      expect(rejections.first['elapsed_sec'], 30,
+          reason: 'elapsed_sec must equal exactly the fixture-clock delta (30s), proving the '
+              'gate read the fixture timeline and not a guard-tripped wall-clock fallback');
+      expect(svc.clockGuardTripsForTesting, 0,
+          reason: 'A correctly-seeded simulation must never trip the clock-domain guard');
+    });
+
+    // Mirror-image regression test for the primary failure mode itself: a
+    // caller that forgets to pass simulatedSessionStart must not silently
+    // claim from a mixed-domain elapsed computation.
+    test('omitting simulatedSessionStart while fixture-dated fixes arrive trips the clock-domain guard', () async {
+      final base = DateTime.parse('2026-07-18T16:00:00.000Z');
+      final events = _figure8SimFixture(base: base, offsets: [5, 10, 15, 20, 65]);
+      var claims = 0;
+      await svc.beginSimulation();
+      svc.onAutoClaim = (_) async => claims++;
+
+      await svc.runSimulationSequence(events, multiplier: 200.0);
+
+      expect(claims, 0,
+          reason: 'A mis-seeded session (fixture-dated fixes, wall-clock-dated start) must '
+              'never claim through the mixed-domain elapsed value');
+      expect(svc.clockGuardTripsForTesting, greaterThan(0),
+          reason: 'The guard must trip when the fix stamp and session start are on different '
+              'timelines, which is exactly the primary failure mode this design defends against');
+    });
+
+    // Deliberate divergence lock: _startedAt must stay wall-clock-dated even
+    // when _sessionStartTime becomes fixture-dated, so nobody "fixes" this
+    // later and misdates runs.started_at days into the past.
+    test('_startedAt stays wall-clock-dated even when the simulated session start is fixture-dated', () async {
+      final fixtureStart = DateTime.now().subtract(const Duration(days: 3));
+      final before = DateTime.now();
+      await svc.beginSimulation(simulatedSessionStart: fixtureStart);
+      final after = DateTime.now();
+
+      expect(svc.sessionStartTimeForTesting, fixtureStart,
+          reason: '_sessionStartTime must be seeded from the fixture reference');
+      expect(
+        svc.startedAt!.isAfter(before.subtract(const Duration(seconds: 5))) &&
+            svc.startedAt!.isBefore(after.add(const Duration(seconds: 5))),
+        isTrue,
+        reason: '_startedAt must stay wall-clock-dated (near real now), never adopting the '
+              'fixture-dated _sessionStartTime - the two fields deliberately diverge during a replay',
+      );
+
+      await svc.abortSimulation();
+    });
+  });
+
+  // =========================================================================
+  // SPEC-0143 Part C: comment correctness. Source-inspection lock, following
+  // this repo's established house pattern for AC verification that maps
+  // directly to source structure (flutter-test-patterns.md section on
+  // routing-guard tests).
+  // =========================================================================
+
+  group('session-elapsed gate comment correctness', () {
+    test('the stale "re-evaluates on the next fix" claim is gone from the gate comment', () {
+      final src = File('lib/services/run_recorder_service.dart').readAsStringSync();
+      expect(src, isNot(contains('re-evaluates on the next fix')),
+          reason: 'The old comment claimed the crossing re-evaluates on the next fix, which is '
+              'factually false - detectSelfIntersection only ever tests the newest segment, so '
+              'once the trail advances past this point the same segment pair is never evaluated '
+              'again on its own; the comment must describe the actual deferred-retention '
+              'mechanism instead');
     });
   });
 }
