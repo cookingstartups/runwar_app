@@ -448,4 +448,59 @@ void main() {
               'mechanism instead');
     });
   });
+
+  // ===========================================================================
+  // SPEC-0144 item 7: pin the recorder-service contract map_screen.dart's
+  // camera-follow logic depends on - isSimulationActive/trackSnapshot must
+  // stay reliable across the full simulation lifecycle. No new service
+  // behavior is introduced; this only locks the existing contract.
+  // ===========================================================================
+
+  group('SPEC-0144: isSimulationActive and trackSnapshot stay reliable across the simulation lifecycle', () {
+    late RunRecorderService svc;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      svc.setActiveUser('tester-1');
+      svc.onRunUpdate = (_, __) async {};
+    });
+
+    tearDown(() => svc.reset());
+
+    test('trackSnapshot is non-empty and growing while isSimulationActive is true during an active replay', () async {
+      await svc.beginSimulation();
+      expect(svc.isSimulationActive, isTrue);
+      expect(svc.trackSnapshot, isEmpty,
+          reason: 'no simulated fix has been injected yet');
+
+      svc.injectSimulatedFix(_posAt(34.700, 33.000));
+      expect(svc.isSimulationActive, isTrue);
+      expect(svc.trackSnapshot, hasLength(1));
+
+      svc.injectSimulatedFix(_posAt(34.701, 33.001));
+      expect(svc.isSimulationActive, isTrue);
+      expect(svc.trackSnapshot, hasLength(2),
+          reason: 'trackSnapshot must grow with each simulated fix while a simulation is active - '
+              'this is the exact contract map_screen.dart\'s camera-follow logic relies on');
+
+      await svc.abortSimulation();
+    });
+
+    test('isSimulationActive is false immediately after abortSimulation completes, with the discard documented not accidental', () async {
+      await svc.beginSimulation();
+      svc.injectSimulatedFix(_posAt(34.700, 33.000));
+      svc.injectSimulatedFix(_posAt(34.701, 33.001));
+      expect(svc.trackSnapshot, hasLength(2));
+
+      await svc.abortSimulation();
+
+      expect(svc.isSimulationActive, isFalse,
+          reason: 'the UI layer camera-follow logic must see isSimulationActive flip to false '
+              'synchronously once abortSimulation() completes');
+      expect(svc.trackSnapshot, isEmpty,
+          reason: 'abortSimulation() deliberately discards the in-progress synthetic track '
+              '(run_recorder_service.dart abortSimulation doc comment) - the camera-follow logic '
+              'must not assume a non-empty trackSnapshot survives an abort');
+    });
+  });
 }

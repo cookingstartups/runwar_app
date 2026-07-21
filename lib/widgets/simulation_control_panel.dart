@@ -207,10 +207,14 @@ class SimulationActiveBanner extends ConsumerWidget {
             children: [
               const Icon(Icons.science_outlined, color: kBg, size: 16),
               const SizedBox(width: 8),
-              Text(
-                'SIMULATION - ${simState.fixtureLabel ?? ''} '
-                '(${simState.emittedCount}/${simState.totalCount})',
-                style: monoStyle(size: 11, color: kBg),
+              Flexible(
+                child: Text(
+                  'SIMULATION - ${simState.fixtureLabel ?? ''} '
+                  '(${simState.emittedCount}/${simState.totalCount})',
+                  style: monoStyle(size: 11, color: kBg),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
               ),
               const SizedBox(width: 10),
               GestureDetector(
