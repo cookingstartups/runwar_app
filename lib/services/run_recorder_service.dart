@@ -83,6 +83,22 @@ class RunRecorderService {
   /// the real device GPS stream.
   bool get isSimulationActive => _simActive;
 
+  // Monotonically increasing counter bumped on every beginSimulation() call,
+  // regardless of how the PREVIOUS simulation ended (stopRun, cancelRun,
+  // abortSimulation, or not ended at all before a new one starts). A
+  // listener that caches the last value it saw can detect "a new simulation
+  // has begun" unconditionally, without depending on any particular end path
+  // having fired a matching signal first. See SPEC-0144 map_screen.dart
+  // _lastSimulationGeneration for the consumer.
+  int _simulationGeneration = 0;
+
+  /// Generation counter for simulated replays. Bumped on every
+  /// [beginSimulation] call. Callers that need to detect "a new simulation
+  /// has started" should compare this against a cached value rather than
+  /// relying on [isSimulationActive] edges, which can be missed when a
+  /// simulation ends via [stopRun] (no [trackVersion] bump on end).
+  int get simulationGeneration => _simulationGeneration;
+
   @visibleForTesting
   bool get hasRealGpsSubscriptionForTesting => _posSub != null;
 
@@ -846,6 +862,7 @@ class RunRecorderService {
     assert(_posSub == null,
         'real GPS subscription must be closed before a simulation starts');
     _simActive = true;
+    _simulationGeneration++;
     _clearTrackInternal();
     _loopStartTrailIndex = 0;
     _sessionStartTime = simulatedSessionStart ?? DateTime.now();
@@ -1245,6 +1262,7 @@ class RunRecorderService {
     _sessionStartTime = null;
     _currentSessionId = null;
     _simActive = false;
+    _simulationGeneration = 0;
     _simTimer?.cancel();
     _simTimer = null;
     _track.clear();

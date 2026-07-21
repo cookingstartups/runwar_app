@@ -59,4 +59,162 @@ void main() {
           reason: 'The logged error must reference the reason string returned by the server/local evaluator');
     });
   });
+
+  // ===========================================================================
+  // SPEC-0144 Part A: camera and own-player markers follow the simulated
+  // position, not real GPS, while a simulation is active. Source-inspection
+  // per flutter-test-patterns.md (MapScreen carries a FlutterMap).
+  // ===========================================================================
+
+  group('SPEC-0144 AC-1: simulation-aware own-position derivation exists', () {
+    test('an ownPos derivation reads isSimulationActive before choosing a position source', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final idx = src.indexOf('ownPos');
+      expect(idx, greaterThanOrEqualTo(0),
+          reason: 'a simulation-aware own-position value (design.md names it ownPos) must exist '
+              'alongside the existing _currentPosition-only real-GPS logic');
+      final window = src.substring(idx, (idx + 400).clamp(0, src.length));
+      expect(window, contains('isSimulationActive'),
+          reason: 'the ownPos derivation must branch on RunRecorderService.instance.isSimulationActive');
+    });
+  });
+
+  group('SPEC-0144 AC-2: simulated position comes from trackSnapshot, not _currentPosition', () {
+    test('the simulation-active branch of the ownPos derivation reads trackSnapshot and never _currentPosition', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final idx = src.indexOf('ownPos');
+      expect(idx, greaterThanOrEqualTo(0));
+      final qIdx = src.indexOf('?', idx);
+      expect(qIdx, greaterThanOrEqualTo(0));
+      final openIdx = src.indexOf('(', qIdx);
+      expect(openIdx, greaterThanOrEqualTo(0));
+      final branch = _extractBalanced(src, openIdx);
+      expect(branch, anyOf(contains('trackSnapshot'), contains('simSnap')),
+          reason: 'the true branch (simulation active) must derive from RunRecorderService.trackSnapshot');
+      expect(branch, isNot(contains('_currentPosition')),
+          reason: 'the simulation-active branch must never read the real-GPS _currentPosition field');
+    });
+  });
+
+  group('SPEC-0144 AC-3: the Locate button is simulation-aware', () {
+    test('_buildFab branches the Locate onPressed handler on isSimulationActive', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final idx = src.indexOf('Widget _buildFab(');
+      expect(idx, greaterThanOrEqualTo(0));
+      final body = src.substring(idx, (idx + 1400).clamp(0, src.length));
+      expect(body, contains('isSimulationActive'),
+          reason: '_buildFab must locally branch on RunRecorderService.instance.isSimulationActive '
+              'to pick the simulated vs. real-GPS position for the Locate button');
+      expect(body, contains('ownPos'),
+          reason: '_buildFab must derive and use the shared ownPos value, not read _currentPosition directly '
+              'for the disabled/onPressed condition');
+    });
+  });
+
+  group('SPEC-0144 AC-4: manual-pan-suspend flag exists and gates continuous follow', () {
+    test('_simAutoFollowSuspended is set on a non-mapController map event and checked before a follow move', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      expect(src, contains('_simAutoFollowSuspended'),
+          reason: 'a local manual-pan-suspend flag must exist (design.md names it _simAutoFollowSuspended)');
+      expect(src, contains('MapEventSource.mapController'),
+          reason: 'the pan-detection handler must filter out our own programmatic move() calls, which the '
+              'flutter_map package always tags with MapEventSource.mapController - this is the primary '
+              'false-positive failure mode the design explicitly guards against');
+      final handlerIdx = src.indexOf('MapEventSource.mapController');
+      final followIdx = src.indexOf('_simAutoFollowSuspended', handlerIdx);
+      expect(followIdx, greaterThanOrEqualTo(0),
+          reason: '_simAutoFollowSuspended must be referenced after the mapController-source guard, not before it');
+    });
+  });
+
+  group('SPEC-0144 AC-5: real-run camera/marker behavior is unchanged, and the new listener wiring is correctly ordered', () {
+    test('the real-GPS _initLocation block stays intact and ref.listen on trackVersion is the first statement of build()', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      expect(src, contains('Geolocator.getPositionStream('),
+          reason: 'the real-GPS stream subscription must remain untouched (requirements.md Part B non-goal)');
+      expect(src, contains('_centeredOnGps = true;'),
+          reason: 'the real-GPS one-shot auto-center gate must remain untouched');
+      final listenIdx = src.indexOf('ref.listen<int>(runRecorderTrackVersionProvider');
+      expect(listenIdx, greaterThanOrEqualTo(0),
+          reason: 'build() must register a ref.listen on runRecorderTrackVersionProvider to drive camera-follow ticks');
+      final buildIdx = src.indexOf('Widget build(BuildContext context) {');
+      final loadingIdx = src.indexOf('slugsAsync.isLoading', buildIdx);
+      expect(listenIdx, greaterThan(buildIdx));
+      expect(listenIdx, lessThan(loadingIdx),
+          reason: 'ref.listen must be the first statement in build(), before the loading early return, so it '
+              'fires on every build call (design.md section 3.1 risk register entry 1)');
+    });
+  });
+
+  group('SPEC-0144 AC-6: simulation end triggers no direct camera-move call site', () {
+    test('_onSimTrackTick exists and makes no _mapController.move call directly gated on the active-to-inactive transition', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final idx = src.indexOf('_onSimTrackTick(');
+      expect(idx, greaterThanOrEqualTo(0),
+          reason: 'the tick handler driving camera-follow (design.md section 3.2) must exist');
+      final body = src.substring(idx, (idx + 900).clamp(0, src.length));
+      final falseGuardIdx = body.indexOf('!simActive');
+      expect(falseGuardIdx, greaterThanOrEqualTo(0),
+          reason: '_onSimTrackTick must guard on the inactive case before doing anything else');
+      final nextMoveIdx = body.indexOf('_mapController.move(', falseGuardIdx);
+      final nextReturnIdx = body.indexOf('return', falseGuardIdx);
+      expect(nextReturnIdx, greaterThanOrEqualTo(0));
+      expect(nextMoveIdx == -1 || nextMoveIdx > nextReturnIdx + 40, isTrue,
+          reason: 'ending a simulation must not itself trigger a camera move - hand-back is implicit '
+              'via the untouched real-GPS listener (design.md section 3.6)');
+    });
+  });
+
+  // ===========================================================================
+  // P0 review finding: _onSimTrackTick's camera-flag reset is keyed on a
+  // boolean isSimulationActive-vs-_wasSimulationActive edge, which only
+  // fires when a trackVersion tick lands on the exact call that crosses the
+  // edge. stopRun() ends a simulation without bumping trackVersion (pinned
+  // in run_replay_simulation_test.dart), so a stop-then-restart cycle inside
+  // the same mounted MapScreen can miss the reset entirely and leave
+  // _simSnapDone/_simAutoFollowSuspended stuck true for the next simulation.
+  // The reset must instead key off an identity/generation signal that
+  // changes on every beginSimulation call, not a missable boolean edge.
+  // ===========================================================================
+
+  group('P0: the camera-flag reset does not rely solely on a missable boolean simulation edge', () {
+    test('_onSimTrackTick reads a generation signal, not only isSimulationActive != _wasSimulationActive', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final idx = src.indexOf('_onSimTrackTick(');
+      expect(idx, greaterThanOrEqualTo(0));
+      final body = src.substring(idx, (idx + 900).clamp(0, src.length));
+
+      expect(body, contains('simulationGeneration'),
+          reason: '_onSimTrackTick must read RunRecorderService.instance.simulationGeneration to '
+              'detect a fresh simulation, because a boolean isSimulationActive edge can be missed '
+              'when the ending call (stopRun) does not bump trackVersion');
+      expect(body, isNot(contains('simActive != _wasSimulationActive')),
+          reason: 'the reset must no longer be gated solely on a boolean active-state transition - '
+              'that comparison silently no-ops whenever the falling edge is missed, which is exactly '
+              'the stopRun-then-restart bug this test locks against');
+    });
+
+    test('a cached last-seen generation field exists alongside _wasSimulationActive', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      expect(src, contains('_lastSimulationGeneration'),
+          reason: 'the widget must cache the last generation it saw so it can diff against the '
+              'current RunRecorderService.instance.simulationGeneration on every tick, independent '
+              'of whether a trackVersion tick happened to land on the exact stop/start boundary');
+    });
+  });
+}
+
+/// Extracts the balanced-parenthesis substring starting at [openIdx], which
+/// must index a '(' character. Used to isolate one ternary branch of the
+/// ownPos ?: expression without over-fitting to exact formatting.
+String _extractBalanced(String src, int openIdx) {
+  var depth = 0;
+  for (var i = openIdx; i < src.length; i++) {
+    if (src[i] == '(') depth++;
+    if (src[i] == ')') {
+      depth--;
+      if (depth == 0) return src.substring(openIdx, i + 1);
+    }
+  }
+  throw StateError('unbalanced parens starting at $openIdx');
 }

@@ -448,4 +448,139 @@ void main() {
               'mechanism instead');
     });
   });
+
+  // ===========================================================================
+  // SPEC-0144 item 7: pin the recorder-service contract map_screen.dart's
+  // camera-follow logic depends on - isSimulationActive/trackSnapshot must
+  // stay reliable across the full simulation lifecycle. No new service
+  // behavior is introduced; this only locks the existing contract.
+  // ===========================================================================
+
+  group('SPEC-0144: isSimulationActive and trackSnapshot stay reliable across the simulation lifecycle', () {
+    late RunRecorderService svc;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      svc.setActiveUser('tester-1');
+      svc.onRunUpdate = (_, __) async {};
+    });
+
+    tearDown(() => svc.reset());
+
+    test('trackSnapshot is non-empty and growing while isSimulationActive is true during an active replay', () async {
+      await svc.beginSimulation();
+      expect(svc.isSimulationActive, isTrue);
+      expect(svc.trackSnapshot, isEmpty,
+          reason: 'no simulated fix has been injected yet');
+
+      svc.injectSimulatedFix(_posAt(34.700, 33.000));
+      expect(svc.isSimulationActive, isTrue);
+      expect(svc.trackSnapshot, hasLength(1));
+
+      svc.injectSimulatedFix(_posAt(34.701, 33.001));
+      expect(svc.isSimulationActive, isTrue);
+      expect(svc.trackSnapshot, hasLength(2),
+          reason: 'trackSnapshot must grow with each simulated fix while a simulation is active - '
+              'this is the exact contract map_screen.dart\'s camera-follow logic relies on');
+
+      await svc.abortSimulation();
+    });
+
+    test('isSimulationActive is false immediately after abortSimulation completes, with the discard documented not accidental', () async {
+      await svc.beginSimulation();
+      svc.injectSimulatedFix(_posAt(34.700, 33.000));
+      svc.injectSimulatedFix(_posAt(34.701, 33.001));
+      expect(svc.trackSnapshot, hasLength(2));
+
+      await svc.abortSimulation();
+
+      expect(svc.isSimulationActive, isFalse,
+          reason: 'the UI layer camera-follow logic must see isSimulationActive flip to false '
+              'synchronously once abortSimulation() completes');
+      expect(svc.trackSnapshot, isEmpty,
+          reason: 'abortSimulation() deliberately discards the in-progress synthetic track '
+              '(run_recorder_service.dart abortSimulation doc comment) - the camera-follow logic '
+              'must not assume a non-empty trackSnapshot survives an abort');
+    });
+  });
+
+  // ===========================================================================
+  // P0 review finding: stopRun() ends a simulation without bumping
+  // trackVersion (unlike abortSimulation/cancelRun, which route through
+  // _clearTrackInternal). A camera-follow edge detector keyed only on a
+  // trackVersion tick can silently miss the stop-path transition. The fix
+  // under design is a monotonically increasing simulationGeneration counter
+  // on RunRecorderService, incremented on every beginSimulation() call, so a
+  // caller can detect "this is a new simulation" from an identity value
+  // instead of a boolean edge. These tests pin the asymmetry and the
+  // intended replacement signal; simulationGeneration does not exist yet.
+  // ===========================================================================
+
+  group('simulation end signal reliability - stopRun vs abortSimulation trackVersion asymmetry', () {
+    late RunRecorderService svc;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      svc.setActiveUser('tester-1');
+      svc.onRunUpdate = (_, __) async {};
+    });
+
+    tearDown(() => svc.reset());
+
+    test('stopRun ends the simulation but does not bump trackVersion', () async {
+      await svc.beginSimulation();
+      svc.injectSimulatedFix(_posAt(34.700, 33.000));
+      final versionBeforeStop = svc.trackVersion.value;
+
+      await svc.stopRun();
+
+      expect(svc.isSimulationActive, isFalse,
+          reason: 'stopRun must end the simulation exactly like the real-run stop path');
+      expect(svc.trackVersion.value, versionBeforeStop,
+          reason: 'stopRun does not route through _clearTrackInternal, so trackVersion stays '
+              'unchanged - this is the asymmetry that makes a trackVersion-only edge detector '
+              'unreliable for the camera-follow reset');
+    });
+
+    test('abortSimulation ends the simulation and does bump trackVersion, unlike stopRun', () async {
+      await svc.beginSimulation();
+      svc.injectSimulatedFix(_posAt(34.700, 33.000));
+      final versionBeforeAbort = svc.trackVersion.value;
+
+      await svc.abortSimulation();
+
+      expect(svc.isSimulationActive, isFalse);
+      expect(svc.trackVersion.value, greaterThan(versionBeforeAbort),
+          reason: 'abortSimulation routes through cancelRun -> _clearTrackInternal, which bumps '
+              'trackVersion - the asymmetry with stopRun above is exactly why trackVersion cannot '
+              'be trusted as the sole simulation-lifecycle edge signal');
+    });
+
+    test('a fresh simulationGeneration value is exposed and changes on every beginSimulation call, '
+        'surviving a stopRun-then-restart cycle where trackVersion alone would miss the edge', () async {
+      final genAtStart = svc.simulationGeneration;
+
+      await svc.beginSimulation();
+      final genAfterFirstBegin = svc.simulationGeneration;
+      expect(genAfterFirstBegin, isNot(genAtStart),
+          reason: 'beginSimulation must mint a fresh generation value distinguishable from idle');
+
+      svc.injectSimulatedFix(_posAt(34.700, 33.000));
+      await svc.stopRun();
+      expect(svc.simulationGeneration, genAfterFirstBegin,
+          reason: 'stopRun does not itself mint a new generation - the value only changes on the '
+              'next beginSimulation, which is the signal a caller must diff against');
+
+      await svc.beginSimulation();
+      final genAfterSecondBegin = svc.simulationGeneration;
+
+      expect(genAfterSecondBegin, isNot(genAfterFirstBegin),
+          reason: 'a second simulation started after a stopRun-ended first simulation must expose '
+              'a distinct generation value, even though trackVersion was never bumped by stopRun in '
+              'between - this is the robust signal the camera-follow reset must key off instead of '
+              'a boolean isSimulationActive transition');
+
+      await svc.abortSimulation();
+    });
+  });
 }

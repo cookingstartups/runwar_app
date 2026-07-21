@@ -100,6 +100,21 @@ class _MapScreenState extends ConsumerState<MapScreen>
   StreamSubscription<Position>? _posSub;
   Position? _currentPosition;
   bool _centeredOnGps = false;
+  // Simulation-aware camera-follow state (SPEC-0144). Mirrors the shape of
+  // _centeredOnGps but scoped to the simulated position source; reset on every
+  // new simulation (detected via RunRecorderService.simulationGeneration),
+  // never persisted.
+  bool _simSnapDone = false;
+  bool _simAutoFollowSuspended = false;
+  // Last simulation generation this screen has reset its camera flags for.
+  // Compared against RunRecorderService.instance.simulationGeneration on
+  // every tick instead of diffing isSimulationActive, because a simulation
+  // that ends via stopRun() (a normal user_stop_pressed fixture event) never
+  // flips isSimulationActive on a trackVersion tick and would otherwise leave
+  // a missed falling edge: the boolean edge check alone cannot tell "this is
+  // a second simulation" from "this is the same simulation still running"
+  // once _MapScreenState stays mounted across replays.
+  int _lastSimulationGeneration = 0;
   // Revoked-after-priming late guard: true when PermissionService's live
   // recheck (in _initLocation) shows location is no longer granted.
   bool _locationRevoked = false;
@@ -204,6 +219,57 @@ class _MapScreenState extends ConsumerState<MapScreen>
     });
   }
 
+  /// Drives the camera during an active simulation. Wired via ref.listen on
+  /// runRecorderTrackVersionProvider (SPEC-0144 section 3.2). One-shot
+  /// snap-to-start on the first simulated fix, then continuous follow at the
+  /// current zoom while the operator has not manually panned/zoomed.
+  void _onSimTrackTick() {
+    if (!mounted) return;
+    final simActive = RunRecorderService.instance.isSimulationActive;
+    final currentGeneration = RunRecorderService.instance.simulationGeneration;
+    if (currentGeneration != _lastSimulationGeneration) {
+      // A new simulation has begun since this screen last reset, regardless
+      // of how the previous one ended. Re-arm for it.
+      _simAutoFollowSuspended = false;
+      _simSnapDone = false;
+      _lastSimulationGeneration = currentGeneration;
+    }
+    if (!simActive) return; // real-run ticks are a no-op past this line
+    final snap = RunRecorderService.instance.trackSnapshot;
+    if (snap.isEmpty) return; // no fix yet; nothing to snap to
+    final last = snap.last;
+    if (!_simSnapDone) {
+      _simSnapDone = true;
+      _mapController.move(last, _kInitialZoom); // one-shot snap-to-start
+    } else if (!_simAutoFollowSuspended) {
+      _mapController.move(last, _mapController.camera.zoom); // continuous follow
+    }
+  }
+
+  /// Detects a manual pan/zoom gesture during an active simulation and
+  /// suspends auto-follow. Filters out our own programmatic move() calls,
+  /// which flutter_map always tags with MapEventSource.mapController - the
+  /// package invariant this guard relies on (design.md SPEC-0144 section 2).
+  void _handleMapEvent(MapEvent event) {
+    if (!RunRecorderService.instance.isSimulationActive) return;
+    if (event.source == MapEventSource.mapController) return; // our own move() call, not a gesture
+    _simAutoFollowSuspended = true;
+  }
+
+  /// Shared own-position derivation (SPEC-0144 section 3.4): the simulated
+  /// track's last point while a simulation is active, otherwise real GPS.
+  /// Used by widgets outside a Consumer(runRecorderTrackVersionProvider) so
+  /// as not to duplicate the own-position ternary inline at every call site.
+  LatLng? _simOrRealOwnPosition() {
+    final isSimulationActive = RunRecorderService.instance.isSimulationActive;
+    final simSnap = isSimulationActive ? RunRecorderService.instance.trackSnapshot : const <LatLng>[];
+    return isSimulationActive
+        ? (simSnap.isEmpty ? null : simSnap.last)
+        : (_currentPosition == null
+            ? null
+            : LatLng(_currentPosition!.latitude, _currentPosition!.longitude));
+  }
+
   @override
   void dispose() {
     _autoClaimSub?.cancel();
@@ -272,6 +338,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Drives simulation camera-follow ticks. Must be the first statement in
+    // build(), before any early return, so it registers on every build call
+    // (design.md SPEC-0144 section 3.1 risk register entry 1).
+    ref.listen<int>(runRecorderTrackVersionProvider, (prev, next) => _onSimTrackTick());
+
     final auth = ref.watch(authProvider);
     final userId = (auth.user?['id'] as String?) ?? '';
 
@@ -389,7 +460,16 @@ class _MapScreenState extends ConsumerState<MapScreen>
   Widget _buildFab(BuildContext context, String city) {
     final recState = ref.watch(runRecorderProvider);
     final isRecording = recState == RecorderState.recording;
-    final hasGps = _currentPosition != null;
+    // Simulation-aware own-position derivation, shared with the Locate
+    // button and the own-player markers (design.md SPEC-0144 section 3.4).
+    final isSimulationActive = RunRecorderService.instance.isSimulationActive;
+    final simSnap = isSimulationActive ? RunRecorderService.instance.trackSnapshot : const <LatLng>[];
+    final LatLng? ownPos = isSimulationActive
+        ? (simSnap.isEmpty ? null : simSnap.last)
+        : (_currentPosition == null
+            ? null
+            : LatLng(_currentPosition!.latitude, _currentPosition!.longitude));
+    final hasGps = ownPos != null;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -398,13 +478,12 @@ class _MapScreenState extends ConsumerState<MapScreen>
           heroTag: 'locate',
           backgroundColor: kSurface,
           foregroundColor: hasGps ? kFg : kFgMuted,
-          onPressed: hasGps
-              ? () => _mapController.move(
-                    LatLng(_currentPosition!.latitude,
-                        _currentPosition!.longitude),
-                    _kInitialZoom,
-                  )
-              : null,
+          onPressed: ownPos == null
+              ? null
+              : () {
+                  if (isSimulationActive) _simAutoFollowSuspended = false; // re-arm
+                  _mapController.move(ownPos, _kInitialZoom);
+                },
           child: const Icon(Icons.my_location, size: 20),
         ),
         const SizedBox(height: 12),
@@ -885,6 +964,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
     final visibleZones = fogCenters.isEmpty
         ? zones
         : zones.where((z) => _isRevealedByFog(_centroid(z.points), fogCenters)).toList();
+    // Computed once per build instead of once per marker (null guard and
+    // point: previously each called _simOrRealOwnPosition() separately).
+    final LatLng? gpsDotOwnPosition = _simOrRealOwnPosition();
     return Stack(
       children: [
         FlutterMap(
@@ -900,6 +982,8 @@ class _MapScreenState extends ConsumerState<MapScreen>
             // map-level tap → ray-cast hit-test.
             onTap: (TapPosition tapPos, LatLng latLng) =>
                 _handleMapTap(context, latLng, visibleZones, userId),
+            // Manual-pan detection during a simulation (SPEC-0144 section 2).
+            onMapEvent: _handleMapEvent,
           ),
           children: [
             TileLayer(
@@ -1002,12 +1086,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
               final recState = watchRef.watch(runRecorderProvider);
               watchRef.watch(runRecorderTrackVersionProvider);
               if (recState != RecorderState.recording) return const SizedBox.shrink();
-              if (_currentPosition == null) return const SizedBox.shrink();
+              final LatLng? ownPos = _simOrRealOwnPosition();
+              if (ownPos == null) return const SizedBox.shrink();
               final snap = RunRecorderService.instance.trackSnapshot;
               final tail = snap.length <= 6
                   ? List<LatLng>.from(snap)
                   : snap.sublist(snap.length - 6);
-              final pos = LatLng(_currentPosition!.latitude, _currentPosition!.longitude);
+              final pos = ownPos;
               final positions = tail.isEmpty || tail.last == pos
                   ? tail.isEmpty ? [pos] : tail
                   : [...tail, pos];
@@ -1028,14 +1113,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
                 ),
               ]);
             }),
-            // GPS dot — beam-pulse aesthetic matching intro slides.
-            if (_currentPosition != null)
+            // GPS dot - beam-pulse aesthetic matching intro slides.
+            if (gpsDotOwnPosition != null)
               MarkerLayer(markers: [
                 Marker(
-                  point: LatLng(
-                    _currentPosition!.latitude,
-                    _currentPosition!.longitude,
-                  ),
+                  point: gpsDotOwnPosition,
                   width: 60,
                   height: 60,
                   child: Center(
