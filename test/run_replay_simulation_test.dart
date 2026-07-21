@@ -503,4 +503,84 @@ void main() {
               'must not assume a non-empty trackSnapshot survives an abort');
     });
   });
+
+  // ===========================================================================
+  // P0 review finding: stopRun() ends a simulation without bumping
+  // trackVersion (unlike abortSimulation/cancelRun, which route through
+  // _clearTrackInternal). A camera-follow edge detector keyed only on a
+  // trackVersion tick can silently miss the stop-path transition. The fix
+  // under design is a monotonically increasing simulationGeneration counter
+  // on RunRecorderService, incremented on every beginSimulation() call, so a
+  // caller can detect "this is a new simulation" from an identity value
+  // instead of a boolean edge. These tests pin the asymmetry and the
+  // intended replacement signal; simulationGeneration does not exist yet.
+  // ===========================================================================
+
+  group('simulation end signal reliability - stopRun vs abortSimulation trackVersion asymmetry', () {
+    late RunRecorderService svc;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      svc.setActiveUser('tester-1');
+      svc.onRunUpdate = (_, __) async {};
+    });
+
+    tearDown(() => svc.reset());
+
+    test('stopRun ends the simulation but does not bump trackVersion', () async {
+      await svc.beginSimulation();
+      svc.injectSimulatedFix(_posAt(34.700, 33.000));
+      final versionBeforeStop = svc.trackVersion.value;
+
+      await svc.stopRun();
+
+      expect(svc.isSimulationActive, isFalse,
+          reason: 'stopRun must end the simulation exactly like the real-run stop path');
+      expect(svc.trackVersion.value, versionBeforeStop,
+          reason: 'stopRun does not route through _clearTrackInternal, so trackVersion stays '
+              'unchanged - this is the asymmetry that makes a trackVersion-only edge detector '
+              'unreliable for the camera-follow reset');
+    });
+
+    test('abortSimulation ends the simulation and does bump trackVersion, unlike stopRun', () async {
+      await svc.beginSimulation();
+      svc.injectSimulatedFix(_posAt(34.700, 33.000));
+      final versionBeforeAbort = svc.trackVersion.value;
+
+      await svc.abortSimulation();
+
+      expect(svc.isSimulationActive, isFalse);
+      expect(svc.trackVersion.value, greaterThan(versionBeforeAbort),
+          reason: 'abortSimulation routes through cancelRun -> _clearTrackInternal, which bumps '
+              'trackVersion - the asymmetry with stopRun above is exactly why trackVersion cannot '
+              'be trusted as the sole simulation-lifecycle edge signal');
+    });
+
+    test('a fresh simulationGeneration value is exposed and changes on every beginSimulation call, '
+        'surviving a stopRun-then-restart cycle where trackVersion alone would miss the edge', () async {
+      final genAtStart = svc.simulationGeneration;
+
+      await svc.beginSimulation();
+      final genAfterFirstBegin = svc.simulationGeneration;
+      expect(genAfterFirstBegin, isNot(genAtStart),
+          reason: 'beginSimulation must mint a fresh generation value distinguishable from idle');
+
+      svc.injectSimulatedFix(_posAt(34.700, 33.000));
+      await svc.stopRun();
+      expect(svc.simulationGeneration, genAfterFirstBegin,
+          reason: 'stopRun does not itself mint a new generation - the value only changes on the '
+              'next beginSimulation, which is the signal a caller must diff against');
+
+      await svc.beginSimulation();
+      final genAfterSecondBegin = svc.simulationGeneration;
+
+      expect(genAfterSecondBegin, isNot(genAfterFirstBegin),
+          reason: 'a second simulation started after a stopRun-ended first simulation must expose '
+              'a distinct generation value, even though trackVersion was never bumped by stopRun in '
+              'between - this is the robust signal the camera-follow reset must key off instead of '
+              'a boolean isSimulationActive transition');
+
+      await svc.abortSimulation();
+    });
+  });
 }

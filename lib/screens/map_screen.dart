@@ -102,10 +102,19 @@ class _MapScreenState extends ConsumerState<MapScreen>
   bool _centeredOnGps = false;
   // Simulation-aware camera-follow state (SPEC-0144). Mirrors the shape of
   // _centeredOnGps but scoped to the simulated position source; reset on every
-  // isSimulationActive lifecycle transition (either direction), never persisted.
+  // new simulation (detected via RunRecorderService.simulationGeneration),
+  // never persisted.
   bool _simSnapDone = false;
   bool _simAutoFollowSuspended = false;
-  bool _wasSimulationActive = false;
+  // Last simulation generation this screen has reset its camera flags for.
+  // Compared against RunRecorderService.instance.simulationGeneration on
+  // every tick instead of diffing isSimulationActive, because a simulation
+  // that ends via stopRun() (a normal user_stop_pressed fixture event) never
+  // flips isSimulationActive on a trackVersion tick and would otherwise leave
+  // a missed falling edge: the boolean edge check alone cannot tell "this is
+  // a second simulation" from "this is the same simulation still running"
+  // once _MapScreenState stays mounted across replays.
+  int _lastSimulationGeneration = 0;
   // Revoked-after-priming late guard: true when PermissionService's live
   // recheck (in _initLocation) shows location is no longer granted.
   bool _locationRevoked = false;
@@ -217,11 +226,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
   void _onSimTrackTick() {
     if (!mounted) return;
     final simActive = RunRecorderService.instance.isSimulationActive;
-    if (simActive != _wasSimulationActive) {
-      // Lifecycle transition in either direction: re-arm for the next simulation.
+    final currentGeneration = RunRecorderService.instance.simulationGeneration;
+    if (currentGeneration != _lastSimulationGeneration) {
+      // A new simulation has begun since this screen last reset, regardless
+      // of how the previous one ended. Re-arm for it.
       _simAutoFollowSuspended = false;
       _simSnapDone = false;
-      _wasSimulationActive = simActive;
+      _lastSimulationGeneration = currentGeneration;
     }
     if (!simActive) return; // real-run ticks are a no-op past this line
     final snap = RunRecorderService.instance.trackSnapshot;
@@ -953,6 +964,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
     final visibleZones = fogCenters.isEmpty
         ? zones
         : zones.where((z) => _isRevealedByFog(_centroid(z.points), fogCenters)).toList();
+    // Computed once per build instead of once per marker (null guard and
+    // point: previously each called _simOrRealOwnPosition() separately).
+    final LatLng? gpsDotOwnPosition = _simOrRealOwnPosition();
     return Stack(
       children: [
         FlutterMap(
@@ -1072,13 +1086,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
               final recState = watchRef.watch(runRecorderProvider);
               watchRef.watch(runRecorderTrackVersionProvider);
               if (recState != RecorderState.recording) return const SizedBox.shrink();
-              final isSimulationActive = RunRecorderService.instance.isSimulationActive;
-              final simSnap = isSimulationActive ? RunRecorderService.instance.trackSnapshot : const <LatLng>[];
-              final LatLng? ownPos = isSimulationActive
-                  ? (simSnap.isEmpty ? null : simSnap.last)
-                  : (_currentPosition == null
-                      ? null
-                      : LatLng(_currentPosition!.latitude, _currentPosition!.longitude));
+              final LatLng? ownPos = _simOrRealOwnPosition();
               if (ownPos == null) return const SizedBox.shrink();
               final snap = RunRecorderService.instance.trackSnapshot;
               final tail = snap.length <= 6
@@ -1105,11 +1113,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
                 ),
               ]);
             }),
-            // GPS dot — beam-pulse aesthetic matching intro slides.
-            if (_simOrRealOwnPosition() != null)
+            // GPS dot - beam-pulse aesthetic matching intro slides.
+            if (gpsDotOwnPosition != null)
               MarkerLayer(markers: [
                 Marker(
-                  point: _simOrRealOwnPosition()!,
+                  point: gpsDotOwnPosition,
                   width: 60,
                   height: 60,
                   child: Center(

@@ -164,6 +164,44 @@ void main() {
               'via the untouched real-GPS listener (design.md section 3.6)');
     });
   });
+
+  // ===========================================================================
+  // P0 review finding: _onSimTrackTick's camera-flag reset is keyed on a
+  // boolean isSimulationActive-vs-_wasSimulationActive edge, which only
+  // fires when a trackVersion tick lands on the exact call that crosses the
+  // edge. stopRun() ends a simulation without bumping trackVersion (pinned
+  // in run_replay_simulation_test.dart), so a stop-then-restart cycle inside
+  // the same mounted MapScreen can miss the reset entirely and leave
+  // _simSnapDone/_simAutoFollowSuspended stuck true for the next simulation.
+  // The reset must instead key off an identity/generation signal that
+  // changes on every beginSimulation call, not a missable boolean edge.
+  // ===========================================================================
+
+  group('P0: the camera-flag reset does not rely solely on a missable boolean simulation edge', () {
+    test('_onSimTrackTick reads a generation signal, not only isSimulationActive != _wasSimulationActive', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final idx = src.indexOf('_onSimTrackTick(');
+      expect(idx, greaterThanOrEqualTo(0));
+      final body = src.substring(idx, (idx + 900).clamp(0, src.length));
+
+      expect(body, contains('simulationGeneration'),
+          reason: '_onSimTrackTick must read RunRecorderService.instance.simulationGeneration to '
+              'detect a fresh simulation, because a boolean isSimulationActive edge can be missed '
+              'when the ending call (stopRun) does not bump trackVersion');
+      expect(body, isNot(contains('simActive != _wasSimulationActive')),
+          reason: 'the reset must no longer be gated solely on a boolean active-state transition - '
+              'that comparison silently no-ops whenever the falling edge is missed, which is exactly '
+              'the stopRun-then-restart bug this test locks against');
+    });
+
+    test('a cached last-seen generation field exists alongside _wasSimulationActive', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      expect(src, contains('_lastSimulationGeneration'),
+          reason: 'the widget must cache the last generation it saw so it can diff against the '
+              'current RunRecorderService.instance.simulationGeneration on every tick, independent '
+              'of whether a trackVersion tick happened to land on the exact stop/start boundary');
+    });
+  });
 }
 
 /// Extracts the balanced-parenthesis substring starting at [openIdx], which
