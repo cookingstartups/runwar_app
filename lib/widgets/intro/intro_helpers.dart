@@ -705,4 +705,12 @@ abstract final class IntroContinuity {
   /// guaranteed to match rather than merely visually approximate.
   static const double kFortifyEndFillAlpha = 0.66; // ARMOR 3 fill
   static const double kFortifyEndBorderWidth = 5.0; // ARMOR 3 border (gold)
+
+  /// Map screen's one-shot claim capture flash (not an intro-slide
+  /// constant - shared here per this file's existing role as the single
+  /// source of truth for animation magic numbers). Peak fill alpha reuses
+  /// [kBlock1EndFillAlpha] directly rather than a duplicate constant.
+  static const Duration kCaptureFlashDuration = Duration(milliseconds: 600);
+  static const double kCaptureFlashRingMaxRadius = 50.0; // px, screen space
+  static const double kCaptureFlashRingPeakAlpha = 0.6; // ring stroke alpha
 }
