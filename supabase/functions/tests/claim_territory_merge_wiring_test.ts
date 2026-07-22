@@ -13,14 +13,18 @@
 // asserted on the actual RPC call it records, not on source text.
 //
 // What remains genuinely wiring-only is the merge-candidate SELECT's query
-// scope (the DB query filters/ordering) and the disputed-outcome guard: both
+// scope (the DB query filters/ordering), the disputed-outcome guard, and the
+// response contract (the JSON keys the client actually receives): all three
 // live in handleClaimTerritoryRequest itself, above and outside
 // runSplitAndMerge's injection boundary, so they cannot be exercised without
-// a live Supabase instance. Those checks stay as source inspection, but
-// anchored to a specific structural landmark (the query's own distinctive
-// column list, or the exact guard conditional) rather than a positional
-// offset - and they fail loudly if the landmark itself is missing, instead
-// of silently sliding to the wrong window.
+// a live Supabase instance - the response contract in particular cannot be
+// checked by asserting on SplitMergeSuccess's camelCase fields, since those
+// are not the JSON keys sent to the client. Those checks stay as source
+// inspection, but anchored to a specific structural landmark (the query's
+// own distinctive column list, the exact guard conditional, or the response
+// branches themselves) rather than a positional offset - and they fail
+// loudly if the landmark itself is missing, instead of silently sliding to
+// the wrong window.
 //
 // Run: npx deno test supabase/functions/tests/claim_territory_merge_wiring_test.ts
 
@@ -75,6 +79,21 @@ function mergeGuardBlock(src: string): string {
   return src.slice(start, end);
 }
 
+// The three response-building branches (conquered/disputed/claimed) run
+// from the conquered branch through to the outer try's catch clause - both
+// exact, unique strings. This is the wire contract the client depends on:
+// merged/absorbed_zone_ids/zone_geom_json are not exercised by
+// runSplitAndMerge's own SplitMergeSuccess type (camelCase fields), only by
+// how handleClaimTerritoryRequest maps that result onto the JSON response,
+// so an executing test on runSplitAndMerge alone would never catch a
+// renamed or dropped response key.
+function responseBranchesBlock(src: string): string {
+  const start = findAnchor(src, 'if (conqueredId) {', 'conquered-response branch');
+  const end = findAnchor(src, '} catch (e) {', 'end of the request handler\'s try block');
+  assert(end > start, 'the catch clause appears before the response branches - source order changed, re-derive this anchor pair');
+  return src.slice(start, end);
+}
+
 Deno.test('R2-AC1 invariant: the merge candidate query scopes to owner_id AND city', () => {
   const block = mergeCandidateQueryBlock(readSrc());
   assert(block.includes("eq('owner_id'"),
@@ -93,6 +112,19 @@ Deno.test('R2 edge case: merge never runs for a disputed outcome', () => {
   const block = mergeGuardBlock(readSrc());
   assert(block.includes('runSplitAndMerge('),
     'The merge/split orchestration call must be nested inside the `if (!disputedId)` guard so it never runs when this claim resolved to disputed');
+});
+
+Deno.test('R2 response contract: claimed/conquered responses expose merged, absorbed_zone_ids, zone_geom_json', () => {
+  const block = responseBranchesBlock(readSrc());
+  const absorbedCount = block.split('absorbed_zone_ids:').length - 1;
+  const geomCount = block.split('zone_geom_json:').length - 1;
+  const mergedCount = (block.split('merged,').length - 1) + (block.split('merged: false,').length - 1);
+  assertEquals(absorbedCount, 3,
+    `absorbed_zone_ids must be present in all three response branches (conquered, disputed, claimed) - found ${absorbedCount}`);
+  assertEquals(geomCount, 3,
+    `zone_geom_json must be present in all three response branches (conquered, disputed, claimed) - found ${geomCount}`);
+  assertEquals(mergedCount, 3,
+    `merged must be present in all three response branches, as shorthand \`merged,\` (conquered/claimed) or explicit \`merged: false,\` (disputed) - found ${mergedCount}`);
 });
 
 // ---------------------------------------------------------------------------
