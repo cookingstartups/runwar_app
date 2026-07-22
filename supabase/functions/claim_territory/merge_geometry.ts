@@ -248,7 +248,7 @@ export function computeZoneMerges(zones: ZoneInput[], thresholdM: number): Merge
 // zone (AC-7). Pure, no I/O: takes the existing zone's stored ring and the
 // re-run's own newly-captured ring, classifies the relationship, and (for a
 // genuine partial overlap) computes the remainder geometry via Turf
-// `difference`, subject to a sliver-tolerance floor. The caller (index.ts)
+// `difference`, subject to a sliver-tolerance floor. The caller (handler.ts)
 // owns row selection and the apply_zone_split RPC write; this function never
 // touches the database.
 // ---------------------------------------------------------------------------
@@ -319,7 +319,7 @@ export function computeZoneSplit(
 // Pure, no I/O: given a zone's prior last_active_at, the current time, the
 // cooldown window and the zone's current influence_level, decides whether
 // the cooldown is still active and what the zone's next level should be
-// (clamped at 15). The caller (index.ts) owns reading last_active_at before
+// (clamped at 15). The caller (handler.ts) owns reading last_active_at before
 // it is overwritten and writing the outcome back via the merge/level-up RPC.
 // ---------------------------------------------------------------------------
 

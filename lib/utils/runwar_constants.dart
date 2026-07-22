@@ -76,9 +76,11 @@ const int kSimulationMaxFixDelayMs = 4000;
 // Minimum area (sqm) a split-off remainder fragment must clear when a
 // re-run retraces part of a same-level-fused zone's own edge (see
 // computeZoneSplit in supabase/functions/claim_territory/merge_geometry.ts).
-// A dedicated constant, not a reuse of kProximityTriggerM/the 25 m merge
-// threshold - area and distance are different quantities. One quarter of
-// the 1500 sqm fresh-claim floor. Must stay numerically equal to the
+// This gate is enforced server-side only, in claim_territory/handler.ts -
+// the split decision needs the existing zone's stored geometry, which the
+// client does not hold. This client-side copy exists purely as a documented
+// numeric-parity reference (and a future display value), not a live gate;
+// it performs no check on its own. Must stay numerically equal to the
 // server-side kMinSplitFragmentAreaSqm in claim_territory/handler.ts.
 const double kMinSplitFragmentAreaSqm = 375.0;
 

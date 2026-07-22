@@ -1184,12 +1184,22 @@ class RunRecorderService {
     for (int len = 2; len <= _track.length; len++) {
       final partial = _track.sublist(0, len);
       final scanStart = math.max(1, _loopStartTrailIndex);
-      final hit = detectSelfIntersection(partial, scanStart);
+      final ownedZoneEdges = ownedZoneEdgesProvider?.call() ?? const [];
+      final hit = detectSelfIntersection(
+        partial,
+        scanStart,
+        ownedZoneEdges: ownedZoneEdges,
+      );
       if (hit == null) continue;
+      // Mirrors _scanForAutoClaim's anchor choice: an owned-zone-wall hit has
+      // no earlier trail segment to anchor to (intersectingSegmentIdx is the
+      // -1 sentinel), so the raw loop-start index is used instead.
+      final captureAnchorIdx =
+          hit.isOwnedZoneWall ? _loopStartTrailIndex : hit.intersectingSegmentIdx;
       final polygon = computeCapture(
         partial,
         scanStart,
-        hit.intersectingSegmentIdx,
+        captureAnchorIdx,
         hit.intersectionPoint,
         len - 1,
       );
