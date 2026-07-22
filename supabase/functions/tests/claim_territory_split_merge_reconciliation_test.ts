@@ -1,7 +1,7 @@
 // supabase/functions/tests/claim_territory_split_merge_reconciliation_test.ts
 //
 // Real execution coverage for runSplitAndMerge (the split-then-merge
-// orchestration extracted from claim_territory/index.ts's request handler).
+// orchestration extracted from claim_territory/handler.ts's request handler).
 // Unlike the source-inspection wiring tests, this file drives the ACTUAL
 // exported function against an injected fake database client and asserts
 // on its real return value and the real calls the fake recorded - it would
@@ -21,7 +21,7 @@ import {
   runSplitAndMerge,
   type SplitMergeDbClient,
   type SplitMergeSuccess,
-} from '../claim_territory/index.ts';
+} from '../claim_territory/handler.ts';
 import { computeLevelUpOutcome, computeZoneMerges, computeZoneSplit } from '../claim_territory/merge_geometry.ts';
 import type { ZoneInput } from '../claim_territory/merge_geometry.ts';
 

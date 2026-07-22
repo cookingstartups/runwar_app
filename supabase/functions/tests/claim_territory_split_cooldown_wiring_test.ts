@@ -1,15 +1,19 @@
 // supabase/functions/tests/claim_territory_split_cooldown_wiring_test.ts
 //
-// RED phase - source-inspection checks against index.ts's call-site wiring
-// for the level-gated merge (AC-5, AC-13), the repeat-run cooldown (AC-8),
-// the reversible split on re-run (AC-7), and the no-retroactive-fuse
+// RED phase - source-inspection checks against handler.ts's call-site
+// wiring for the level-gated merge (AC-5, AC-13), the repeat-run cooldown
+// (AC-8), the reversible split on re-run (AC-7), and the no-retroactive-fuse
 // invariant (AC-9). These target orchestration/DB-write logic embedded in
-// index.ts's request handler - the row selection, the RPC call shape, the
+// handler.ts's request handler - the row selection, the RPC call shape, the
 // unconditional last_active_at write - which genuinely cannot be exercised
 // without a live Supabase instance (mocking the client here would exceed
 // the project's >5-mocks-escalate rule for a handler touching select /
 // update / rpc calls across three or more tables), so source inspection is
 // kept for those specific pieces only.
+//
+// The request handler and the split-then-merge orchestration it drives both
+// live in claim_territory/handler.ts; index.ts is only the thin
+// Deno.serve() entrypoint, so this file reads handler.ts.
 //
 // The decision MATH behind the split and the cooldown gate (does this
 // count as a partial overlap or a full containment, is the remainder above
@@ -23,7 +27,7 @@
 
 import { assert } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 
-const SRC_PATH = new URL('../claim_territory/index.ts', import.meta.url);
+const SRC_PATH = new URL('../claim_territory/handler.ts', import.meta.url);
 
 function readSrc(): string {
   return Deno.readTextFileSync(SRC_PATH);
@@ -36,7 +40,7 @@ function readSrc(): string {
 Deno.test('the merge candidate ZoneInput carries influenceLevel through to computeZoneMerges', () => {
   const src = readSrc();
   assert(src.includes('influenceLevel:'),
-    'index.ts must pass influenceLevel into each constructed ZoneInput so the level-equality '
+    'handler.ts must pass influenceLevel into each constructed ZoneInput so the level-equality '
       + 'gate inside computeZoneMerges has data to gate on');
 });
 
@@ -77,7 +81,7 @@ Deno.test(
 Deno.test('a level-up cooldown constant, backed by a Deno env var, is defined', () => {
   const src = readSrc();
   assert(src.includes('kLevelUpCooldownMs'),
-    'index.ts must define a kLevelUpCooldownMs constant for the repeat-run damping gate (AC-8)');
+    'handler.ts must define a kLevelUpCooldownMs constant for the repeat-run damping gate (AC-8)');
   assert(src.includes("Deno.env.get('LEVEL_UP_COOLDOWN_MS')"),
     'The cooldown constant must be backed by a Deno environment variable, not a client-supplied '
       + 'flag (a request-controlled cooldown value would be a trivial exploit)');
@@ -103,7 +107,7 @@ Deno.test('last_active_at still refreshes unconditionally regardless of cooldown
 Deno.test('a dedicated sliver-tolerance constant for split remainders is defined, distinct from the merge threshold', () => {
   const src = readSrc();
   assert(src.includes('kMinSplitFragmentAreaSqm'),
-    'index.ts must define kMinSplitFragmentAreaSqm (AC-7) as its own constant, not a reuse of the '
+    'handler.ts must define kMinSplitFragmentAreaSqm (AC-7) as its own constant, not a reuse of the '
       + '25m merge/proximity threshold - area and distance are different quantities');
 });
 

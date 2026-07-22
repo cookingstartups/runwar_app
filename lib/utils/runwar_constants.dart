@@ -79,7 +79,7 @@ const int kSimulationMaxFixDelayMs = 4000;
 // A dedicated constant, not a reuse of kProximityTriggerM/the 25 m merge
 // threshold - area and distance are different quantities. One quarter of
 // the 1500 sqm fresh-claim floor. Must stay numerically equal to the
-// server-side kMinSplitFragmentAreaSqm in claim_territory/index.ts.
+// server-side kMinSplitFragmentAreaSqm in claim_territory/handler.ts.
 const double kMinSplitFragmentAreaSqm = 375.0;
 
 // Maximum number of session-elapsed-deferred loop closures held at once.

@@ -167,7 +167,7 @@ class RunRecorderService {
   // discarded (no claim dispatched, onGateRejected fires with areaFloor).
   //
   // Must stay numerically equal to the server-side floor in
-  // supabase/functions/claim_territory/index.ts (minCapturedAreaSqm) - the
+  // supabase/functions/claim_territory/handler.ts (minCapturedAreaSqm) - the
   // two are enforced independently (client gates before dispatch, server
   // gates again on receipt) and a mismatch lets a claim pass one side and
   // fail the other. If this value changes, change the server value too.

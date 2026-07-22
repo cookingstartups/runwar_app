@@ -2,19 +2,23 @@
 //
 // RED phase - R2-AC1 invariant (never merge across owners/cities), R2's
 // disputed-exclusion edge case, and Q2's oldest-survivor ordering. These are
-// source-inspection checks against index.ts's call-site wiring (query scope,
-// guard conditions) rather than the pure geometry algorithm covered by
-// claim_territory_merge_test.ts - the DB query filters themselves are only
-// meaningfully verifiable by reading the actual Supabase query construction,
-// not by a mocked client (which would just echo back whatever the test
-// asserts). This mirrors the Dart source-inspection precedent in
+// source-inspection checks against handler.ts's call-site wiring (query
+// scope, guard conditions) rather than the pure geometry algorithm covered
+// by claim_territory_merge_test.ts - the DB query filters themselves are
+// only meaningfully verifiable by reading the actual Supabase query
+// construction, not by a mocked client (which would just echo back whatever
+// the test asserts). This mirrors the Dart source-inspection precedent in
 // test/connectivity_gate_outbox_test.dart.
+//
+// The request handler and the split-then-merge orchestration it drives both
+// live in claim_territory/handler.ts; index.ts is only the thin
+// Deno.serve() entrypoint, so this file reads handler.ts.
 //
 // Run: npx deno test supabase/functions/tests/claim_territory_merge_wiring_test.ts
 
 import { assert } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 
-const SRC_PATH = new URL('../claim_territory/index.ts', import.meta.url);
+const SRC_PATH = new URL('../claim_territory/handler.ts', import.meta.url);
 
 function readSrc(): string {
   return Deno.readTextFileSync(SRC_PATH);
@@ -77,13 +81,14 @@ Deno.test('Unification takes the MAX influence_level across the merged group (ne
 
 Deno.test('Unification applies the survivor UPDATE and absorbed DELETEs atomically via the apply_zone_merge RPC, not step-wise table writes', () => {
   const src = readSrc();
-  // The merge application block now lives inside runSplitAndMerge, an
-  // exported top-level function extracted so the split-then-merge
-  // orchestration can be driven by a real executable test against an
-  // injected fake database client (see split-then-merge reconciliation
-  // fix). It is the last thing defined in the file, so the block's end is
-  // just the end of the file rather than the next 'if (conqueredId)' -
-  // that landmark now lives earlier, inside the request handler.
+  // The merge application block lives inside runSplitAndMerge, an exported
+  // top-level function extracted so the split-then-merge orchestration can
+  // be driven by a real executable test against an injected fake database
+  // client (see split-then-merge reconciliation fix). It is the last thing
+  // defined in handler.ts, so the block's end is just the end of the file
+  // rather than the next 'if (conqueredId)' - that landmark lives earlier,
+  // inside the request handler, which is defined above runSplitAndMerge in
+  // the same file.
   const groupBlockStart = src.indexOf('if (group) {');
   assert(groupBlockStart >= 0, 'The merge application block (if (group) {...}) must exist');
   const groupBlock = src.slice(groupBlockStart);
