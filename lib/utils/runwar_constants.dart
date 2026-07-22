@@ -93,3 +93,23 @@ const int kMaxDeferredCrossings = 8;
 // are not on the same timeline (a mis-seeded simulation start, or a skewed
 // device clock) and the value must not be trusted. SPEC-0143.
 const int kMaxPlausibleSessionElapsedSec = 86400; // 24 h
+
+// Feature flag controlling enforcement of the three SHAPE gates on a
+// captured auto-claim polygon: bounding-box diagonal (kMinCapturedAreaDiagonalM
+// above), compactness (kMinCapturedAreaCompactness above), and loop path
+// length (kMinCapturedPathLengthM above). Read by RunRecorderService
+// (_scanForAutoClaim and the crash-resume rescan path in
+// _rescanRehydratedTrack). Default OFF: a captured loop is gated on the
+// area floor only, so a loop that legitimately extends an already-owned
+// zone but is a thin wedge on its own is no longer rejected before it ever
+// reaches the merge step. The three shape checks and their reasoning
+// comments stay in place, not deleted - flipping this back to true is a
+// fully reversible one-line change that restores exactly today's
+// enforcement. This is a temporary loosening, not a permanent removal.
+//
+// Must stay numerically and behaviourally identical to kEnforceShapeGates
+// in supabase/functions/claim_territory/handler.ts - the two are enforced
+// independently (client gates before dispatch, server gates again on
+// receipt) and a mismatch lets a claim pass one side and fail the other.
+// If this value changes, change the server value too.
+const bool kEnforceShapeGates = false;
