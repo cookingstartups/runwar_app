@@ -105,12 +105,46 @@ class RunRecorderService {
   // Expose session ID so the provider layer can wire lasso_id + zone_id writes.
   String? get currentSessionId => _currentSessionId;
 
-  // Lower bound for the self-intersection scan. Set to 0 at startRun,
-  // advanced to _track.length after each claim that is actually dispatched
-  // (accepted or failed downstream). A below-floor area rejection does NOT
-  // advance it, since the trail history is still needed for a later,
-  // genuinely large loop to close.
-  int _loopStartTrailIndex = 0;
+  // Segment-index spans [startSegIdx, endSegIdx] (inclusive) already
+  // consumed by a DISPATCHED claim this session (live, drain, owned-wall,
+  // or rehydration rescan). Replaces the old scan-floor advancement
+  // (_loopStartTrailIndex): the self-intersection scan always runs over the
+  // full trail history now (scan start is the constant 1), and a detected
+  // closure is checked against these spans by the consumed-span dedup gate
+  // in _scanForAutoClaim rather than by truncating what the scan can see.
+  // Cleared to empty everywhere a new session begins or ends - the same
+  // lifecycle points the old floor field had.
+  final List<List<int>> _consumedSpans = <List<int>>[];
+
+  // Highest end index across every consumed span, or 0 when nothing has
+  // been consumed yet this session. Used as the owned-zone-wall capture
+  // anchor (see _scanForAutoClaim), mirroring the old "capture the
+  // unconsumed corridor" semantics of the floor field it replaces.
+  int get _maxConsumedEndIdx {
+    int maxEnd = 0;
+    for (final span in _consumedSpans) {
+      if (span[1] > maxEnd) maxEnd = span[1];
+    }
+    return maxEnd;
+  }
+
+  // Counts segments s in [i..k] that fall outside every span currently in
+  // _consumedSpans. Backs the consumed-span dedup gate: a detected closure
+  // is only claimable when this count is at least kMinNewLoopTrailSegments.
+  int _newSegmentsOutsideConsumed(int i, int k) {
+    int count = 0;
+    for (int s = i; s <= k; s++) {
+      bool inConsumed = false;
+      for (final span in _consumedSpans) {
+        if (s >= span[0] && s <= span[1]) {
+          inConsumed = true;
+          break;
+        }
+      }
+      if (!inConsumed) count++;
+    }
+    return count;
+  }
 
   // Wall-clock moment of the FAB Start tap. Used as the claim-interval
   // gate's reference point for the FIRST claim of a session (0-to-claim).
@@ -277,7 +311,7 @@ class RunRecorderService {
     _clearTrackInternal();
     _startedAt = DateTime.now().toUtc();
     _closedAt = null;
-    _loopStartTrailIndex = 0;
+    _consumedSpans.clear();
     _sessionStartTime = DateTime.now();
     _lastFixTimestamp = null;
     _deferredCrossings.clear();
@@ -342,12 +376,12 @@ class RunRecorderService {
     if (!_simActive) {
       RealtimePresenceService.instance.updatePosition(newLatLng);
     }
-    // Proximity pre-check: if raw fix is within kProximityTriggerM of any prior
-    // stored vertex (from _loopStartTrailIndex onward), bypass the spacing filter
-    // so the closing fix is stored and _scanForAutoClaim can detect the closure.
+    // Proximity pre-check: if raw fix is within kProximityTriggerM of any
+    // prior stored vertex (from the very first stored vertex onward - full
+    // history, no scan floor), bypass the spacing filter so the closing fix
+    // is stored and _scanForAutoClaim can detect the closure.
     if (_track.length > 1) {
-      final scanFrom = math.max(0, _loopStartTrailIndex);
-      for (int i = scanFrom; i < _track.length; i++) {
+      for (int i = 0; i < _track.length; i++) {
         if (_equirectangularDistanceM(_track[i], newLatLng) < kProximityTriggerM) {
           _track.add(newLatLng);
           trackVersion.value++;
@@ -571,7 +605,7 @@ class RunRecorderService {
         await RunScratchStore.instance.deleteForUser(scratchUid);
       } catch (_) {}
     }
-    _loopStartTrailIndex = 0;
+    _consumedSpans.clear();
     _sessionStartTime = null;
     _lastClaimAt = null;
     _lastFixTimestamp = null;
@@ -632,7 +666,7 @@ class RunRecorderService {
       } catch (_) {}
     }
     _clearTrackInternal();
-    _loopStartTrailIndex = 0;
+    _consumedSpans.clear();
     _sessionStartTime = null;
     _lastClaimAt = null;
     _lastFixTimestamp = null;
@@ -652,14 +686,17 @@ class RunRecorderService {
   /// Post: at most one onAutoClaim future is dispatched per call.
   void _scanForAutoClaim() {
     _drainDeferredCrossings();
-    // detectSelfIntersection requires loopStartTrailIndex >= 1.
-    // When _loopStartTrailIndex is 0 (initial state), clamp to 1 so the
-    // first segment of the track is included in the scan.
-    final scanStart = math.max(1, _loopStartTrailIndex);
+    // Full-history scan: scan start is the constant 1 (the lower bound
+    // detectSelfIntersection itself requires), never a floor derived from
+    // prior claims. Earlier trail history is never hidden from the scan -
+    // a big loop that closes against segments from before an earlier
+    // dispatched claim must still be detectable. Duplicate/near-duplicate
+    // re-crossings of already-claimed ground are filtered below by the
+    // consumed-span dedup gate instead of by truncating the scan.
     final ownedZoneEdges = ownedZoneEdgesProvider?.call() ?? const [];
     final hit = detectSelfIntersection(
       _track,
-      scanStart,
+      1,
       ownedZoneEdges: ownedZoneEdges,
     );
     if (hit == null) return;
@@ -667,31 +704,55 @@ class RunRecorderService {
     final k = _track.length - 1;
     // An owned-zone-wall hit has no earlier trail segment to anchor to (see
     // lasso.dart's -1 sentinel doc comment); computeCapture's anchor is the
-    // RAW loop-start index instead (not the >=1-clamped scanStart used only
-    // to satisfy detectSelfIntersection's own precondition), so the captured
-    // polygon includes every trail point run so far, not just the newest
-    // segment's own two endpoints - the same span a self-closure would use
-    // when loopStartTrailIndex is still 0 at the very start of a run.
-    final captureAnchorIdx =
-        hit.isOwnedZoneWall ? _loopStartTrailIndex : hit.intersectingSegmentIdx;
+    // highest end index across every consumed span, plus one, or 0 when
+    // nothing has been consumed yet (not _maxConsumedEndIdx + 1 == 1 in that
+    // case), so the captured polygon covers the WHOLE unconsumed corridor
+    // run so far - starting at trail index 0, same as the very first run
+    // through this path today - rather than re-including ground an earlier
+    // dispatched claim already covers.
+    final captureAnchorIdx = hit.isOwnedZoneWall
+        ? (_consumedSpans.isEmpty ? 0 : _maxConsumedEndIdx + 1)
+        : hit.intersectingSegmentIdx;
     final polygon = computeCapture(
       _track,
-      scanStart,
+      1,
       captureAnchorIdx,
       hit.intersectionPoint,
       k,
       isProximityClosure: hit.isProximityClosure,
     );
 
-    // Area floor (m^2). polygonArea returns km^2 -> convert.
     final areaSqm = polygonArea(polygon) * 1e6;
+
+    // Consumed-span dedup gate, checked BEFORE the area floor: a detected
+    // closure is only claimable when at least kMinNewLoopTrailSegments of
+    // its candidate span [captureAnchorIdx..k] lie outside every span
+    // already consumed by a dispatched claim this session. This is what
+    // lets a genuinely new loop that shares corridor with claimed ground
+    // through (the big-loop case the scan-floor removal above exists for)
+    // while blocking a near-duplicate re-crossing of a loop already
+    // claimed. Silent: no onGateRejected call (this is not a gate the UI
+    // needs to explain to the runner - it is jitter/re-crossing noise, not
+    // a legitimate attempt that fell short), and nothing is consumed.
+    final newSegs = _newSegmentsOutsideConsumed(captureAnchorIdx, k);
+    if (newSegs < kMinNewLoopTrailSegments) {
+      ErrorLogService.logClientError(
+        provider: '_scanForAutoClaim.consumed_span_dedup',
+        error: 'rejected: span=($captureAnchorIdx,$k) newSegs=$newSegs '
+            'area=${areaSqm.toStringAsFixed(1)}sqm',
+        stackTrace: StackTrace.current,
+        retryCount: 0,
+      );
+      return;
+    }
+
+    // Area floor (m^2). polygonArea returns km^2 -> convert.
     if (areaSqm < _minCapturedAreaSqm) {
-      // Do NOT advance _loopStartTrailIndex here. A below-floor result only
-      // means the newest edge did not close a big-enough loop yet - it does
-      // not mean the trail history is invalid. Truncating it would permanently
-      // discard the segments a later, genuinely large loop needs in order to
-      // be detected, so a real enclosing loop could never be claimed once a
-      // small spurious closure had been rejected first.
+      // Consume nothing here. A below-floor result only means the newest
+      // edge did not close a big-enough loop yet - it does not mean the
+      // trail history is invalid. Nothing is added to _consumedSpans, so
+      // the segments this closure covers stay available for a later,
+      // genuinely large loop to close against.
       ErrorLogService.logClientError(
         provider: '_scanForAutoClaim.area_floor_gate',
         error: 'rejected: area=${areaSqm.toStringAsFixed(1)}sqm floor=$_minCapturedAreaSqm',
@@ -714,9 +775,9 @@ class RunRecorderService {
     if (_enforceShapeGates) {
       // Bounding-box diagonal floor. Rejects a thin sliver that clears the
       // area floor only because it is long and narrow, not because it
-      // encloses a real block-scale loop. Same non-advancement reasoning as
-      // the area-floor branch above: the trail history is still needed for a
-      // later, genuinely large loop to close.
+      // encloses a real block-scale loop. Same as the area-floor branch
+      // above: rejection here consumes nothing, so the trail history stays
+      // available for a later, genuinely large loop to close against.
       final diagonalM = polygonBboxDiagonalM(polygon);
       if (diagonalM < _minCapturedAreaDiagonalM) {
         ErrorLogService.logClientError(
@@ -733,8 +794,8 @@ class RunRecorderService {
       // sliver that clears both the area and diagonal floors on its own - for
       // example a 1500 sqm shape stretched over a 200 m diagonal. Dividing area
       // by diagonal squared separates them: a square scores 0.5, a 1:4
-      // rectangle about 0.19, a needle near zero. Same non-advancement
-      // reasoning as the branches above.
+      // rectangle about 0.19, a needle near zero. Same as the branches
+      // above: rejection here consumes nothing.
       final compactness = diagonalM > 0 ? areaSqm / (diagonalM * diagonalM) : 0.0;
       if (compactness < kMinCapturedAreaCompactness) {
         ErrorLogService.logClientError(
@@ -777,7 +838,7 @@ class RunRecorderService {
     final start = _lastClaimAt ?? _sessionStartTime;
     final elapsedSec = start == null ? -1 : _elapsedSecForGate(start);
     if (start == null || elapsedSec < _minClaimIntervalSec) {
-      // Do NOT advance _loopStartTrailIndex here, and do NOT discard this
+      // Do NOT add this span to _consumedSpans, and do NOT discard this
       // crossing. The geometric gate(s) above have already passed; the only
       // thing missing is elapsed time. The polygon is retained in
       // _deferredCrossings and re-dispatched by _drainDeferredCrossings() on
@@ -797,13 +858,15 @@ class RunRecorderService {
       return;
     }
 
-    // Advance index BEFORE dispatching the claim so a fast second fix
-    // does not re-fire the same crossing.
-    _loopStartTrailIndex = _track.length;
-    // A live claim consumes trail span [0 .. _track.length-1], which
-    // contains every earlier deferred polygon's span. Claiming them
-    // afterward would double-claim overlapping ground.
-    _deferredCrossings.clear();
+    // Consume this claim's span BEFORE dispatching so a fast second fix
+    // cannot re-fire the same crossing (the consumed-span dedup gate above
+    // checks candidate spans against this list). Deferred crossings are
+    // intentionally left in place rather than cleared here: with a
+    // full-history scan a live claim's span no longer necessarily contains
+    // every earlier deferred entry's span, so each deferred entry is
+    // re-checked against the updated consumed spans at drain time instead
+    // of being unconditionally discarded on every live dispatch.
+    _consumedSpans.add([captureAnchorIdx, k]);
     // Record this claim as the new claim-interval reference point for the
     // NEXT auto-claim in this session. Same fix-preferred-else-wall-clock
     // domain as _elapsedSecForGate, so the next comparison stays on one
@@ -904,11 +967,25 @@ class RunRecorderService {
       if (d.dispatched) continue; // second guard, belt and braces
       d.dispatched = true;
       if (d.polygon.length < 3) continue;
+      // Re-check the consumed-span dedup gate against the CURRENT
+      // _consumedSpans, not the spans in effect when this entry was
+      // retained: a live claim dispatched while this entry sat deferred may
+      // have consumed ground that now makes it a near-duplicate.
+      final newSegs = _newSegmentsOutsideConsumed(
+          d.intersectingSegmentIdx, d.detectedAtTrailIndex);
+      if (newSegs < kMinNewLoopTrailSegments) {
+        ErrorLogService.logClientError(
+          provider: '_scanForAutoClaim.consumed_span_dedup',
+          error: 'drain: skip dup span=(${d.intersectingSegmentIdx},'
+              '${d.detectedAtTrailIndex}) newSegs=$newSegs',
+          stackTrace: StackTrace.current,
+          retryCount: 0,
+        );
+        continue;
+      }
       // Consume the trail span this polygon covers, mirroring the live
-      // path's "advance before dispatch" rule. max() so a live claim that
-      // already advanced further is never rolled back.
-      _loopStartTrailIndex =
-          math.max(_loopStartTrailIndex, d.detectedAtTrailIndex + 1);
+      // path's "consume before dispatch" rule.
+      _consumedSpans.add([d.intersectingSegmentIdx, d.detectedAtTrailIndex]);
       onAutoClaim?.call(d.polygon).catchError((_) {});
     }
     // Record the drain as the new claim-interval reference point, same as
@@ -992,7 +1069,7 @@ class RunRecorderService {
     _simActive = true;
     _simulationGeneration++;
     _clearTrackInternal();
-    _loopStartTrailIndex = 0;
+    _consumedSpans.clear();
     _sessionStartTime = simulatedSessionStart ?? DateTime.now();
     // _startedAt stays wall-clock-dated even when _sessionStartTime becomes
     // fixture-dated. _startedAt feeds runs.started_at, stopRun's
@@ -1171,7 +1248,7 @@ class RunRecorderService {
       // Use the earliest scratch timestamp so elapsed time carries over.
       _startedAt = earliest ?? DateTime.now().toUtc();
       _closedAt = null;
-      _loopStartTrailIndex = 0;
+      _consumedSpans.clear();
       // Wall-clock session start reconstructed from earliest sample so the
       // claim-interval gate's 0-to-claim reference behaves correctly across
       // kill+resume. This is a resumed session, not a new one, but the
@@ -1247,34 +1324,45 @@ class RunRecorderService {
   }
 
   /// Iterates _track from index 0, calling detectSelfIntersection at each
-  /// position. Each successful claim advances _loopStartTrailIndex past the
-  /// matched crossing and continues. Failed claims advance silently.
+  /// position with a full-history scan (scan start is the constant 1) and
+  /// the same consumed-span dedup-then-area-floor ordering _scanForAutoClaim
+  /// uses. Each dispatched claim adds its span to _consumedSpans and
+  /// continues; a rejected candidate (dedup, area, or shape) consumes
+  /// nothing and continues - prefix iteration over an ever-growing `partial`
+  /// already guarantees this loop makes forward progress without needing a
+  /// floor advance of its own.
   Future<void> _rescanRehydratedTrack() async {
     for (int len = 2; len <= _track.length; len++) {
       final partial = _track.sublist(0, len);
-      final scanStart = math.max(1, _loopStartTrailIndex);
       final ownedZoneEdges = ownedZoneEdgesProvider?.call() ?? const [];
       final hit = detectSelfIntersection(
         partial,
-        scanStart,
+        1,
         ownedZoneEdges: ownedZoneEdges,
       );
       if (hit == null) continue;
       // Mirrors _scanForAutoClaim's anchor choice: an owned-zone-wall hit has
       // no earlier trail segment to anchor to (intersectingSegmentIdx is the
-      // -1 sentinel), so the raw loop-start index is used instead.
-      final captureAnchorIdx =
-          hit.isOwnedZoneWall ? _loopStartTrailIndex : hit.intersectingSegmentIdx;
+      // -1 sentinel), so the highest consumed end index (plus one), or 0
+      // when nothing has been consumed yet, is used instead.
+      final captureAnchorIdx = hit.isOwnedZoneWall
+          ? (_consumedSpans.isEmpty ? 0 : _maxConsumedEndIdx + 1)
+          : hit.intersectingSegmentIdx;
       final polygon = computeCapture(
         partial,
-        scanStart,
+        1,
         captureAnchorIdx,
         hit.intersectionPoint,
         len - 1,
       );
       final areaSqm = polygonArea(polygon) * 1e6;
+
+      // Consumed-span dedup gate, checked before the area floor - same
+      // ordering and same rule as the live path in _scanForAutoClaim.
+      final newSegs = _newSegmentsOutsideConsumed(captureAnchorIdx, len - 1);
+      if (newSegs < kMinNewLoopTrailSegments) continue;
+
       if (areaSqm < _minCapturedAreaSqm) {
-        _loopStartTrailIndex = len;
         continue;
       }
       // F1 (SPEC-0143 design.md): the rescan path must apply the same shape
@@ -1288,17 +1376,14 @@ class RunRecorderService {
       if (_enforceShapeGates) {
         final diagonalM = polygonBboxDiagonalM(polygon);
         if (diagonalM < _minCapturedAreaDiagonalM) {
-          _loopStartTrailIndex = len;
           continue;
         }
         final compactness = diagonalM > 0 ? areaSqm / (diagonalM * diagonalM) : 0.0;
         if (compactness < kMinCapturedAreaCompactness) {
-          _loopStartTrailIndex = len;
           continue;
         }
         final loopPathM = trackDistanceM(polygon);
         if (loopPathM < kMinCapturedPathLengthM) {
-          _loopStartTrailIndex = len;
           continue;
         }
       }
@@ -1313,13 +1398,14 @@ class RunRecorderService {
           DateTime.now().difference(start).inSeconds < _minClaimIntervalSec) {
         // The geometric gate(s) passed and only elapsed time is missing.
         // Retain the polygon so it dispatches from _drainDeferredCrossings
-        // on the first live fix after the threshold passes. Do NOT advance
-        // _loopStartTrailIndex: the trail history is still needed, and the
-        // polygon is already captured.
+        // on the first live fix after the threshold passes. Nothing is
+        // consumed here: the polygon is already captured, and consuming its
+        // span now (before it has actually dispatched) would make the
+        // dedup gate reject it right back out at drain time.
         _retainDeferredCrossing(polygon, len - 1, hit.intersectingSegmentIdx, -1);
         continue;
       }
-      _loopStartTrailIndex = len;
+      _consumedSpans.add([captureAnchorIdx, len - 1]);
       // Record this claim as the new claim-interval reference point, same
       // as the live dispatch path.
       _lastClaimAt = DateTime.now().toUtc();
@@ -1388,7 +1474,8 @@ class RunRecorderService {
   void runScanForAutoClaimForTesting() => _scanForAutoClaim();
 
   @visibleForTesting
-  int get loopStartTrailIndexForTesting => _loopStartTrailIndex;
+  List<List<int>> get consumedSpansForTesting =>
+      _consumedSpans.map((s) => List<int>.of(s)).toList();
 
   @visibleForTesting
   void handlePositionForTesting(Position p) => _onPosition(p);
@@ -1416,7 +1503,7 @@ class RunRecorderService {
 
   @visibleForTesting
   void reset() {
-    _loopStartTrailIndex = 0;
+    _consumedSpans.clear();
     _sessionStartTime = null;
     _lastClaimAt = null;
     _enforceShapeGates = kEnforceShapeGates;
