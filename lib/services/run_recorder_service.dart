@@ -318,6 +318,48 @@ class RunRecorderService {
             ).catchError((e) {
               debugPrint('[RunRecorderService] scratch insert error on closure fix: $e');
             });
+
+            // Stream this fix to gps_samples too, same as the spacing-filter
+            // path below. Without this, every fix that takes the proximity
+            // shortcut - which is exactly the set of fixes that can trigger
+            // an auto-claim scan - never reaches the server, leaving the
+            // persisted track unable to reconstruct what the recorder
+            // actually evaluated. This branch always returns before falling
+            // through to the spacing-filter path, so a given fix is streamed
+            // from exactly one of the two call sites, never both.
+            //
+            // The server write always uses the real, unprefixed
+            // _activeUserId - never the namespaced scratchUid above, which
+            // exists only to keep simulated scratch rows out of
+            // resumeFromScratch.
+            final uid = _activeUserId;
+            final sid = _currentSessionId;
+            final gpsCb = onGpsFix;
+            if (uid != null && gpsCb != null && sid != null) {
+              gpsCb({
+                'run_id': sid,
+                'session_id': sid,
+                'user_id': uid,
+                'lat': pos.latitude,
+                'lng': pos.longitude,
+                'ts': pos.timestamp.toIso8601String(),
+                'speed_ms': pos.speed,
+                // Matches the spacing-filter path's write-time guarantee:
+                // every row written during a simulation is forced true
+                // regardless of the fixture's own recorded value.
+                'is_mocked': _simActive ? true : pos.isMocked,
+              }).catchError((e, st) {
+                // Fire-and-forget stays non-blocking - the GPS loop must
+                // never stall on a write failure - but the failure is now
+                // observable instead of silently disappearing.
+                ErrorLogService.logClientError(
+                  provider: 'run_recorder_service.onGpsFix.proximity',
+                  error: e,
+                  stackTrace: st,
+                  retryCount: 0,
+                );
+              });
+            }
           }
           _scanForAutoClaim();
           return;
