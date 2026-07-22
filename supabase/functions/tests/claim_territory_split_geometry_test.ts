@@ -11,7 +11,7 @@
 // correct for the DB-write half (detecting the target row, issuing the
 // RPC), which genuinely cannot be exercised without a live Supabase
 // instance and stays covered by source-inspection wiring checks in
-// claim_territory_split_cooldown_wiring_test.ts. The classification and
+// claim_territory_split_wiring_test.ts. The classification and
 // remainder-area math themselves, however, are ordinary pure geometry with
 // no I/O, exactly like computeZoneMerges already is in this same file - so
 // this test file specifies that math as a new exported function in

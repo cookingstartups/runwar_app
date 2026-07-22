@@ -3,7 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // loaded lazily below, strictly inside the `if (!disputedId)` guard, so the
 // merge routine can never execute on a disputed outcome.
 import type { ZoneInput } from './merge_geometry.ts';
-// Type-only imports for the split/cooldown pure exports (Section 0.6 design
+// Type-only imports for the split pure exports (Section 0.6 design
 // correction) - the runtime bindings, like computeZoneMerges above, are
 // loaded lazily below, inside the `if (!disputedId)` guard.
 import type { ZoneSplitResult } from './merge_geometry.ts';
@@ -11,7 +11,7 @@ import type { ZoneSplitResult } from './merge_geometry.ts';
 // corresponding parameters of runSplitAndMerge below (the real bindings are
 // still obtained via the lazy dynamic import inside the request handler,
 // strictly within the `if (!disputedId)` guard, and passed in from there).
-import type { computeLevelUpOutcome, computeZoneMerges, computeZoneSplit } from './merge_geometry.ts';
+import type { computeNextInfluenceLevel, computeZoneMerges, computeZoneSplit } from './merge_geometry.ts';
 // Area of the merged geometry is always recomputed from the merge result,
 // never summed from source zones (overlapping/adjacent source zones would
 // double-count their shared area if simply added together).
@@ -22,15 +22,6 @@ import { area as turfArea } from 'https://esm.sh/@turf/area@7';
 // same-city zone within this distance merges into one continuous zone
 // (sealed via morphological closing); beyond it, zones stay separate rows.
 const kMergeThresholdMeters = 25;
-
-// Repeat-run damping / level-up cooldown (AC-8). Server-only: kDemoMode is a
-// client-only Dart const with no server equivalent (confirmed by grep), so
-// the same demo/production duality is reproduced here via a per-deployment
-// Deno env var instead of a request-supplied flag - a client-controlled
-// cooldown value would be a trivial exploit. 24h default is the safe
-// production fallback; set LEVEL_UP_COOLDOWN_MS=15000 in the demo/dev
-// project's function env vars for fast E2E iteration.
-const kLevelUpCooldownMs = Number(Deno.env.get('LEVEL_UP_COOLDOWN_MS') ?? 24 * 3600 * 1000);
 
 // Minimum area (sqm) a split-off remainder fragment must clear when a
 // re-run retraces part of a same-level-fused zone's own edge (AC-7). A
@@ -357,7 +348,7 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
     let zoneGeomJson = JSON.stringify({ type: 'Polygon', coordinates: [ring] });
 
     if (!disputedId) {
-      const { computeZoneMerges, computeZoneSplit, computeLevelUpOutcome } = await import(
+      const { computeZoneMerges, computeZoneSplit, computeNextInfluenceLevel } = await import(
         './merge_geometry.ts'
       );
       const { data: candidateRows } = await supabase
@@ -414,10 +405,9 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
         now,
         kMergeThresholdMeters,
         kMinSplitFragmentAreaSqm,
-        kLevelUpCooldownMs,
         computeZoneSplit,
         computeZoneMerges,
-        computeLevelUpOutcome,
+        computeNextInfluenceLevel,
         influenceById,
         influenceLevelById,
         creditsEarnedById,
@@ -489,10 +479,9 @@ export interface SplitMergeParams {
   now: string;
   kMergeThresholdMeters: number;
   kMinSplitFragmentAreaSqm: number;
-  kLevelUpCooldownMs: number;
   computeZoneSplit: typeof computeZoneSplit;
   computeZoneMerges: typeof computeZoneMerges;
-  computeLevelUpOutcome: typeof computeLevelUpOutcome;
+  computeNextInfluenceLevel: typeof computeNextInfluenceLevel;
   influenceById: Map<string, number>;
   influenceLevelById: Map<string, number>;
   creditsEarnedById: Map<string, number>;
@@ -532,10 +521,9 @@ export async function runSplitAndMerge(
     now,
     kMergeThresholdMeters,
     kMinSplitFragmentAreaSqm,
-    kLevelUpCooldownMs,
     computeZoneSplit,
     computeZoneMerges,
-    computeLevelUpOutcome,
+    computeNextInfluenceLevel,
     influenceById,
     influenceLevelById,
     creditsEarnedById,
@@ -624,7 +612,7 @@ export async function runSplitAndMerge(
   // ring geometry are refreshed here; createdAt and influenceLevel are
   // copied over unchanged from the row's original entry - those already
   // hold each row's PRIOR (pre-this-claim) values, which the level-up
-  // cooldown gate below depends on, and must not be touched by this
+  // computation below depends on, and must not be touched by this
   // reconciliation.
   const reconciledInputs: ZoneInput[] = [];
   const expandedRowIds = new Set<string>();
@@ -675,9 +663,7 @@ export async function runSplitAndMerge(
     // last_active_at: most-recent activity across the merged group, not
     // just the survivor's own value. Read from lastActiveAtById, which
     // was populated from the candidate-row SELECT executed by the caller,
-    // before any write this claim makes - so this already IS each member's
-    // PRIOR (pre-this-claim) last_active_at, exactly what the cooldown
-    // check needs to compare against.
+    // before any write this claim makes.
     const survivorLastActiveAt = groupIds.reduce<string | null>((max, id) => {
       const v = lastActiveAtById.get(id) ?? null;
       if (!v) return max;
@@ -686,17 +672,14 @@ export async function runSplitAndMerge(
     }, null);
 
     // influence_level: MAX across the group (never summed - merging
-    // never grants a free fortification level on its own), THEN subject
-    // to the level-up cooldown gate: a re-claim while the group's
-    // most recent prior activity is still within kLevelUpCooldownMs
-    // keeps the already-held level; once the cooldown has elapsed, the
-    // re-claim is an ordinary level-up event, clamped at 15 by
-    // computeLevelUpOutcome (matching the column's own CHECK
-    // constraint).
-    const survivorInfluenceLevel = computeLevelUpOutcome(
-      survivorLastActiveAt, Date.now(), kLevelUpCooldownMs,
+    // never grants a free fortification level on its own), then one
+    // ordinary level-up on top of that, clamped at 15 by
+    // computeNextInfluenceLevel (matching the column's own CHECK
+    // constraint). Every re-claim of the same ground levels up, with no
+    // time-based gate - the level cap is the only limit.
+    const survivorInfluenceLevel = computeNextInfluenceLevel(
       groupIds.reduce((max, id) => Math.max(max, influenceLevelById.get(id) ?? 1), 1),
-    ).nextLevel;
+    );
 
     // credits_earned: additive, same rationale as influence above.
     const survivorCreditsEarned = groupIds.reduce(

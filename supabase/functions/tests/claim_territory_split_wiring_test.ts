@@ -1,29 +1,28 @@
-// supabase/functions/tests/claim_territory_split_cooldown_wiring_test.ts
+// supabase/functions/tests/claim_territory_split_wiring_test.ts
 //
-// RED phase - source-inspection checks against handler.ts's call-site
-// wiring for the level-gated merge (AC-5, AC-13), the repeat-run cooldown
-// (AC-8), the reversible split on re-run (AC-7), and the no-retroactive-fuse
-// invariant (AC-9). These target orchestration/DB-write logic embedded in
-// handler.ts's request handler - the row selection, the RPC call shape, the
-// unconditional last_active_at write - which genuinely cannot be exercised
-// without a live Supabase instance (mocking the client here would exceed
-// the project's >5-mocks-escalate rule for a handler touching select /
-// update / rpc calls across three or more tables), so source inspection is
-// kept for those specific pieces only.
+// Source-inspection checks against handler.ts's call-site wiring for the
+// level-gated merge (AC-5, AC-13), the reversible split on re-run (AC-7),
+// and the no-retroactive-fuse invariant (AC-9). These target
+// orchestration/DB-write logic embedded in handler.ts's request handler -
+// the row selection, the RPC call shape, the unconditional last_active_at
+// write - which genuinely cannot be exercised without a live Supabase
+// instance (mocking the client here would exceed the project's >5-mocks-
+// escalate rule for a handler touching select / update / rpc calls across
+// three or more tables), so source inspection is kept for those specific
+// pieces only.
 //
 // The request handler and the split-then-merge orchestration it drives both
 // live in claim_territory/handler.ts; index.ts is only the thin
 // Deno.serve() entrypoint, so this file reads handler.ts.
 //
-// The decision MATH behind the split and the cooldown gate (does this
-// count as a partial overlap or a full containment, is the remainder above
-// the sliver floor, does the cooldown block the level increment, does the
-// clamp apply) has no I/O in it and is covered behaviourally instead, in
-// claim_territory_split_geometry_test.ts and
-// claim_territory_level_up_cooldown_test.ts - those replace what used to be
-// symbol-presence checks here for that half of the behaviour.
+// The decision MATH behind the split (does this count as a partial overlap
+// or a full containment, is the remainder above the sliver floor) has no
+// I/O in it and is covered behaviourally instead, in
+// claim_territory_split_geometry_test.ts. Repeat-run damping is now a
+// level cap only - covered behaviourally by
+// claim_territory_level_up_cap_test.ts against computeNextInfluenceLevel.
 //
-// Run: npx deno test supabase/functions/tests/claim_territory_split_cooldown_wiring_test.ts
+// Run: npx deno test supabase/functions/tests/claim_territory_split_wiring_test.ts
 
 import { assert } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 
@@ -75,29 +74,17 @@ Deno.test(
 );
 
 // ---------------------------------------------------------------------------
-// AC-8 - repeat-run damping / level-up cooldown
+// Repeat-run damping - level cap only, no time-based gate
 // ---------------------------------------------------------------------------
 
-Deno.test('a level-up cooldown constant, backed by a Deno env var, is defined', () => {
-  const src = readSrc();
-  assert(src.includes('kLevelUpCooldownMs'),
-    'handler.ts must define a kLevelUpCooldownMs constant for the repeat-run damping gate (AC-8)');
-  assert(src.includes("Deno.env.get('LEVEL_UP_COOLDOWN_MS')"),
-    'The cooldown constant must be backed by a Deno environment variable, not a client-supplied '
-      + 'flag (a request-controlled cooldown value would be a trivial exploit)');
-});
+// The level DECISION itself (MAX across the group plus one level-up, capped
+// at 15) is covered behaviourally by claim_territory_level_up_cap_test.ts
+// against computeNextInfluenceLevel.
 
-// The cooldown DECISION itself (active vs elapsed, the level-15 clamp) is
-// covered behaviourally by claim_territory_level_up_cooldown_test.ts
-// against computeLevelUpOutcome - a symbol-presence check on
-// 'cooldownActive' added nothing beyond confirming a variable name exists,
-// so it is dropped here in favour of that real coverage.
-
-Deno.test('last_active_at still refreshes unconditionally regardless of cooldown state', () => {
+Deno.test('last_active_at still refreshes unconditionally on every claim', () => {
   const src = readSrc();
   assert(src.includes('survivorLastActiveAt') && src.includes('p_last_active_at: survivorLastActiveAt'),
-    'last_active_at must still be written on every claim, independent of whether the cooldown '
-      + 'suppressed the level-up itself (AC-8: a maxed-out re-run is never a wasted run)');
+    'last_active_at must still be written on every claim');
 });
 
 // ---------------------------------------------------------------------------

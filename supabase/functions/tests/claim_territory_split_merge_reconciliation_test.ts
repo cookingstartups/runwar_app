@@ -22,7 +22,7 @@ import {
   type SplitMergeDbClient,
   type SplitMergeSuccess,
 } from '../claim_territory/handler.ts';
-import { computeLevelUpOutcome, computeZoneMerges, computeZoneSplit } from '../claim_territory/merge_geometry.ts';
+import { computeNextInfluenceLevel, computeZoneMerges, computeZoneSplit } from '../claim_territory/merge_geometry.ts';
 import type { ZoneInput } from '../claim_territory/merge_geometry.ts';
 
 const LAT0 = 39.470000; // Valencia, same reference point used by the split geometry tests
@@ -109,10 +109,9 @@ Deno.test('a candidate row that the split loop deletes outright is never fed to 
     now: '2026-07-21T12:00:00.000Z',
     kMergeThresholdMeters: 25,
     kMinSplitFragmentAreaSqm: 375,
-    kLevelUpCooldownMs: 24 * 3600 * 1000,
     computeZoneSplit,
     computeZoneMerges,
-    computeLevelUpOutcome,
+    computeNextInfluenceLevel,
     ...flatMaps(['zoneA-oldest', 'zoneB-newer', newId]),
   });
 
@@ -170,10 +169,9 @@ Deno.test('a candidate row with multiple stored outlines is deleted at most once
     now: '2026-07-21T12:00:00.000Z',
     kMergeThresholdMeters: 25,
     kMinSplitFragmentAreaSqm: 375,
-    kLevelUpCooldownMs: 24 * 3600 * 1000,
     computeZoneSplit,
     computeZoneMerges,
-    computeLevelUpOutcome,
+    computeNextInfluenceLevel,
     ...flatMaps(['legacy-multi-outline', newId]),
   });
 
@@ -235,10 +233,9 @@ Deno.test('a candidate row that keeps a split remainder feeds the REMAINDER ring
     now: '2026-07-21T12:00:00.000Z',
     kMergeThresholdMeters: 25,
     kMinSplitFragmentAreaSqm: 375,
-    kLevelUpCooldownMs: 24 * 3600 * 1000,
     computeZoneSplit,
     computeZoneMerges: spyComputeZoneMerges,
-    computeLevelUpOutcome,
+    computeNextInfluenceLevel,
     ...flatMaps(['zoneC-split-target', newId]),
   });
 
@@ -293,10 +290,9 @@ Deno.test('a failed delete during the split loop is surfaced as a 500 error resp
     now: '2026-07-21T12:00:00.000Z',
     kMergeThresholdMeters: 25,
     kMinSplitFragmentAreaSqm: 375,
-    kLevelUpCooldownMs: 24 * 3600 * 1000,
     computeZoneSplit,
     computeZoneMerges,
-    computeLevelUpOutcome,
+    computeNextInfluenceLevel,
     ...flatMaps(['zoneA-oldest', newId]),
   });
 
@@ -334,10 +330,9 @@ Deno.test('a failed apply_zone_split RPC is surfaced as a 500 error response', a
     now: '2026-07-21T12:00:00.000Z',
     kMergeThresholdMeters: 25,
     kMinSplitFragmentAreaSqm: 375,
-    kLevelUpCooldownMs: 24 * 3600 * 1000,
     computeZoneSplit,
     computeZoneMerges,
-    computeLevelUpOutcome,
+    computeNextInfluenceLevel,
     ...flatMaps(['zoneC-split-target', newId]),
   });
 
@@ -375,10 +370,9 @@ Deno.test('a failed apply_zone_merge RPC is surfaced as a 500 error response', a
     now: '2026-07-21T12:00:00.000Z',
     kMergeThresholdMeters: 25,
     kMinSplitFragmentAreaSqm: 375,
-    kLevelUpCooldownMs: 24 * 3600 * 1000,
     computeZoneSplit,
     computeZoneMerges,
-    computeLevelUpOutcome,
+    computeNextInfluenceLevel,
     ...flatMaps(['zoneB-touching', newId]),
   });
 
