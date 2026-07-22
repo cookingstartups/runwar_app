@@ -58,8 +58,8 @@ void main() {
       svc = RunRecorderService.instanceForTesting();
       claimCapture = _AutoClaimCapture();
       svc.onAutoClaim = claimCapture.call;
-      // Past the 60-second post-start gate so the only thing left to prove
-      // is whether the owned-edge wall test itself runs on this path.
+      // Past the claim-interval post-start gate so the only thing left to
+      // prove is whether the owned-edge wall test itself runs on this path.
       svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
     });
 

@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:runwar_app/geo/lasso.dart';
 import 'package:runwar_app/services/run_recorder_service.dart';
 import 'package:runwar_app/services/realtime_presence_service.dart';
+import 'package:runwar_app/utils/runwar_constants.dart';
 
 // ---------------------------------------------------------------------------
 // Helpers - geometry factories
@@ -294,7 +295,7 @@ void main() {
   // "getter/method not found" until the implementation is merged.
   // =========================================================================
 
-  group('session time gate - auto-claim suppressed within 60 seconds', () {
+  group('session time gate - auto-claim suppressed within 30 seconds of session start', () {
     late RunRecorderService svc;
     late _AutoClaimCapture capture;
 
@@ -308,13 +309,13 @@ void main() {
       svc.reset();
     });
 
-    // GIVEN the recorder has been in recording state for fewer than 60 seconds
+    // GIVEN the recorder has been in recording state for fewer than 30 seconds
     //   AND detectSelfIntersection returns a non-null result with area >= 200 m^2
-    // WHEN the auto-claim handler evaluates the session elapsed time
+    // WHEN the auto-claim handler evaluates the claim-interval gate
     // THEN no claim is triggered and no polygon is captured
-    test('auto-claim does not fire when lasso closes within 60 seconds of session start', () {
-      // Inject a session start time 30 seconds ago - within the 60-second window
-      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 30)));
+    test('auto-claim does not fire when lasso closes within 30 seconds of session start', () {
+      // Inject a session start time 15 seconds ago - within the 30-second window
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 15)));
       svc.injectState(RecorderState.recording);
 
       // Feed the figure-8 path to trigger a self-intersection
@@ -322,15 +323,15 @@ void main() {
       svc.runScanForAutoClaimForTesting();
 
       expect(capture.captured, isEmpty,
-          reason: 'No claim should fire when session has been running for only 30 seconds');
+          reason: 'No claim should fire when session has been running for only 15 seconds');
     });
 
-    // GIVEN the recorder has been in recording state for more than 60 seconds
+    // GIVEN the recorder has been in recording state for more than 30 seconds
     //   AND detectSelfIntersection returns a non-null result with area >= 200 m^2
-    // WHEN the auto-claim handler evaluates the session elapsed time
+    // WHEN the auto-claim handler evaluates the claim-interval gate
     // THEN the claim fires and the captured polygon is passed to onAutoClaim
-    test('auto-claim fires when lasso closes after 60 seconds of session start', () async {
-      // Inject a session start time 90 seconds ago - past the 60-second window
+    test('auto-claim fires when lasso closes after 30 seconds of session start', () async {
+      // Inject a session start time 90 seconds ago - past the 30-second window
       svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
       svc.injectState(RecorderState.recording);
 
@@ -357,7 +358,7 @@ void main() {
       svc = RunRecorderService.instanceForTesting();
       capture = _AutoClaimCapture();
       svc.onAutoClaim = capture.call;
-      // Start well past the 60-second gate
+      // Start well past the claim-interval gate
       svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
       svc.injectState(RecorderState.recording);
     });
@@ -429,6 +430,12 @@ void main() {
       svc.runScanForAutoClaimForTesting();
       await Future<void>.delayed(Duration.zero);
 
+      // The first claim just became the claim-interval reference point (see
+      // the claim-interval gate group below) - fast-forward it well past the
+      // 30s floor so the second intersection is not rejected only because
+      // the two claims happened back-to-back in this test.
+      svc.injectLastClaimAt(DateTime.now().toUtc().subtract(const Duration(seconds: 40)));
+
       // Second intersection: extend the trail with another crossing loop
       svc.injectTrackForTesting(_figure8PathExtended());
       svc.runScanForAutoClaimForTesting();
@@ -449,6 +456,11 @@ void main() {
       final indexAfterFirst = svc.loopStartTrailIndexForTesting;
       expect(indexAfterFirst, greaterThan(0),
           reason: 'Index must advance after the first claim');
+
+      // See the comment in the test above: the first claim set the
+      // claim-interval reference to "now", so fast-forward past the 30s
+      // floor before the second claim.
+      svc.injectLastClaimAt(DateTime.now().toUtc().subtract(const Duration(seconds: 40)));
 
       svc.injectTrackForTesting(_figure8PathExtended());
       svc.runScanForAutoClaimForTesting();
@@ -908,18 +920,21 @@ void main() {
     });
 
     // Scenario 9: two independent crossings in one session are tracked and
-    // dispatched independently.
+    // dispatched independently. Offsets scaled to the 30s claim-interval
+    // floor (previously 60s): both crossings must stay deferred while
+    // elapsed is still under 30s (10s, then 20s), and only drain once
+    // elapsed reaches 30s or more (35s).
     test('two independent crossings in one session are each retained and dispatched exactly once', () async {
       final t0 = DateTime.now();
       svc.injectSessionStartTime(t0);
-      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 20)));
+      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 10)));
       svc.injectTrackForTesting(_figure8Path());
       svc.runScanForAutoClaimForTesting();
       await Future<void>.delayed(Duration.zero);
 
       expect(svc.deferredCrossingCountForTesting, 1);
 
-      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 45)));
+      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 20)));
       svc.injectTrackForTesting(_figure8PathExtended());
       svc.runScanForAutoClaimForTesting();
       await Future<void>.delayed(Duration.zero);
@@ -928,7 +943,7 @@ void main() {
           reason: 'A second, later, geometrically distinct crossing must be tracked '
               'independently of the first');
 
-      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 70)));
+      svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 35)));
       svc.runScanForAutoClaimForTesting();
       await Future<void>.delayed(Duration.zero);
 
@@ -971,11 +986,15 @@ void main() {
               'the dead-end continue it uses today');
     });
 
-    // F1 safety test: a long thin sliver clears area (1500 sqm+) and diagonal
-    // (30 m+) but fails compactness (0.15) - the rescan path must still
-    // reject it, exactly as the live path already does, even though the
-    // elapsed threshold has passed.
-    test('a thin sliver clearing only area and diagonal is still rejected by the rescan path', () async {
+    // F1 safety test, shape gates ON: a long thin sliver clears area (1500
+    // sqm+) and diagonal (30 m+) but fails compactness (0.15) - with shape
+    // gates enabled, the rescan path must still reject it, exactly as the
+    // live path already does, even though the elapsed threshold has passed.
+    // Shape gates are off by default now (kEnforceShapeGates); this test
+    // explicitly re-enables them to prove F1 parity still holds when they
+    // are on, which is the whole point of keeping the gate code reversible.
+    test('shape gates ON: a thin sliver clearing only area and diagonal is still rejected by the rescan path', () async {
+      svc.debugSetEnforceShapeGates(true);
       svc.injectTrackForTesting(_elongatedSliverPath());
       svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
       await svc.rescanRehydratedTrackForTesting();
@@ -986,22 +1005,41 @@ void main() {
               'floors as the live path - a sliver that only clears area and diagonal must '
               'never claim via rehydration, even after the elapsed threshold has passed');
     });
+
+    // Mirror of the test above with the shipped default (shape gates OFF):
+    // the SAME thin sliver now claims via the rescan path too, because the
+    // rescan path (_rescanRehydratedTrack) mirrors the live path's flag
+    // check exactly - the two paths must never disagree on the same
+    // polygon (see the comment on the rescan path's shape-gate guard).
+    test('shape gates OFF (default): the same thin sliver now claims via the rescan path', () async {
+      svc.injectTrackForTesting(_elongatedSliverPath());
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
+      await svc.rescanRehydratedTrackForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, hasLength(1),
+          reason: 'With shape gates off, the rescan path is area-only, same as the live '
+              'path - it must not still enforce compactness on its own');
+    });
   });
 
   // =========================================================================
-  // Group 12: non-regression lock - the four geometric gates and their order
-  // are unaffected by this change. This test is expected to pass already
-  // (the compactness gate predates this spec); it documents the invariant so
-  // a future edit to the deferred-crossing plumbing cannot silently weaken it.
+  // Group 12: non-regression lock, shape gates ON - the geometric gates and
+  // their order are unaffected by this change WHEN kEnforceShapeGates is
+  // true. This test is expected to pass already (the compactness gate
+  // predates this spec); it documents the invariant so a future edit to the
+  // deferred-crossing plumbing cannot silently weaken it. The shipped
+  // default is OFF - see the shape-gate flag group below for that behaviour.
   // =========================================================================
 
-  group('non-regression - an elongated sliver is still rejected by compactness on the live path', () {
+  group('non-regression - an elongated sliver is still rejected by compactness when shape gates are ON', () {
     test('an elongated sliver never reaches the session-elapsed gate', () async {
       final svc = RunRecorderService.instanceForTesting();
       final claimCapture = _AutoClaimCapture();
       final rejectionCapture = _GateRejectionCapture();
       svc.onAutoClaim = claimCapture.call;
       svc.onGateRejected = rejectionCapture.call;
+      svc.debugSetEnforceShapeGates(true);
       svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
       svc.injectState(RecorderState.recording);
 
@@ -1012,9 +1050,223 @@ void main() {
       expect(claimCapture.captured, isEmpty);
       expect(rejectionCapture.captured, hasLength(1));
       expect(rejectionCapture.captured.first.reason, GateRejectionReason.compactness,
-          reason: 'The compactness floor must still reject a thin sliver before the '
-              'session-elapsed gate is ever reached, unaffected by this change');
+          reason: 'With shape gates on, the compactness floor must still reject a thin '
+              'sliver before the claim-interval gate is ever reached');
       svc.reset();
+    });
+  });
+
+  // =========================================================================
+  // Group 13: shape-gate flag (kEnforceShapeGates) - the operator wants a
+  // claim gated on the area floor only for now, because a loop that
+  // legitimately extends an already-owned zone can be a thin wedge on its
+  // own and was being rejected by the shape gates before it ever reached
+  // the merge step. Default OFF: only the diagonal, compactness and
+  // path-length checks are skipped; the area floor and the claim-interval
+  // gate are unaffected and stay enforced in both flag states.
+  // =========================================================================
+
+  group('shape-gate flag (kEnforceShapeGates) - area-only claim widening', () {
+    late RunRecorderService svc;
+    late _AutoClaimCapture claimCapture;
+    late _GateRejectionCapture rejectionCapture;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      claimCapture = _AutoClaimCapture();
+      rejectionCapture = _GateRejectionCapture();
+      svc.onAutoClaim = claimCapture.call;
+      svc.onGateRejected = rejectionCapture.call;
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 90)));
+      svc.injectState(RecorderState.recording);
+    });
+
+    tearDown(() => svc.reset());
+
+    test('the shipped default is OFF', () {
+      expect(kEnforceShapeGates, isFalse,
+          reason: 'if this fails, the constant itself changed - update this test '
+              'deliberately, do not just make it pass');
+    });
+
+    // Reproduction: a thin wedge (~1650 sqm, ~431 m bounding-box diagonal,
+    // ~0.0089 compactness - see _thinWedgePath) that clears the area and
+    // diagonal floors but fails compactness badly. This is exactly the
+    // shape a real zone-extension loop produces.
+    test('default (shape gates OFF): a thin wedge that fails compactness is ACCEPTED', () async {
+      svc.injectTrackForTesting(_thinWedgePath());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, hasLength(1),
+          reason: 'With shape gates off, only the area floor gates a claim - the thin '
+              'wedge must now dispatch a claim, where it was rejected before this change');
+      expect(rejectionCapture.captured, isEmpty,
+          reason: 'No gate rejection may fire on the accepted path');
+    });
+
+    test('shape gates ON: the same thin wedge is REJECTED with compactness', () async {
+      svc.debugSetEnforceShapeGates(true);
+
+      svc.injectTrackForTesting(_thinWedgePath());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty,
+          reason: 'Flipping the flag back on must restore exactly today\'s enforcement');
+      expect(rejectionCapture.captured, hasLength(1));
+      expect(rejectionCapture.captured.first.reason, GateRejectionReason.compactness,
+          reason: 'The wedge clears area (~1650 sqm > 1500) and diagonal (~431 m > 30 m) '
+              'but fails compactness (~0.0089 < 0.15), so compactness is the reason it '
+              'is rejected once shape gates are re-enabled');
+    });
+
+    test('area floor still bites regardless of the flag - OFF', () async {
+      svc.injectTrackForTesting(_buildTinyCrossPath());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty);
+      expect(rejectionCapture.captured, hasLength(1));
+      expect(rejectionCapture.captured.first.reason, GateRejectionReason.areaFloor,
+          reason: 'The area floor is never gated behind the shape-gate flag');
+    });
+
+    test('area floor still bites regardless of the flag - ON', () async {
+      svc.debugSetEnforceShapeGates(true);
+
+      svc.injectTrackForTesting(_buildTinyCrossPath());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty);
+      expect(rejectionCapture.captured, hasLength(1));
+      expect(rejectionCapture.captured.first.reason, GateRejectionReason.areaFloor);
+    });
+  });
+
+  // =========================================================================
+  // Group 14: claim-interval gate - claim-to-claim or 0-to-claim per session.
+  //
+  // Was a single "total session elapsed since start" floor of 60 s, checked
+  // only against session start and never updated per claim. Now a per-claim
+  // interval floor of 30 s: the first claim of a session is still gated
+  // from session start (0-to-claim), but every claim AFTER the first is
+  // gated from the PREVIOUS dispatched claim (claim-to-claim), not from
+  // session start again.
+  // =========================================================================
+
+  group('claim-interval gate - claim-to-claim after the first claim, 0-to-claim for the first', () {
+    late RunRecorderService svc;
+    late _AutoClaimCapture claimCapture;
+    late _GateRejectionCapture rejectionCapture;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      claimCapture = _AutoClaimCapture();
+      rejectionCapture = _GateRejectionCapture();
+      svc.onAutoClaim = claimCapture.call;
+      svc.onGateRejected = rejectionCapture.call;
+      svc.injectState(RecorderState.recording);
+    });
+
+    tearDown(() => svc.reset());
+
+    // 0-to-claim: the first claim of a session is gated from session start.
+    test('first claim of a session, only 20s after session start, is rejected', () async {
+      svc.injectSessionStartTime(DateTime.now().subtract(const Duration(seconds: 20)));
+
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, isEmpty);
+      expect(rejectionCapture.captured, hasLength(1));
+      expect(rejectionCapture.captured.first.reason, GateRejectionReason.sessionElapsed);
+      expect(svc.lastClaimAtForTesting, isNull,
+          reason: 'A rejected claim must never become the new interval reference');
+    });
+
+    // 0-to-claim: the first claim of a session is accepted once 30s have
+    // passed since session start, and its own dispatch becomes the new
+    // claim-interval reference point for the next claim.
+    test('first claim of a session, 30s after session start, is accepted and becomes the new reference', () async {
+      final base = DateTime.now().toUtc();
+      svc.injectSessionStartTime(base.subtract(const Duration(seconds: 30)).toLocal());
+      svc.injectLastFixTimestamp(base);
+
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, hasLength(1));
+      expect(rejectionCapture.captured, isEmpty);
+      expect(svc.lastClaimAtForTesting, base,
+          reason: 'A dispatched claim must become the new claim-interval reference point');
+    });
+
+    // Claim-to-claim: a second claim attempted less than 30s after the
+    // first dispatched claim is rejected, measured from the FIRST CLAIM,
+    // not from session start again.
+    test('second claim, 10s after the first claim, is rejected', () async {
+      final base = DateTime.now().toUtc();
+      svc.injectSessionStartTime(base.subtract(const Duration(seconds: 90)).toLocal());
+      svc.injectLastFixTimestamp(base);
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+      expect(claimCapture.captured, hasLength(1),
+          reason: 'Precondition: the first claim must dispatch (90s since session start)');
+
+      // Second crossing, only 10s of fix-clock time after the first claim's
+      // own dispatch - well under the 30s claim-interval floor, even though
+      // it is well over 30s since session start.
+      svc.injectLastFixTimestamp(base.add(const Duration(seconds: 10)));
+      svc.injectTrackForTesting(_figure8PathExtended());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, hasLength(1),
+          reason: 'The second claim must NOT dispatch - only 10s have passed since the '
+              'first claim, even though session start was 100s ago');
+      expect(rejectionCapture.captured, hasLength(1));
+      expect(rejectionCapture.captured.first.reason, GateRejectionReason.sessionElapsed);
+      expect(rejectionCapture.captured.first.details['elapsed_sec'], 10,
+          reason: 'elapsed_sec must be measured from the first claim (10s), not from '
+              'session start (which would read ~100s)');
+    });
+
+    // Claim-to-claim: a second claim attempted 30s or more after the first
+    // dispatched claim is accepted.
+    test('second claim, 30s after the first claim, is accepted', () async {
+      final base = DateTime.now().toUtc();
+      svc.injectSessionStartTime(base.subtract(const Duration(seconds: 90)).toLocal());
+      svc.injectLastFixTimestamp(base);
+      svc.injectTrackForTesting(_figure8Path());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+      expect(claimCapture.captured, hasLength(1),
+          reason: 'Precondition: the first claim must dispatch');
+
+      svc.injectLastFixTimestamp(base.add(const Duration(seconds: 30)));
+      svc.injectTrackForTesting(_figure8PathExtended());
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, hasLength(2),
+          reason: 'A second claim exactly 30s after the first must be accepted');
+      expect(rejectionCapture.captured, isEmpty);
+    });
+
+    // Session boundary: _lastClaimAt must never leak into a new session.
+    test('reset() clears the claim-interval reference so a new session cannot inherit it', () {
+      svc.injectLastClaimAt(DateTime.now().toUtc());
+      expect(svc.lastClaimAtForTesting, isNotNull);
+
+      svc.reset();
+
+      expect(svc.lastClaimAtForTesting, isNull,
+          reason: 'A stale claim timestamp from a prior session must never leak into the next one');
     });
   });
 }
@@ -1079,6 +1331,30 @@ List<LatLng> _elongatedSliverPath() => [
       const LatLng(34.700200, 33.040000),
       const LatLng(34.700200, 33.000000),
       const LatLng(34.700000, 33.020000),
+    ];
+
+// A thin wedge that reproduces the shape a real zone-extension loop
+// produces: a genuine loop that legitimately extends an already-owned zone,
+// but whose OWN shape is a thin rectangle, not a compact block. Closes via
+// the vertex-proximity fallback (the closing fix E lands ~0.4 m from the
+// starting vertex A, well inside kProximityTriggerM), mirroring the "large
+// near-vertex closure" fixture already validated above (idx0..idx4, closes
+// near A). A(0,0) -> B(east, short edge) -> C(north, long edge) ->
+// D(west, back to A's longitude) -> E(closes near A).
+//
+// Captured polygon: area ~1650 sqm (clears the 1500 sqm area floor), a
+// bounding-box diagonal ~431 m (clears the 30 m diagonal floor), and a
+// compactness of ~0.0089 (area / diagonal^2), far below the 0.15
+// compactness floor - so it clears area and diagonal but fails compactness
+// hard. Exact figures verified against the app's own polygonArea /
+// polygonBboxDiagonalM projections (lib/geo/lasso.dart) before being fixed
+// as literals here.
+List<LatLng> _thinWedgePath() => const [
+      LatLng(34.7, 33.0),
+      LatLng(34.7, 33.00004292345667),
+      LatLng(34.70389904107111, 33.00004292345667),
+      LatLng(34.70389904107111, 33.0),
+      LatLng(34.70000271394971, 33.00000218528903),
     ];
 
 // Extended figure-8 path: appends a second crossing loop after the first one.

@@ -112,9 +112,25 @@ class RunRecorderService {
   // genuinely large loop to close.
   int _loopStartTrailIndex = 0;
 
-  // Wall-clock moment of the FAB Start tap. Used for the 60-second gate.
+  // Wall-clock moment of the FAB Start tap. Used as the claim-interval
+  // gate's reference point for the FIRST claim of a session (0-to-claim).
   // Persists across multiple auto-claims within the same session.
   DateTime? _sessionStartTime;
+
+  // Timestamp of the most recently DISPATCHED auto-claim (a crossing that
+  // cleared every gate and was handed to onAutoClaim), on the same clock
+  // domain as _lastFixTimestamp below. Null until the first claim of a
+  // session. Used as the claim-interval gate's reference point for every
+  // claim AFTER the first (claim-to-claim). This service only ever learns
+  // that a crossing cleared its own gates and was dispatched - whether the
+  // server subsequently confirmed or rejected the claim is decided in
+  // run_recorder_provider.dart's confirmClaim, which this service does not
+  // see, so "claim" here means "gate-cleared dispatch", not
+  // server-confirmed. Reset alongside _sessionStartTime everywhere a new
+  // session begins (startRun, beginSimulation, resumeFromScratch) or ends
+  // (stopRun, cancelRun, _clearTrackInternal) so a stale timestamp from a
+  // prior session can never leak into the next one.
+  DateTime? _lastClaimAt;
 
   // Timestamp of the most recent fix admitted into the pipeline. For a real
   // run this is the device fix time (same wall-clock domain as
@@ -216,9 +232,27 @@ class RunRecorderService {
   /// vertices are never within the vertex-proximity envelope of each other.
   static const double _minTrackPointSpacingM = kTrackPointSpacingM;
 
-  // No auto-claim may fire before this many seconds have elapsed since
-  // the FAB Start tap. Applies once per session, not per loop.
-  static const int _minSessionElapsedSec = 60;
+  // Minimum interval (seconds) between two auto-claims in the same session:
+  // claim-to-claim after the first claim, or 0-to-claim (session start) for
+  // the first claim. Was previously a single "total session elapsed since
+  // start" floor of 60 s (checked against _sessionStartTime only, never
+  // updated per claim); it is now a per-claim interval floor of 30 s,
+  // checked against whichever is more recent - the last dispatched claim, or
+  // session start if there has not been one yet. See _lastClaimAt above.
+  static const int _minClaimIntervalSec = 30;
+
+  // Effective shape-gate enforcement for THIS service instance. Defaults to
+  // kEnforceShapeGates (runwar_constants.dart), the single source of truth
+  // for shipped behaviour - production code never sets this field, so
+  // production always reflects the constant. It exists as a field, rather
+  // than reading the constant directly at both call sites, purely so a test
+  // can exercise the ON branch (see debugSetEnforceShapeGates below)
+  // without a second const-flipped build - Dart cannot branch a single test
+  // run on two different values of the same compile-time constant.
+  bool _enforceShapeGates = kEnforceShapeGates;
+
+  @visibleForTesting
+  void debugSetEnforceShapeGates(bool value) => _enforceShapeGates = value;
 
   @visibleForTesting
   static const String kNotificationTitle = 'RunWar - Active Session';
@@ -539,6 +573,7 @@ class RunRecorderService {
     }
     _loopStartTrailIndex = 0;
     _sessionStartTime = null;
+    _lastClaimAt = null;
     _lastFixTimestamp = null;
     _deferredCrossings.clear();
     _clockGuardTrips = 0;
@@ -599,6 +634,7 @@ class RunRecorderService {
     _clearTrackInternal();
     _loopStartTrailIndex = 0;
     _sessionStartTime = null;
+    _lastClaimAt = null;
     _lastFixTimestamp = null;
     _deferredCrossings.clear();
     _clockGuardTrips = 0;
@@ -666,71 +702,84 @@ class RunRecorderService {
       return;
     }
 
-    // Bounding-box diagonal floor. Rejects a thin sliver that clears the
-    // area floor only because it is long and narrow, not because it
-    // encloses a real block-scale loop. Same non-advancement reasoning as
-    // the area-floor branch above: the trail history is still needed for a
-    // later, genuinely large loop to close.
-    final diagonalM = polygonBboxDiagonalM(polygon);
-    if (diagonalM < _minCapturedAreaDiagonalM) {
-      ErrorLogService.logClientError(
-        provider: '_scanForAutoClaim.diagonal_floor_gate',
-        error: 'rejected: diagonal=${diagonalM.toStringAsFixed(1)}m floor=$_minCapturedAreaDiagonalM',
-        stackTrace: StackTrace.current,
-        retryCount: 0,
-      );
-      onGateRejected?.call(GateRejectionReason.diagonalFloor, {'diagonal_m': diagonalM});
-      return;
+    // Shape gates (diagonal, compactness, path-length) are gated behind
+    // kEnforceShapeGates, default OFF - the operator wants a claim gated on
+    // the area floor only for now, so a loop that legitimately extends an
+    // owned zone but is a thin wedge on its own is no longer rejected before
+    // it ever reaches the merge step. The three checks and their reasoning
+    // comments are kept in full, not deleted, so flipping the flag back on
+    // in runwar_constants.dart is a one-line, fully reversible change. Must
+    // stay numerically and behaviourally identical to kEnforceShapeGates in
+    // supabase/functions/claim_territory/handler.ts.
+    if (_enforceShapeGates) {
+      // Bounding-box diagonal floor. Rejects a thin sliver that clears the
+      // area floor only because it is long and narrow, not because it
+      // encloses a real block-scale loop. Same non-advancement reasoning as
+      // the area-floor branch above: the trail history is still needed for a
+      // later, genuinely large loop to close.
+      final diagonalM = polygonBboxDiagonalM(polygon);
+      if (diagonalM < _minCapturedAreaDiagonalM) {
+        ErrorLogService.logClientError(
+          provider: '_scanForAutoClaim.diagonal_floor_gate',
+          error: 'rejected: diagonal=${diagonalM.toStringAsFixed(1)}m floor=$_minCapturedAreaDiagonalM',
+          stackTrace: StackTrace.current,
+          retryCount: 0,
+        );
+        onGateRejected?.call(GateRejectionReason.diagonalFloor, {'diagonal_m': diagonalM});
+        return;
+      }
+
+      // Compactness floor. The diagonal check above does not catch a long thin
+      // sliver that clears both the area and diagonal floors on its own - for
+      // example a 1500 sqm shape stretched over a 200 m diagonal. Dividing area
+      // by diagonal squared separates them: a square scores 0.5, a 1:4
+      // rectangle about 0.19, a needle near zero. Same non-advancement
+      // reasoning as the branches above.
+      final compactness = diagonalM > 0 ? areaSqm / (diagonalM * diagonalM) : 0.0;
+      if (compactness < kMinCapturedAreaCompactness) {
+        ErrorLogService.logClientError(
+          provider: '_scanForAutoClaim.compactness_gate',
+          error: 'rejected: compactness=${compactness.toStringAsFixed(3)} '
+              'floor=$kMinCapturedAreaCompactness',
+          stackTrace: StackTrace.current,
+          retryCount: 0,
+        );
+        onGateRejected?.call(
+            GateRejectionReason.compactness, {'compactness': compactness});
+        return;
+      }
+
+      // Path-length floor, measured along the captured loop's own vertices.
+      // Unlike area, diagonal and compactness, this one cannot be satisfied by
+      // shape alone - it requires the phone to have physically travelled that
+      // far, which is what makes it the anti-farming check rather than an
+      // anti-jitter one.
+      final loopPathM = trackDistanceM(polygon);
+      if (loopPathM < kMinCapturedPathLengthM) {
+        ErrorLogService.logClientError(
+          provider: '_scanForAutoClaim.path_length_gate',
+          error: 'rejected: path=${loopPathM.toStringAsFixed(1)}m '
+              'floor=$kMinCapturedPathLengthM',
+          stackTrace: StackTrace.current,
+          retryCount: 0,
+        );
+        onGateRejected?.call(
+            GateRejectionReason.pathLength, {'path_m': loopPathM});
+        return;
+      }
     }
 
-    // Compactness floor. The diagonal check above does not catch a long thin
-    // sliver that clears both the area and diagonal floors on its own - for
-    // example a 1500 sqm shape stretched over a 200 m diagonal. Dividing area
-    // by diagonal squared separates them: a square scores 0.5, a 1:4
-    // rectangle about 0.19, a needle near zero. Same non-advancement
-    // reasoning as the branches above.
-    final compactness = diagonalM > 0 ? areaSqm / (diagonalM * diagonalM) : 0.0;
-    if (compactness < kMinCapturedAreaCompactness) {
-      ErrorLogService.logClientError(
-        provider: '_scanForAutoClaim.compactness_gate',
-        error: 'rejected: compactness=${compactness.toStringAsFixed(3)} '
-            'floor=$kMinCapturedAreaCompactness',
-        stackTrace: StackTrace.current,
-        retryCount: 0,
-      );
-      onGateRejected?.call(
-          GateRejectionReason.compactness, {'compactness': compactness});
-      return;
-    }
-
-    // Path-length floor, measured along the captured loop's own vertices.
-    // Unlike area, diagonal and compactness, this one cannot be satisfied by
-    // shape alone - it requires the phone to have physically travelled that
-    // far, which is what makes it the anti-farming check rather than an
-    // anti-jitter one.
-    final loopPathM = trackDistanceM(polygon);
-    if (loopPathM < kMinCapturedPathLengthM) {
-      ErrorLogService.logClientError(
-        provider: '_scanForAutoClaim.path_length_gate',
-        error: 'rejected: path=${loopPathM.toStringAsFixed(1)}m '
-            'floor=$kMinCapturedPathLengthM',
-        stackTrace: StackTrace.current,
-        retryCount: 0,
-      );
-      onGateRejected?.call(
-          GateRejectionReason.pathLength, {'path_m': loopPathM});
-      return;
-    }
-
-    // 60-second gate (per session, not per loop). Note this is no longer the
-    // binding constraint on effort: a loop clearing the area and path floors
-    // above already implies well over a minute of movement.
-    final start = _sessionStartTime;
+    // Claim-interval gate: at least _minClaimIntervalSec must have elapsed
+    // since the reference point below before this claim may dispatch.
+    // Reference is the last DISPATCHED claim this session (claim-to-claim),
+    // or session start if there has not been one yet (0-to-claim, first
+    // claim of the session). See _lastClaimAt's doc comment above.
+    final start = _lastClaimAt ?? _sessionStartTime;
     final elapsedSec = start == null ? -1 : _elapsedSecForGate(start);
-    if (start == null || elapsedSec < _minSessionElapsedSec) {
+    if (start == null || elapsedSec < _minClaimIntervalSec) {
       // Do NOT advance _loopStartTrailIndex here, and do NOT discard this
-      // crossing. All four geometric gates above have already passed; the
-      // only thing missing is elapsed time. The polygon is retained in
+      // crossing. The geometric gate(s) above have already passed; the only
+      // thing missing is elapsed time. The polygon is retained in
       // _deferredCrossings and re-dispatched by _drainDeferredCrossings() on
       // a later fix once the threshold passes. That retention is what makes
       // the crossing recoverable: detectSelfIntersection only ever tests
@@ -739,7 +788,7 @@ class RunRecorderService {
       // again and the crossing could not re-fire on its own.
       ErrorLogService.logClientError(
         provider: '_scanForAutoClaim.session_elapsed_gate',
-        error: 'rejected: elapsed=${elapsedSec}s floor=$_minSessionElapsedSec',
+        error: 'rejected: elapsed=${elapsedSec}s floor=$_minClaimIntervalSec',
         stackTrace: StackTrace.current,
         retryCount: 0,
       );
@@ -755,6 +804,11 @@ class RunRecorderService {
     // contains every earlier deferred polygon's span. Claiming them
     // afterward would double-claim overlapping ground.
     _deferredCrossings.clear();
+    // Record this claim as the new claim-interval reference point for the
+    // NEXT auto-claim in this session. Same fix-preferred-else-wall-clock
+    // domain as _elapsedSecForGate, so the next comparison stays on one
+    // consistent timeline.
+    _lastClaimAt = _lastFixTimestamp ?? DateTime.now().toUtc();
 
     final cb = onAutoClaim;
     if (cb != null) {
@@ -833,12 +887,12 @@ class RunRecorderService {
   /// threshold has now passed. At most once per crossing. SPEC-0143.
   void _drainDeferredCrossings() {
     if (_deferredCrossings.isEmpty) return;
-    final start = _sessionStartTime;
+    final start = _lastClaimAt ?? _sessionStartTime;
     if (start == null) {
       _deferredCrossings.clear(); // no session: nothing may claim
       return;
     }
-    if (_elapsedSecForGate(start) < _minSessionElapsedSec) return;
+    if (_elapsedSecForGate(start) < _minClaimIntervalSec) return;
 
     // Detach BEFORE dispatching. onAutoClaim is provider code that can run
     // synchronously up to its first await; if it re-entered _scanForAutoClaim
@@ -856,6 +910,15 @@ class RunRecorderService {
       _loopStartTrailIndex =
           math.max(_loopStartTrailIndex, d.detectedAtTrailIndex + 1);
       onAutoClaim?.call(d.polygon).catchError((_) {});
+    }
+    // Record the drain as the new claim-interval reference point, same as
+    // the live dispatch path. The whole batch is gated by one check above
+    // (pre-existing design: the batch either all clears the floor together
+    // or none of it does), so one reference update after the batch mirrors
+    // that same granularity rather than inventing a new per-item interval
+    // this method never enforced even under the old session-elapsed gate.
+    if (pending.isNotEmpty) {
+      _lastClaimAt = _lastFixTimestamp ?? DateTime.now().toUtc();
     }
   }
 
@@ -1110,8 +1173,14 @@ class RunRecorderService {
       _closedAt = null;
       _loopStartTrailIndex = 0;
       // Wall-clock session start reconstructed from earliest sample so the
-      // 60-second gate behaves correctly across kill+resume.
+      // claim-interval gate's 0-to-claim reference behaves correctly across
+      // kill+resume. This is a resumed session, not a new one, but the
+      // resumed process has no memory of any claim that may have already
+      // dispatched before the kill, so _lastClaimAt resets to null here and
+      // the interval falls back to this reconstructed session start until a
+      // claim actually dispatches within the resumed process.
       _sessionStartTime = earliest?.toLocal() ?? DateTime.now();
+      _lastClaimAt = null;
       _lastFixTimestamp = null;
       _deferredCrossings.clear();
       _clockGuardTrips = 0;
@@ -1208,37 +1277,41 @@ class RunRecorderService {
         _loopStartTrailIndex = len;
         continue;
       }
-      final diagonalM = polygonBboxDiagonalM(polygon);
-      if (diagonalM < _minCapturedAreaDiagonalM) {
-        _loopStartTrailIndex = len;
-        continue;
+      // F1 (SPEC-0143 design.md): the rescan path must apply the same shape
+      // gates the live path applies, so a "deferred" crossing provably means
+      // "cleared the same gates" on every path, not just the live one.
+      // Gated behind kEnforceShapeGates exactly like the live path in
+      // _scanForAutoClaim - see the comment there. Without this guard, a
+      // thin sliver the live path now accepts could still be rejected here
+      // after an app-kill-and-resume, which would make the two paths
+      // disagree on the same polygon.
+      if (_enforceShapeGates) {
+        final diagonalM = polygonBboxDiagonalM(polygon);
+        if (diagonalM < _minCapturedAreaDiagonalM) {
+          _loopStartTrailIndex = len;
+          continue;
+        }
+        final compactness = diagonalM > 0 ? areaSqm / (diagonalM * diagonalM) : 0.0;
+        if (compactness < kMinCapturedAreaCompactness) {
+          _loopStartTrailIndex = len;
+          continue;
+        }
+        final loopPathM = trackDistanceM(polygon);
+        if (loopPathM < kMinCapturedPathLengthM) {
+          _loopStartTrailIndex = len;
+          continue;
+        }
       }
-      // F1 (SPEC-0143 design.md): the rescan path must apply the same
-      // compactness and path-length floors the live path already enforces,
-      // so a "deferred" crossing provably means "cleared all four gates" on
-      // every path, not just the live one. Without these two, a thin sliver
-      // or a short-path loop could claim once 60 s elapsed via rehydration
-      // even though the live path has always refused it.
-      final compactness = diagonalM > 0 ? areaSqm / (diagonalM * diagonalM) : 0.0;
-      if (compactness < kMinCapturedAreaCompactness) {
-        _loopStartTrailIndex = len;
-        continue;
-      }
-      final loopPathM = trackDistanceM(polygon);
-      if (loopPathM < kMinCapturedPathLengthM) {
-        _loopStartTrailIndex = len;
-        continue;
-      }
-      // 60-second gate at the timestamp of partial.last (approximate via
-      // _sessionStartTime, which was set above from the earliest scratch
-      // ts). This path stays wall-clock (finding F2 in design.md): scratch
-      // ts values are real device wall-clock stamps on the same absolute
-      // timeline as DateTime.now(), so there is no mixed-domain comparison
-      // here to repair.
-      final start = _sessionStartTime;
+      // Claim-interval gate at the timestamp of partial.last (approximate
+      // via _lastClaimAt, or _sessionStartTime for the first claim - set
+      // above from the earliest scratch ts). This path stays wall-clock
+      // (finding F2 in design.md): scratch ts values are real device
+      // wall-clock stamps on the same absolute timeline as DateTime.now(),
+      // so there is no mixed-domain comparison here to repair.
+      final start = _lastClaimAt ?? _sessionStartTime;
       if (start == null ||
-          DateTime.now().difference(start).inSeconds < _minSessionElapsedSec) {
-        // All four geometric gates passed and only elapsed time is missing.
+          DateTime.now().difference(start).inSeconds < _minClaimIntervalSec) {
+        // The geometric gate(s) passed and only elapsed time is missing.
         // Retain the polygon so it dispatches from _drainDeferredCrossings
         // on the first live fix after the threshold passes. Do NOT advance
         // _loopStartTrailIndex: the trail history is still needed, and the
@@ -1247,6 +1320,9 @@ class RunRecorderService {
         continue;
       }
       _loopStartTrailIndex = len;
+      // Record this claim as the new claim-interval reference point, same
+      // as the live dispatch path.
+      _lastClaimAt = DateTime.now().toUtc();
       final cb = onAutoClaim;
       if (cb != null) {
         // Run sequentially so concurrent zones never collide; await blocks
@@ -1271,6 +1347,7 @@ class RunRecorderService {
     _startedAt = null;
     _closedAt = null;
     _sessionStartTime = null;
+    _lastClaimAt = null;
     _lastFixTimestamp = null;
     _deferredCrossings.clear();
     _clockGuardTrips = 0;
@@ -1284,6 +1361,12 @@ class RunRecorderService {
 
   @visibleForTesting
   void injectSessionStartTime(DateTime t) => _sessionStartTime = t;
+
+  @visibleForTesting
+  void injectLastClaimAt(DateTime? t) => _lastClaimAt = t;
+
+  @visibleForTesting
+  DateTime? get lastClaimAtForTesting => _lastClaimAt;
 
   @visibleForTesting
   void injectState(RecorderState s) {
@@ -1335,6 +1418,8 @@ class RunRecorderService {
   void reset() {
     _loopStartTrailIndex = 0;
     _sessionStartTime = null;
+    _lastClaimAt = null;
+    _enforceShapeGates = kEnforceShapeGates;
     _currentSessionId = null;
     _simActive = false;
     _simulationGeneration = 0;

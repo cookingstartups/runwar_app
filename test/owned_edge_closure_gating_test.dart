@@ -154,10 +154,17 @@ void main() {
     });
 
     // GIVEN an owned-edge closure whose sliver clears area and diagonal but
-    //   is too elongated to clear the compactness floor
+    //   is too elongated to clear the compactness floor, WITH shape gates ON
     // WHEN _scanForAutoClaim runs
     // THEN onGateRejected fires with compactness and no claim is dispatched
-    test('a sliver failing the compactness floor is rejected exactly like a self-closed loop', () async {
+    //
+    // Shape gates are off by default now (kEnforceShapeGates in
+    // runwar_constants.dart) - this test explicitly re-enables them to prove
+    // the owned-edge path still applies compactness exactly like the
+    // self-closure path when the flag is on, same reversibility guarantee
+    // covered for the self-closure path in auto_claim_test.dart.
+    test('shape gates ON: a sliver failing the compactness floor is rejected exactly like a self-closed loop', () async {
+      svc.debugSetEnforceShapeGates(true);
       final fixture = _elongatedWallCrossingFixture();
       svc.ownedZoneEdgesProvider = () => [fixture.wall];
       svc.injectTrackForTesting(fixture.trail);
@@ -170,6 +177,23 @@ void main() {
       expect(rejectionCapture.captured.first.reason, GateRejectionReason.compactness,
           reason: 'The elongated shape must fail specifically on compactness, having already '
               'cleared area and diagonal');
+    });
+
+    // Mirror of the test above with the shipped default (shape gates OFF):
+    // the SAME elongated sliver now claims, because only the area floor
+    // gates it - the owned-edge path gets no special-casing around the
+    // shape-gate flag either.
+    test('shape gates OFF (default): the same elongated sliver now dispatches a claim', () async {
+      final fixture = _elongatedWallCrossingFixture();
+      svc.ownedZoneEdgesProvider = () => [fixture.wall];
+      svc.injectTrackForTesting(fixture.trail);
+      svc.runScanForAutoClaimForTesting();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(claimCapture.captured, hasLength(1),
+          reason: 'With shape gates off, only the area floor gates a claim - the elongated '
+              'sliver clears it (~8154 sqm) so it must now dispatch');
+      expect(rejectionCapture.captured, isEmpty);
     });
 
     // GIVEN a runner's trail runs along what would be a rival zone's edge,

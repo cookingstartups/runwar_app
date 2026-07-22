@@ -30,6 +30,23 @@ const kMergeThresholdMeters = 25;
 // client-side kMinSplitFragmentAreaSqm in lib/utils/runwar_constants.dart.
 const kMinSplitFragmentAreaSqm = 375.0;
 
+// Feature flag controlling enforcement of the two SHAPE gates on a captured
+// claim ring: bounding-box diagonal and compactness (see
+// evaluateCapturedRingGates below). Default OFF: a captured ring is gated
+// on the area floor only, so a claim that legitimately extends an
+// already-owned zone but is a thin wedge on its own is no longer rejected
+// here. Both shape checks and their reasoning comments stay in place, not
+// deleted - flipping this back to true is a fully reversible one-line
+// change that restores exactly today's enforcement. This is a temporary
+// loosening, not a permanent removal.
+//
+// Must stay numerically and behaviourally identical to kEnforceShapeGates
+// in lib/utils/runwar_constants.dart - the two are enforced independently
+// (client gates before dispatch, server gates again on receipt) and a
+// mismatch lets a claim pass one side and fail the other. If this value
+// changes, change the client value too.
+export const kEnforceShapeGates = false;
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -145,6 +162,113 @@ function outlinesOf(geom: { type?: string; coordinates?: unknown } | null | unde
   return [];
 }
 
+export interface CapturedRingGateResult {
+  passed: boolean;
+  reason?: 'too_short';
+  areaSqm: number;
+  diagonalM?: number;
+  compactness?: number;
+}
+
+// Evaluates the geometric floors a newly-captured claim ring must clear
+// before a claim proceeds to zone-overlap evaluation. Extracted as its own
+// pure function - no Supabase client, no auth, no network - so it can be
+// unit-tested directly against a ring, the same way runSplitAndMerge below
+// is unit-tested against an injectable db client instead of only through
+// handleClaimTerritoryRequest's live HTTP path. handleClaimTerritoryRequest
+// is the only caller and applies no other geometric floor of its own.
+//
+// Area is always enforced. The two shape floors (diagonal, compactness) are
+// gated behind [enforceShapeGates], which defaults to the kEnforceShapeGates
+// module constant (the real, shipped flag) so production code (the only
+// caller, handleClaimTerritoryRequest) always reflects the constant without
+// passing anything explicitly. The parameter exists purely so a test can
+// exercise both the OFF and ON branches in one run - a module-level const
+// cannot be flipped mid-test-run the way a parameter default can.
+export function evaluateCapturedRingGates(
+  ring: number[][],
+  enforceShapeGates: boolean = kEnforceShapeGates,
+): CapturedRingGateResult {
+  // Enclosed-area gate - the client's lasso-detection floor is an enclosed
+  // area, not a perimeter/distance, so the server must gate on the same
+  // quantity or a track that passes the client can still be rejected here.
+  // Uses the same turfArea helper already relied on elsewhere in this file
+  // for merged-zone area (survivorAreaM2 below) so the area math stays a
+  // single source of truth instead of a second hand-rolled projection.
+  //
+  // Must stay numerically equal to the client-side floor in
+  // lib/services/run_recorder_service.dart (_minCapturedAreaSqm) - the two
+  // are enforced independently (client gates before dispatch, server gates
+  // again on receipt) and a mismatch lets a claim pass one side and fail
+  // the other. If this value changes, change the client value too.
+  //
+  // 1500 sqm is a jitter/real-loop separation floor derived from a single
+  // observed live run (n=1): the one genuine loop closure measured about
+  // 24 972 sqm, while every spurious/jitter closure logged in that same
+  // run measured between 0.4 and 40.8 sqm - a separation factor over 600x.
+  //
+  // The value sits above the client accuracy gate's own worst case rather
+  // than just above observed noise. A stationary phone pinned at that 20 m
+  // gate could in theory enclose roughly pi * 20^2, about 1257 sqm, through
+  // jitter alone, so any floor below that figure would sit inside the
+  // envelope it is meant to backstop. Against measured jitter 1500 carries
+  // about a 37x margin.
+  //
+  // This server check is also the backstop against a client shipping a
+  // debug threshold: it rejects independently of whatever the client
+  // allowed through.
+  const minCapturedAreaSqm = 1500;
+  const closedNewRing = closedRing(ring);
+  const capturedAreaSqm = turfArea({ type: 'Polygon', coordinates: [closedNewRing] });
+  if (capturedAreaSqm < minCapturedAreaSqm) {
+    return { passed: false, reason: 'too_short', areaSqm: capturedAreaSqm };
+  }
+
+  if (!enforceShapeGates) {
+    return { passed: true, areaSqm: capturedAreaSqm };
+  }
+
+  // Bounding-box diagonal floor, checked alongside the area floor above.
+  // Rejects a thin sliver that clears the area floor only because it is
+  // long and narrow, not because it encloses a real block-scale loop.
+  // Mirrors kMinCapturedAreaDiagonalM in
+  // lib/utils/runwar_constants.dart / RunRecorderService._minCapturedAreaDiagonalM.
+  const minCapturedAreaDiagonalM = 30;
+  const capturedDiagonalM = ringBboxDiagonalM(closedNewRing);
+  if (capturedDiagonalM < minCapturedAreaDiagonalM) {
+    return { passed: false, reason: 'too_short', areaSqm: capturedAreaSqm, diagonalM: capturedDiagonalM };
+  }
+
+  // Compactness floor. The diagonal check above does not catch a long thin
+  // sliver that clears both the area and diagonal floors on its own - for
+  // example a shape with enough area stretched over a very long diagonal.
+  // Dividing area by diagonal squared separates them: a square scores 0.5,
+  // a 1:4 rectangle about 0.19, a needle near zero. 0.15 still admits the
+  // elongated rectangular loops real street grids produce. Mirrors
+  // kMinCapturedAreaCompactness in lib/utils/runwar_constants.dart - if
+  // this value changes, change the client value too.
+  const minCapturedAreaCompactness = 0.15;
+  const capturedCompactness = capturedDiagonalM > 0
+    ? capturedAreaSqm / (capturedDiagonalM * capturedDiagonalM)
+    : 0;
+  if (capturedCompactness < minCapturedAreaCompactness) {
+    return {
+      passed: false,
+      reason: 'too_short',
+      areaSqm: capturedAreaSqm,
+      diagonalM: capturedDiagonalM,
+      compactness: capturedCompactness,
+    };
+  }
+
+  return {
+    passed: true,
+    areaSqm: capturedAreaSqm,
+    diagonalM: capturedDiagonalM,
+    compactness: capturedCompactness,
+  };
+}
+
 // The request handler lives in this sibling module, separate from
 // index.ts's module-level Deno.serve() call, so a test can import it
 // without triggering that call and starting a real listener. index.ts
@@ -192,66 +316,14 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
       }
     }
 
-    // Enclosed-area gate - the client's lasso-detection floor is an enclosed
-    // area, not a perimeter/distance, so the server must gate on the same
-    // quantity or a track that passes the client can still be rejected here.
-    // Uses the same turfArea helper already relied on elsewhere in this file
-    // for merged-zone area (survivorAreaM2 below) so the area math stays a
-    // single source of truth instead of a second hand-rolled projection.
-    //
-    // Must stay numerically equal to the client-side floor in
-    // lib/services/run_recorder_service.dart (_minCapturedAreaSqm) - the two
-    // are enforced independently (client gates before dispatch, server gates
-    // again on receipt) and a mismatch lets a claim pass one side and fail
-    // the other. If this value changes, change the client value too.
-    //
-    // 1500 sqm is a jitter/real-loop separation floor derived from a single
-    // observed live run (n=1): the one genuine loop closure measured about
-    // 24 972 sqm, while every spurious/jitter closure logged in that same
-    // run measured between 0.4 and 40.8 sqm - a separation factor over 600x.
-    //
-    // The value sits above the client accuracy gate's own worst case rather
-    // than just above observed noise. A stationary phone pinned at that 20 m
-    // gate could in theory enclose roughly pi * 20^2, about 1257 sqm, through
-    // jitter alone, so any floor below that figure would sit inside the
-    // envelope it is meant to backstop. Against measured jitter 1500 carries
-    // about a 37x margin.
-    //
-    // This server check is also the backstop against a client shipping a
-    // debug threshold: it rejects independently of whatever the client
-    // allowed through.
-    const minCapturedAreaSqm = 1500;
-    const closedNewRing = closedRing(coords);
-    const capturedAreaSqm = turfArea({ type: 'Polygon', coordinates: [closedNewRing] });
-    if (capturedAreaSqm < minCapturedAreaSqm) {
-      return ok({ result: 'failed', reason: 'too_short' });
-    }
-
-    // Bounding-box diagonal floor, checked alongside the area floor above.
-    // Rejects a thin sliver that clears the area floor only because it is
-    // long and narrow, not because it encloses a real block-scale loop.
-    // Mirrors kMinCapturedAreaDiagonalM in
-    // lib/utils/runwar_constants.dart / RunRecorderService._minCapturedAreaDiagonalM.
-    const minCapturedAreaDiagonalM = 30;
-    const capturedDiagonalM = ringBboxDiagonalM(closedNewRing);
-    if (capturedDiagonalM < minCapturedAreaDiagonalM) {
-      return ok({ result: 'failed', reason: 'too_short' });
-    }
-
-    // Compactness floor. The diagonal check above does not catch a long thin
-    // sliver that clears both the area and diagonal floors on its own - for
-    // example a shape with enough area stretched over a very long diagonal.
-    // Dividing area by diagonal squared separates them: a square scores 0.5,
-    // a 1:4 rectangle about 0.19, a needle near zero. 0.15 still admits the
-    // elongated rectangular loops real street grids produce. Mirrors
-    // kMinCapturedAreaCompactness in lib/utils/runwar_constants.dart - if
-    // this value changes, change the client value too.
-    const minCapturedAreaCompactness = 0.15;
-    const capturedCompactness = capturedDiagonalM > 0
-      ? capturedAreaSqm / (capturedDiagonalM * capturedDiagonalM)
-      : 0;
-    if (capturedCompactness < minCapturedAreaCompactness) {
-      return ok({ result: 'failed', reason: 'too_short' });
+    // Geometric floors the captured ring must clear before the claim
+    // proceeds to zone-overlap evaluation. Area is always enforced; the
+    // shape floors (diagonal, compactness) are gated behind
+    // kEnforceShapeGates - see evaluateCapturedRingGates and the flag's own
+    // doc comment above.
+    const capturedGates = evaluateCapturedRingGates(coords);
+    if (!capturedGates.passed) {
+      return ok({ result: 'failed', reason: capturedGates.reason ?? 'too_short' });
     }
 
     // Load existing zones for this city

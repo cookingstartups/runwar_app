@@ -345,7 +345,7 @@ void main() {
     tearDown(() => svc.reset());
 
     // Scenario 3.
-    test('a loop closing after 60s of fixture time claims, even though real wall-clock replay '
+    test('a loop closing after 30s of fixture time claims, even though real wall-clock replay '
         'time is well under a second', () async {
       final base = DateTime.parse('2026-07-18T16:00:00.000Z');
       final events = _figure8SimFixture(base: base, offsets: [5, 10, 15, 20, 65]);
@@ -364,10 +364,15 @@ void main() {
     // Scenario 4. The numeric elapsed_sec assertion is mandatory, not
     // optional: a guard-tripped wall-clock fallback could also land near 0s
     // and reject, which would make this test pass for the wrong reason.
-    test('a loop closing before 60s of fixture time is rejected, with elapsed_sec exactly '
+    // Offsets updated for the 60s -> 30s claim-interval floor change: the
+    // closing fix now lands at 20s (previously 30s, which was itself the
+    // exact old floor and is now ABOVE the new one - keeping it would have
+    // silently flipped this test from a rejection case to an acceptance
+    // case instead of catching the regression).
+    test('a loop closing before 30s of fixture time is rejected, with elapsed_sec exactly '
         'matching the fixture clock', () async {
       final base = DateTime.parse('2026-07-18T16:00:00.000Z');
-      final events = _figure8SimFixture(base: base, offsets: [5, 10, 15, 20, 30]);
+      final events = _figure8SimFixture(base: base, offsets: [5, 10, 15, 18, 20]);
       final rejections = <Map<String, dynamic>>[];
       var claims = 0;
       await svc.beginSimulation(simulatedSessionStart: base);
@@ -380,8 +385,8 @@ void main() {
 
       expect(claims, 0);
       expect(rejections, hasLength(1));
-      expect(rejections.first['elapsed_sec'], 30,
-          reason: 'elapsed_sec must equal exactly the fixture-clock delta (30s), proving the '
+      expect(rejections.first['elapsed_sec'], 20,
+          reason: 'elapsed_sec must equal exactly the fixture-clock delta (20s), proving the '
               'gate read the fixture timeline and not a guard-tripped wall-clock fallback');
       expect(svc.clockGuardTripsForTesting, 0,
           reason: 'A correctly-seeded simulation must never trip the clock-domain guard');
