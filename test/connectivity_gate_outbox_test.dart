@@ -56,7 +56,7 @@ void main() {
   // disposal, which is not what that call needs. The AC-1 assertions below
   // have been re-anchored to the actual current mechanism instead of a
   // string that no longer describes any code.
-  group('AC-1: listener lifecycle — auto-claim stream registered in initState', () {
+  group('AC-1: listener lifecycle - auto-claim stream registered in initState', () {
     test(
       'AC-1: map_screen.dart subscribes to autoClaimOutcomes in initState '
       '(not only inside build)',
@@ -220,13 +220,13 @@ void main() {
   // Nothing in run_recorder_service.dart, territory_service.dart, or any
   // provider calls reportProgress or autoComplete for the run-driven
   // missions ('walk_2km', 'back_to_back') or the claim/attack missions.
-  // lib/providers/daily_missions_provider.dart says explicitly: "Full
-  // service wiring will be completed by the Backend-Developer agent once
-  // DailyMissionsService has its real implementation." That documents this
-  // as a known, pre-existing, intentionally-deferred gap owned by a
-  // different workstream, not a regression introduced on this branch and
-  // not something to patch here. The assertion below is re-anchored to
-  // record that gap explicitly rather than testing a call site that no
+  // lib/providers/daily_missions_provider.dart marks the full service
+  // wiring as still to be completed once DailyMissionsService has its real
+  // implementation. That documents this as a known, pre-existing,
+  // intentionally-deferred gap owned by a different workstream, not a
+  // regression introduced on this branch and not something to patch here.
+  // The assertion below is re-anchored to record that gap explicitly
+  // rather than testing a call site that no
   // longer exists.
   group(
     'AC-5: DailyMissionsService.reportProgress has no gameplay call site yet',
