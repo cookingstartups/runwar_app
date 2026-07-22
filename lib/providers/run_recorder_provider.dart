@@ -121,6 +121,13 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   void debugRegisterPendingOwnedZoneEdge(String zoneId, List<LatLng> outline) =>
       _registerPendingOwnedZoneEdge(zoneId, outline);
 
+  /// Test-only window into how many claims are still waiting on a fresh
+  /// [zonesProvider] emission, so a test can assert the pruning behaviour
+  /// documented on [ownedZoneEdgesProvider] without reaching into private
+  /// state directly.
+  @visibleForTesting
+  int get debugPendingOwnedZoneEdgeCount => _pendingOwnedZoneEdges.length;
+
   final _autoClaimOutcomeController =
       StreamController<({ClaimOutcome outcome, List<LatLng> polygon})>.broadcast();
 

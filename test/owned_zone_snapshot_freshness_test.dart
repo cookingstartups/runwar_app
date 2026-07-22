@@ -13,6 +13,8 @@
 // it fails only when a lasso closed against the just-claimed edge is
 // actually missed.
 
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
@@ -139,6 +141,83 @@ void main() {
           hasLength(1),
           reason: 'The scan must see a zone the instant it is claimed, not '
               'only after zonesProvider happens to re-emit',
+        );
+      },
+    );
+  });
+
+  group('owned-zone snapshot freshness - pending entry pruning', () {
+    late MockZonesRepository zonesRepo;
+    late StreamController<List<Zone>> zonesController;
+    late ProviderContainer container;
+    late RunRecorderNotifier notifier;
+    final svc = RunRecorderService.instance;
+
+    setUp(() {
+      zonesRepo = MockZonesRepository();
+      zonesController = StreamController<List<Zone>>.broadcast();
+      when(() => zonesRepo.watchByCity(_kCity))
+          .thenAnswer((_) => zonesController.stream);
+
+      container = makeTestContainer(
+        zonesRepo: zonesRepo,
+        overrides: [
+          authProvider.overrideWith((_) => _FixedAuthNotifier()),
+        ],
+      );
+      container.listen(zonesProvider(_kCity), (_, __) {});
+
+      notifier = RunRecorderNotifier(container.read(_refProvider));
+      svc.activeCity = _kCity;
+    });
+
+    tearDown(() async {
+      svc.reset();
+      notifier.dispose();
+      await zonesController.close();
+      container.dispose();
+    });
+
+    test(
+      'a pending entry is dropped once the fresh snapshot reports the same zone owned',
+      () async {
+        final fixture = _wallCrossingFixture();
+
+        notifier.debugRegisterPendingOwnedZoneEdge(_kZoneId, fixture.wall);
+        expect(notifier.debugPendingOwnedZoneEdgeCount, 1);
+
+        // Read the merged edges once while the fresh snapshot still has
+        // nothing - the pending entry must be the only source and must
+        // survive, exactly like the claim-then-close test above.
+        svc.injectTrackForTesting(const []);
+        svc.runScanForAutoClaimForTesting();
+        expect(notifier.debugPendingOwnedZoneEdgeCount, 1);
+
+        // Now the real snapshot catches up and reports the same zone id as
+        // owned by this runner - the fresh snapshot has superseded the
+        // pending guess, so it must be pruned on the very next scan.
+        zonesController.add([
+          Zone(
+            id: _kZoneId,
+            ownerId: _kUserId,
+            city: _kCity,
+            influenceLevel: 1,
+            status: ZoneStatus.owned,
+            points: fixture.wall,
+          ),
+        ]);
+        // Let the stream emission propagate into zonesProvider's state.
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        svc.runScanForAutoClaimForTesting();
+
+        expect(
+          notifier.debugPendingOwnedZoneEdgeCount,
+          0,
+          reason: 'A pending entry must be pruned once the fresh zones '
+              'snapshot reports the same zone id as owned, so it never '
+              'serves a stale shape and never grows unbounded across a run',
         );
       },
     );
