@@ -8,9 +8,9 @@
 // additively from it, as long as the combined area is unchanged.
 //
 // Files under test:
-//   lib/services/territory_service.dart — TerritoryService.polygonAreaKm2
-//   lib/services/database/models/zone.dart — Zone.fromGeoJsonRow
-//   lib/providers/territory_provider.dart — playerTerritoryKm2Provider
+//   lib/services/territory_service.dart - TerritoryService.polygonAreaKm2
+//   lib/services/database/models/zone.dart - Zone.fromGeoJsonRow
+//   lib/providers/territory_provider.dart - playerTerritoryKm2Provider
 //     (the player-facing occupied-area total; this test exercises its exact
 //     row-summation loop directly, since the provider itself is wired to a
 //     live Supabase client with no dependency-injection seam suitable for a
