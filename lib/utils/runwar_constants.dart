@@ -113,3 +113,20 @@ const int kMaxPlausibleSessionElapsedSec = 86400; // 24 h
 // receipt) and a mismatch lets a claim pass one side and fail the other.
 // If this value changes, change the server value too.
 const bool kEnforceShapeGates = false;
+
+// Minimum number of a detected loop closure's trail segments that must lie
+// outside every span already consumed by a dispatched claim in this
+// session, checked before the area floor in RunRecorderService's
+// auto-claim scan (the consumed-span dedup gate). A detected closure whose
+// candidate span [i..k] has fewer than this many segments outside every
+// already-consumed span is silently skipped, not claimed.
+//
+// This admits a genuinely new loop that shares corridor with already-
+// claimed ground - a big excursion loop that closes against early trail
+// history a small loop already consumed - while blocking a near-duplicate
+// re-crossing of a loop already claimed - the runner re-walking the same
+// corridor and closing an almost-identical loop a few fixes later.
+//
+// At the 50 m point spacing (kTrackPointSpacingM), 4 segments is about
+// 200 m of genuinely new trail.
+const int kMinNewLoopTrailSegments = 4;

@@ -23,10 +23,22 @@ class _AutoClaimCapture {
   Future<void> call(List<LatLng> polygon) async => captured.add(polygon);
 }
 
+// A midpoint of a->b, collinear with the segment it splits. Inserting it
+// into a trail adds a point (and therefore a segment) without changing the
+// resulting captured polygon's area, diagonal, compactness, or path length
+// at all - used below to keep the wall-crossing trail at or above the
+// consumed-span dedup gate's 4-segment floor (kMinNewLoopTrailSegments)
+// while leaving every other measured property of the fixture untouched.
+LatLng _mid(LatLng a, LatLng b) =>
+    LatLng((a.latitude + b.latitude) / 2, (a.longitude + b.longitude) / 2);
+
 // Same geometry shape as owned_edge_closure_gating_test.dart's
-// _wallCrossingFixture: a single-edge owned-zone wall plus a 3-point trail
-// whose newest segment crosses it, producing a sliver that clears all four
-// capture floors (area, diagonal, compactness, path length) on its own.
+// _wallCrossingFixture: a single-edge owned-zone wall plus a 4-point trail
+// (r0, its midpoint with r1, r1, r2) whose newest segment crosses it,
+// producing a sliver that clears all four capture floors (area, diagonal,
+// compactness, path length) on its own. The midpoint exists only to clear
+// the consumed-span dedup gate's 4-segment floor; it does not change the
+// captured polygon's geometry.
 ({List<LatLng> wall, List<LatLng> trail}) _wallCrossingFixture() {
   const originLat = 34.700000;
   const originLng = 33.000000;
@@ -46,7 +58,7 @@ class _AutoClaimCapture {
     LatLng(originLat - 0.002, originLng),
   ];
 
-  return (wall: wall, trail: [r0, r1, r2]);
+  return (wall: wall, trail: [r0, _mid(r0, r1), r1, r2]);
 }
 
 void main() {

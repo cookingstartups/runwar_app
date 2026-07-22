@@ -9,10 +9,14 @@
 // Geometry: the wall and trail fixtures below are derived against the
 // captured polygon RunRecorderService actually produces for an owned-zone-
 // wall closure: [wallHitPoint, ...every trail point from index 0 through
-// the crossing fix], anchored at _loopStartTrailIndex rather than at the
-// crossing segment alone. Each fixture's four gate values (area, diagonal,
-// compactness, path length) were computed against that real polygon before
-// being asserted on here, not assumed from an earlier convention.
+// the crossing fix], anchored at 0 (nothing consumed yet this session)
+// rather than at the crossing segment alone. Each fixture's four gate
+// values (area, diagonal, compactness, path length) were computed against
+// that real polygon before being asserted on here, not assumed from an
+// earlier convention. Each trail also inserts one collinear midpoint (see
+// _mid below) purely to clear the consumed-span dedup gate's 4-segment
+// floor - it changes point count only, not any of the four measured
+// geometric properties.
 //
 // One geometric constraint shapes every fixture below: for a bounding-box
 // diagonal d, area is at most d^2 / 2, so any polygon clearing the 1500 sqm
@@ -37,10 +41,22 @@ class _GateRejectionCapture {
   }
 }
 
-// A single-edge owned-zone wall, plus a 3-point trail whose newest segment
-// crosses it. `scale` uniformly scales every offset from the wall's origin
-// corner, so shrinking it (T3) proportionally shrinks area while every
-// other property of the shape stays geometrically similar.
+// A midpoint of a->b, collinear with the segment it splits. Inserting it
+// into a trail adds a point (and therefore a segment) without changing the
+// resulting captured polygon's area, diagonal, compactness, or path length
+// at all - used below to keep each wall-crossing trail at or above the
+// consumed-span dedup gate's 4-segment floor (kMinNewLoopTrailSegments)
+// while leaving every other measured property of the fixture untouched.
+LatLng _mid(LatLng a, LatLng b) =>
+    LatLng((a.latitude + b.latitude) / 2, (a.longitude + b.longitude) / 2);
+
+// A single-edge owned-zone wall, plus a 4-point trail (r0, its midpoint
+// with r1, r1, r2) whose newest segment crosses it. `scale` uniformly
+// scales every offset from the wall's origin corner, so shrinking it (T3)
+// proportionally shrinks area while every other property of the shape
+// stays geometrically similar. The midpoint between r0 and r1 exists only
+// to clear the consumed-span dedup gate's 4-segment floor (see _mid above)
+// - it does not change the captured polygon's geometry.
 ({List<LatLng> wall, List<LatLng> trail}) _wallCrossingFixture({double scale = 1.0}) {
   const originLat = 34.700000;
   const originLng = 33.000000;
@@ -60,14 +76,14 @@ class _GateRejectionCapture {
     LatLng(originLat - 0.002, originLng),
   ];
 
-  return (wall: wall, trail: [r0, r1, r2]);
+  return (wall: wall, trail: [r0, _mid(r0, r1), r1, r2]);
 }
 
 // A deliberately elongated variant, re-derived by measuring the actual
 // captured polygon rather than assuming a slicing convention: for an
-// owned-zone-wall closure, RunRecorderService anchors computeCapture at
-// _loopStartTrailIndex (0 here), so the captured polygon is always
-// [wallHitPoint, r0, r1, r2] - the whole trail, not just the crossing
+// owned-zone-wall closure, RunRecorderService anchors computeCapture at 0
+// (nothing consumed yet), so the captured polygon is always [wallHitPoint,
+// r0, midpoint(r0,r1), r1, r2] - the whole trail, not just the crossing
 // segment's own two endpoints. To isolate compactness under that real
 // slicing rule, r0 is placed far from the wall crossing along a near-
 // collinear run, stretching the bounding-box diagonal much further than
@@ -78,6 +94,8 @@ class _GateRejectionCapture {
 // gate that fails here, see the module-level derivation note below),
 // compactness ~0.046 (well under the 0.15 floor), loop path ~844 m
 // (clears the 150 m floor). Only compactness is anywhere near its floor.
+// The inserted midpoint(r0,r1) does not change any of these four values -
+// see _mid's doc comment above.
 ({List<LatLng> wall, List<LatLng> trail}) _elongatedWallCrossingFixture() {
   const originLat = 34.700000;
   const originLng = 33.000000;
@@ -97,7 +115,7 @@ class _GateRejectionCapture {
     LatLng(originLat - 0.002, originLng),
   ];
 
-  return (wall: wall, trail: [r0, r1, r2]);
+  return (wall: wall, trail: [r0, _mid(r0, r1), r1, r2]);
 }
 
 void main() {

@@ -47,10 +47,22 @@ class _FixedAuthNotifier extends AuthNotifier {
   }
 }
 
+// A midpoint of a->b, collinear with the segment it splits. Inserting one
+// into a trail adds a point (and therefore a segment) without changing the
+// resulting captured polygon's area, diagonal, compactness, or path length
+// at all - used below to keep the wall-crossing trail at or above the
+// consumed-span dedup gate's 4-segment floor (kMinNewLoopTrailSegments)
+// while leaving every other measured property of the fixture untouched.
+LatLng _mid(LatLng a, LatLng b) =>
+    LatLng((a.latitude + b.latitude) / 2, (a.longitude + b.longitude) / 2);
+
 // Same wall/trail geometry family used by
 // rehydrated_owned_edge_closure_test.dart: a single-edge owned-zone wall
-// plus a 3-point trail whose newest segment crosses it, clearing every
-// capture floor (area, diagonal, compactness, path length) on its own.
+// plus a 4-point trail (r0, its midpoint with r1, r1, r2) whose newest
+// segment crosses it, clearing every capture floor (area, diagonal,
+// compactness, path length) on its own. The midpoint exists only to clear
+// the consumed-span dedup gate's 4-segment floor; it does not change the
+// captured polygon's geometry.
 ({List<LatLng> wall, List<LatLng> trail}) _wallCrossingFixture() {
   const originLat = 34.700000;
   const originLng = 33.000000;
@@ -70,7 +82,7 @@ class _FixedAuthNotifier extends AuthNotifier {
     LatLng(originLat - 0.002, originLng),
   ];
 
-  return (wall: wall, trail: [r0, r1, r2]);
+  return (wall: wall, trail: [r0, _mid(r0, r1), r1, r2]);
 }
 
 class _AutoClaimCapture {

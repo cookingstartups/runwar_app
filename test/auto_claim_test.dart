@@ -445,17 +445,18 @@ void main() {
           reason: 'Two qualifying intersections must produce two separate claims');
     });
 
-    // GIVEN the first claim has advanced _loopStartTrailIndex to T1
-    // WHEN a second intersection is detected at T2 > T1
-    // THEN _loopStartTrailIndex advances from T1 to T2 after the second claim
-    test('loopStartTrailIndex advances after each claim', () async {
+    // GIVEN the first claim has consumed a span
+    // WHEN a second intersection is detected
+    // THEN a second, distinct span is added to _consumedSpans after the
+    // second claim
+    test('consumedSpans grows after each claim', () async {
       svc.injectTrackForTesting(_figure8Path());
       svc.runScanForAutoClaimForTesting();
       await Future<void>.delayed(Duration.zero);
 
-      final indexAfterFirst = svc.loopStartTrailIndexForTesting;
-      expect(indexAfterFirst, greaterThan(0),
-          reason: 'Index must advance after the first claim');
+      final spansAfterFirst = svc.consumedSpansForTesting;
+      expect(spansAfterFirst, hasLength(1),
+          reason: 'One consumed span must be recorded after the first claim');
 
       // See the comment in the test above: the first claim set the
       // claim-interval reference to "now", so fast-forward past the 30s
@@ -466,9 +467,9 @@ void main() {
       svc.runScanForAutoClaimForTesting();
       await Future<void>.delayed(Duration.zero);
 
-      final indexAfterSecond = svc.loopStartTrailIndexForTesting;
-      expect(indexAfterSecond, greaterThan(indexAfterFirst),
-          reason: 'Index must advance again after the second claim');
+      final spansAfterSecond = svc.consumedSpansForTesting;
+      expect(spansAfterSecond.length, greaterThan(spansAfterFirst.length),
+          reason: 'A second, distinct span must be recorded after the second claim');
     });
   });
 
@@ -566,18 +567,20 @@ void main() {
     // GIVEN a valid auto-claim is triggered
     //   AND the claim fails (throws or returns failure)
     // WHEN the scan completes
-    // THEN _loopStartTrailIndex is advanced so the same crossing does not re-fire
-    test('failed auto-claim still advances loopStartTrailIndex', () async {
+    // THEN the crossing's span is still added to _consumedSpans so the same
+    // crossing does not re-fire
+    test('failed auto-claim still consumes the crossing span', () async {
       capture.shouldThrow = true;
       svc.onAutoClaim = capture.call;
 
-      final indexBefore = svc.loopStartTrailIndexForTesting;
+      expect(svc.consumedSpansForTesting, isEmpty,
+          reason: 'Precondition: nothing consumed yet');
       svc.injectTrackForTesting(_figure8Path());
       svc.runScanForAutoClaimForTesting();
       await Future<void>.delayed(Duration.zero);
 
-      expect(svc.loopStartTrailIndexForTesting, greaterThan(indexBefore),
-          reason: 'loopStartTrailIndex must advance even after a failed claim to prevent re-firing');
+      expect(svc.consumedSpansForTesting, hasLength(1),
+          reason: 'The crossing span must be consumed even after a failed claim to prevent re-firing');
     });
   });
 
@@ -1275,19 +1278,40 @@ void main() {
 // Path builders for area-floor tests
 // ---------------------------------------------------------------------------
 
+// A midpoint of a->b, collinear with the segment it splits. Inserting one
+// into a path adds a point (and therefore a segment) without changing the
+// resulting captured polygon's area, diagonal, compactness, or path length
+// at all - used below to keep a fixture's candidate span at or above the
+// consumed-span dedup gate's 4-segment floor (kMinNewLoopTrailSegments)
+// while leaving every other measured property of the fixture untouched.
+LatLng _mid(LatLng a, LatLng b) =>
+    LatLng((a.latitude + b.latitude) / 2, (a.longitude + b.longitude) / 2);
+
 // A tiny X-crossing path: segment C->D crosses segment A->B at their midpoints.
 // Captured polygon is roughly a 1.75m x 1.4m quadrilateral (~2.5 m^2), below
-// the 500 m^2 area-floor gate (_minCapturedAreaSqm).
-List<LatLng> _buildTinyCrossPath() => [
-      // index 0: A - origin
-      const LatLng(34.700000, 33.000000),
-      // index 1: B - ~1.75m NE
-      const LatLng(34.7000125, 33.0000125),
-      // index 2: C - ~1.4m north of A, same longitude
-      const LatLng(34.7000125, 33.000000),
-      // index 3: D - crosses A->B at midpoint; captured area ~2.5 m^2
-      const LatLng(34.700000, 33.0000125),
-    ];
+// the 500 m^2 area-floor gate (_minCapturedAreaSqm). The midpoint inserted
+// between B and C exists only to clear the consumed-span dedup gate's
+// 4-segment floor - detectSelfIntersection still matches the A->B / C->D
+// crossing first (lowest segment index wins), so the captured polygon and
+// its area are unchanged.
+List<LatLng> _buildTinyCrossPath() {
+  const a = LatLng(34.700000, 33.000000);
+  const b = LatLng(34.7000125, 33.0000125);
+  const c = LatLng(34.7000125, 33.000000);
+  const d = LatLng(34.700000, 33.0000125);
+  return [
+    // index 0: A - origin
+    a,
+    // index 1: B - ~1.75m NE
+    b,
+    // index 2: midpoint(B, C) - dedup-floor filler only, see doc comment above
+    _mid(b, c),
+    // index 3: C - ~1.4m north of A, same longitude
+    c,
+    // index 4: D - crosses A->B at midpoint; captured area ~2.5 m^2
+    d,
+  ];
+}
 
 // A short near-vertex detour (indices 0-2, far south so it can never
 // geometrically overlap the loop that follows) followed by a genuine
