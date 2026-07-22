@@ -12,6 +12,23 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+/// Slices from [startMarker] up to (not including) the next occurrence of
+/// [endMarker] after it - the real boundary of the member being inspected,
+/// not a guessed character count. Fails loudly, with the missing landmark
+/// named, instead of silently reading whatever text happens to sit at a
+/// fixed offset. [endMarker] is normally the next sibling member's own
+/// signature, so the slice tracks the real method body regardless of how
+/// much the method itself grows or shrinks.
+String _sliceToNextMember(String src, String startMarker, String endMarker) {
+  final start = src.indexOf(startMarker);
+  expect(start, greaterThanOrEqualTo(0),
+      reason: 'Landmark not found: "$startMarker". map_screen.dart\'s structure moved - update this anchor, do not delete the check.');
+  final end = src.indexOf(endMarker, start);
+  expect(end, greaterThan(start),
+      reason: 'Landmark not found after "$startMarker": "$endMarker". map_screen.dart\'s structure moved - update this anchor, do not delete the check.');
+  return src.substring(start, end);
+}
+
 void main() {
   group('R4-AC1: zonesProvider(city) fallback fetch before E&U animation', () {
     test('_onAutoClaimOutcome is async (Future<void>), not fire-and-forget void', () {
@@ -22,9 +39,7 @@ void main() {
 
     test('the outcome handler falls back to zonesRepositoryProvider.fetchByCity when the stream has not emitted', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
-      final idx = src.indexOf('_onAutoClaimOutcome(');
-      expect(idx, greaterThanOrEqualTo(0));
-      final body = src.substring(idx, (idx + 2500).clamp(0, src.length));
+      final body = _sliceToNextMember(src, '_onAutoClaimOutcome(', 'Future<void> _completeMission1(');
       expect(body, contains('hasValue'),
           reason: 'The handler must check whether zonesProvider(city) has already emitted a snapshot');
       expect(body, contains('zonesRepositoryProvider'),
@@ -37,9 +52,7 @@ void main() {
   group('R4-AC3: disputed outcome gets a distinct, non-silent message (regression-lock)', () {
     test('_showResultSnack has a disputed branch distinct from claimed/conquered/failed', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
-      final idx = src.indexOf('_showResultSnack(');
-      expect(idx, greaterThanOrEqualTo(0));
-      final body = src.substring(idx, (idx + 600).clamp(0, src.length));
+      final body = _sliceToNextMember(src, '_showResultSnack(', 'Future<void> _onAutoClaimOutcome(');
       expect(body, contains('TerritoryResult.disputed'),
           reason: '_showResultSnack must switch on TerritoryResult.disputed with its own message');
     });
@@ -48,14 +61,21 @@ void main() {
   group('R4-AC4: failed outcome shows a distinct message and logs the reason', () {
     test('the failed branch of _onAutoClaimOutcome logs the reason via ErrorLogService', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
-      final idx = src.indexOf('_onAutoClaimOutcome(');
-      expect(idx, greaterThanOrEqualTo(0));
-      final failedIdx = src.indexOf('TerritoryResult.failed', idx);
-      expect(failedIdx, greaterThanOrEqualTo(0));
-      final body = src.substring(failedIdx, (failedIdx + 700).clamp(0, src.length));
-      expect(body, contains('logClientError'),
+      final fnBody = _sliceToNextMember(src, '_onAutoClaimOutcome(', 'Future<void> _completeMission1(');
+      final failedIdx = fnBody.indexOf('TerritoryResult.failed');
+      expect(failedIdx, greaterThanOrEqualTo(0),
+          reason: '_onAutoClaimOutcome must have a TerritoryResult.failed branch');
+      // The failed branch is the first if-block in the function and ends at
+      // the next top-level `if (outcome.result ==` check (the claimed/
+      // conquered branch) - both exact strings within the already-anchored
+      // function body, not a guessed length.
+      final nextBranchIdx = fnBody.indexOf('if (outcome.result ==', failedIdx + 1);
+      expect(nextBranchIdx, greaterThan(failedIdx),
+          reason: 'Landmark not found: the claimed/conquered branch after the failed branch. _onAutoClaimOutcome\'s structure moved - update this anchor.');
+      final failedBranch = fnBody.substring(failedIdx, nextBranchIdx);
+      expect(failedBranch, contains('logClientError'),
           reason: 'The failed branch must log the underlying failure reason via ErrorLogService.logClientError');
-      expect(body, contains('reason'),
+      expect(failedBranch, contains('reason'),
           reason: 'The logged error must reference the reason string returned by the server/local evaluator');
     });
   });
@@ -73,7 +93,12 @@ void main() {
       expect(idx, greaterThanOrEqualTo(0),
           reason: 'a simulation-aware own-position value (design.md names it ownPos) must exist '
               'alongside the existing _currentPosition-only real-GPS logic');
-      final window = src.substring(idx, (idx + 400).clamp(0, src.length));
+      // The ownPos declaration is one statement; its own terminating ";" is
+      // the real boundary, not a guessed character count.
+      final declEnd = src.indexOf(';', idx);
+      expect(declEnd, greaterThan(idx),
+          reason: 'Landmark not found: the ownPos declaration never terminates with a ";" - source structure moved, update this anchor.');
+      final window = src.substring(idx, declEnd);
       expect(window, contains('isSimulationActive'),
           reason: 'the ownPos derivation must branch on RunRecorderService.instance.isSimulationActive');
     });
@@ -99,9 +124,7 @@ void main() {
   group('SPEC-0144 AC-3: the Locate button is simulation-aware', () {
     test('_buildFab branches the Locate onPressed handler on isSimulationActive', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
-      final idx = src.indexOf('Widget _buildFab(');
-      expect(idx, greaterThanOrEqualTo(0));
-      final body = src.substring(idx, (idx + 1400).clamp(0, src.length));
+      final body = _sliceToNextMember(src, 'Widget _buildFab(', 'Future<void> _onFabTap(');
       expect(body, contains('isSimulationActive'),
           reason: '_buildFab must locally branch on RunRecorderService.instance.isSimulationActive '
               'to pick the simulated vs. real-GPS position for the Locate button');
@@ -149,10 +172,7 @@ void main() {
   group('SPEC-0144 AC-6: simulation end triggers no direct camera-move call site', () {
     test('_onSimTrackTick exists and makes no _mapController.move call directly gated on the active-to-inactive transition', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
-      final idx = src.indexOf('_onSimTrackTick(');
-      expect(idx, greaterThanOrEqualTo(0),
-          reason: 'the tick handler driving camera-follow (design.md section 3.2) must exist');
-      final body = src.substring(idx, (idx + 900).clamp(0, src.length));
+      final body = _sliceToNextMember(src, '_onSimTrackTick(', 'void _handleMapEvent(MapEvent event) {');
       final falseGuardIdx = body.indexOf('!simActive');
       expect(falseGuardIdx, greaterThanOrEqualTo(0),
           reason: '_onSimTrackTick must guard on the inactive case before doing anything else');
@@ -180,9 +200,7 @@ void main() {
   group('P0: the camera-flag reset does not rely solely on a missable boolean simulation edge', () {
     test('_onSimTrackTick reads a generation signal, not only isSimulationActive != _wasSimulationActive', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
-      final idx = src.indexOf('_onSimTrackTick(');
-      expect(idx, greaterThanOrEqualTo(0));
-      final body = src.substring(idx, (idx + 900).clamp(0, src.length));
+      final body = _sliceToNextMember(src, '_onSimTrackTick(', 'void _handleMapEvent(MapEvent event) {');
 
       expect(body, contains('simulationGeneration'),
           reason: '_onSimTrackTick must read RunRecorderService.instance.simulationGeneration to '

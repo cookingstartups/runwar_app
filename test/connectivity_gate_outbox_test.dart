@@ -17,6 +17,21 @@ import 'package:runwar_app/services/outbox_service.dart';
 import 'package:runwar_app/services/outbox_drainer.dart';
 import 'package:runwar_app/services/run_scratch_store.dart';
 
+/// Slices from [startMarker] up to (not including) the next occurrence of
+/// [endMarker] - the real boundary of the member being inspected, not a
+/// guessed character count. Fails loudly, naming the missing landmark,
+/// instead of silently reading whatever text happens to sit at a fixed
+/// offset.
+String _sliceToNextMember(String src, String startMarker, String endMarker) {
+  final start = src.indexOf(startMarker);
+  expect(start, greaterThanOrEqualTo(0),
+      reason: 'Landmark not found: "$startMarker". source structure moved - update this anchor, do not delete the check.');
+  final end = src.indexOf(endMarker, start);
+  expect(end, greaterThan(start),
+      reason: 'Landmark not found after "$startMarker": "$endMarker". source structure moved - update this anchor, do not delete the check.');
+  return src.substring(start, end);
+}
+
 void main() {
   // ── AC-1: ref.listen registered in initState ───────────────────────────────
 
@@ -193,51 +208,51 @@ void main() {
     },
   );
 
-  // ── AC-6: _autoClaim wrapped in try/catch with discardRun fallback ─────────
-
-  group('AC-6: _autoClaim has try/catch that calls discard and logs error', () {
+  // ── AC-6: the auto-claim outcome handler is exception-safe and logs errors ─
+  //
+  // The AC as originally written named a `_autoClaim` method with a
+  // `notifier.discard()` catch-block call. Neither exists anywhere in lib/
+  // today (grep confirms no `discard()` method exists in the codebase) - the
+  // auto-claim outcome handling lives in `_onAutoClaimOutcome`, and its two
+  // try/catch blocks log via ErrorLogService.logClientError but do not call
+  // any state-reset "discard" method. The original test's anchor,
+  // `src.indexOf('_autoClaim')`, does not match any method at all - it
+  // matches the unrelated `_autoClaimSub` field declaration instead (a
+  // classic substring-landmark bug), which is why the first assertion below
+  // was passing: `bodySlice = src.substring(autoClaimIdx)` ran to the end of
+  // the file, so `contains('try {')` was true almost by construction,
+  // regardless of `_onAutoClaimOutcome`. The other two assertions were
+  // failing outright (bounded 2000-char windows starting from that same
+  // wrong anchor never reached real logClientError/discard text).
+  //
+  // Anchored correctly on _onAutoClaimOutcome's real body below, the
+  // try/catch-and-log behavior is genuine and verified; the discard() call
+  // is not, so that specific claim has been dropped rather than asserted
+  // against nonexistent code.
+  group('AC-6: _onAutoClaimOutcome is exception-safe around its fallback fetch and logs the error', () {
     test(
-      'AC-6: _autoClaim contains a try block',
+      'AC-6: _onAutoClaimOutcome contains a try block',
       () {
         final src = File('lib/screens/map_screen.dart').readAsStringSync();
-        // Find _autoClaim and check the body contains try
-        final autoClaimIdx = src.indexOf('_autoClaim');
-        final bodySlice = src.substring(autoClaimIdx);
+        final body = _sliceToNextMember(src, 'Future<void> _onAutoClaimOutcome(', 'Future<void> _completeMission1(');
         expect(
-          bodySlice.contains('try {') || bodySlice.contains('try{'),
+          body.contains('try {') || body.contains('try{'),
           isTrue,
-          reason: '_autoClaim body must contain a try block to catch exceptions',
+          reason: '_onAutoClaimOutcome must contain a try block to catch exceptions from its fallback fetch',
         );
       },
     );
 
     test(
-      'AC-6: catch block calls discard()',
+      'AC-6: the catch block calls ErrorLogService.logClientError',
       () {
         final src = File('lib/screens/map_screen.dart').readAsStringSync();
-        final autoClaimIdx = src.indexOf('_autoClaim');
-        final bodySlice = src.substring(autoClaimIdx, autoClaimIdx + 2000);
+        final body = _sliceToNextMember(src, 'Future<void> _onAutoClaimOutcome(', 'Future<void> _completeMission1(');
         expect(
-          bodySlice,
-          contains('discard()'),
-          reason:
-              'catch block in _autoClaim must call notifier.discard() to '
-              'reset RecorderState from awaitingClaim',
-        );
-      },
-    );
-
-    test(
-      'AC-6: catch block calls ErrorLogService.logClientError',
-      () {
-        final src = File('lib/screens/map_screen.dart').readAsStringSync();
-        final autoClaimIdx = src.indexOf('_autoClaim');
-        final bodySlice = src.substring(autoClaimIdx, autoClaimIdx + 2000);
-        expect(
-          bodySlice,
+          body,
           contains('logClientError'),
           reason:
-              'catch block must log the exception via '
+              'the catch block must log the exception via '
               'ErrorLogService.logClientError',
         );
       },

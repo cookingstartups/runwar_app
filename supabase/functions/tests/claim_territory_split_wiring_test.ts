@@ -33,7 +33,7 @@
 // Run: npx deno test supabase/functions/tests/claim_territory_split_wiring_test.ts
 
 import { assert, assertEquals, assertFalse } from 'https://deno.land/std@0.224.0/assert/mod.ts';
-import { runSplitAndMerge, type SplitMergeDbClient, type SplitMergeSuccess } from '../claim_territory/handler.ts';
+import { runSplitAndMerge, type SplitMergeDbClient } from '../claim_territory/handler.ts';
 import { computeNextInfluenceLevel, computeZoneMerges, computeZoneSplit } from '../claim_territory/merge_geometry.ts';
 import type { ZoneInput } from '../claim_territory/merge_geometry.ts';
 
