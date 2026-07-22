@@ -26,7 +26,16 @@ void main() {
       final content = File('lib/screens/map_screen.dart').readAsStringSync();
       final start = content.indexOf('_initLocation');
       expect(start, greaterThan(-1), reason: '_initLocation must still exist');
-      final body = content.substring(start, content.length);
+      // Bounded to the next sibling method's own signature - the real
+      // boundary of _initLocation, not the rest of the file. Unbounded to
+      // EOF would pass as soon as PermissionService.instance.isLocationGranted
+      // appeared anywhere later in map_screen.dart, regardless of whether it
+      // was actually inside _initLocation.
+      final end = content.indexOf('void _onSimTrackTick() {', start);
+      expect(end, greaterThan(start),
+          reason: 'Landmark not found: _onSimTrackTick after _initLocation. '
+              'map_screen.dart\'s structure moved - update this anchor, do not delete the check.');
+      final body = content.substring(start, end);
       expect(body.contains('PermissionService.instance.isLocationGranted'), isTrue,
           reason: '_initLocation must consult PermissionService.isLocationGranted, '
               'not call Geolocator.requestPermission directly on mount');

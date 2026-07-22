@@ -35,7 +35,17 @@ void main() {
       expect(methodStart, greaterThanOrEqualTo(0),
           reason: '_mergeAdjacentZones must still exist as the offline merge hook');
 
-      final bodyEnd = src.indexOf('}', methodStart);
+      // Bounded to the next sibling declaration's own signature, not the
+      // first "}" after the method opens - a naive first-brace search finds
+      // the true closing brace only by coincidence of this method's current
+      // one-line body; it would silently truncate mid-body (and could miss
+      // a later `await`) the moment any real logic with its own nested
+      // braces were added - exactly the case this test exists to guard
+      // against staying a no-op.
+      final bodyEnd = src.indexOf('static List<LatLng> _sutherlandHodgman(', methodStart);
+      expect(bodyEnd, greaterThan(methodStart),
+          reason: 'Landmark not found: _sutherlandHodgman after _mergeAdjacentZones. '
+              'territory_service.dart\'s structure moved - update this anchor, do not delete the check.');
       final body = src.substring(methodStart, bodyEnd);
       expect(body.contains('Intentionally a no-op'), isTrue,
           reason: 'The offline merge hook must remain a documented no-op - this feature adds '

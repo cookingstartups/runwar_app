@@ -11,6 +11,21 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+/// Slices from [startMarker] up to (not including) the next occurrence of
+/// [endMarker] - the real boundary of the member being inspected, not a
+/// guessed character count. Fails loudly, naming the missing landmark,
+/// instead of silently reading whatever text happens to sit at a fixed
+/// offset.
+String _sliceToNextMember(String src, String startMarker, String endMarker) {
+  final start = src.indexOf(startMarker);
+  expect(start, greaterThanOrEqualTo(0),
+      reason: 'Landmark not found: "$startMarker". map_screen.dart\'s structure moved - update this anchor, do not delete the check.');
+  final end = src.indexOf(endMarker, start);
+  expect(end, greaterThan(start),
+      reason: 'Landmark not found after "$startMarker": "$endMarker". map_screen.dart\'s structure moved - update this anchor, do not delete the check.');
+  return src.substring(start, end);
+}
+
 void main() {
   group('R1 gate-rejection toast wiring in map_screen.dart', () {
     test('_gateRejectionSub subscribes to gateRejections in initState (before build)', () {
@@ -27,17 +42,14 @@ void main() {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
       expect(src, contains('_onGateRejected'),
           reason: '_onGateRejected must exist as the gateRejections listener callback');
-      final idx = src.indexOf('_onGateRejected(');
-      final body = src.substring(idx, (idx + 800).clamp(0, src.length));
+      final body = _sliceToNextMember(src, '_onGateRejected(', 'void _showResultSnack(BuildContext context, ClaimOutcome outcome) {');
       expect(body, contains('showSnackBar'),
           reason: '_onGateRejected must surface a SnackBar/toast to the operator');
     });
 
     test('_onGateRejected switches on both GateRejectionReason values with distinct messages', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
-      final idx = src.indexOf('_onGateRejected(');
-      expect(idx, greaterThanOrEqualTo(0));
-      final body = src.substring(idx, (idx + 800).clamp(0, src.length));
+      final body = _sliceToNextMember(src, '_onGateRejected(', 'void _showResultSnack(BuildContext context, ClaimOutcome outcome) {');
       expect(body, contains('GateRejectionReason.areaFloor'),
           reason: 'Area-floor rejection must be handled with a distinct message (R1-AC1)');
       expect(body, contains('GateRejectionReason.sessionElapsed'),

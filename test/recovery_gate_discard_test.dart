@@ -16,13 +16,29 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+/// Slices from [startMarker] up to (not including) the next occurrence of
+/// [endMarker] - the real boundary of the member being inspected, not a
+/// guessed character count. Fails loudly, naming the missing landmark,
+/// instead of silently reading whatever text happens to sit at a fixed
+/// offset.
+String _sliceToNextMember(String src, String startMarker, String endMarker) {
+  final start = src.indexOf(startMarker);
+  expect(start, greaterThanOrEqualTo(0),
+      reason: 'Landmark not found: "$startMarker". recovery_gate.dart\'s structure moved - update this anchor, do not delete the check.');
+  final end = src.indexOf(endMarker, start);
+  expect(end, greaterThan(start),
+      reason: 'Landmark not found after "$startMarker": "$endMarker". recovery_gate.dart\'s structure moved - update this anchor, do not delete the check.');
+  return src.substring(start, end);
+}
+
+String _onDiscardBody(String src) =>
+    _sliceToNextMember(src, '_onDiscard(', 'Widget build(BuildContext context) {');
+
 void main() {
   group('R5-AC1: discard with a known sessionId closes the server runs row', () {
     test('_onDiscard calls OutboxAwareWriter.instance.writeRunUpdate', () {
       final src = File('lib/screens/recovery_gate.dart').readAsStringSync();
-      final idx = src.indexOf('_onDiscard(');
-      expect(idx, greaterThanOrEqualTo(0));
-      final body = src.substring(idx, (idx + 900).clamp(0, src.length));
+      final body = _onDiscardBody(src);
       expect(body, contains('OutboxAwareWriter'),
           reason: '_onDiscard must write a server-side runs update via OutboxAwareWriter');
       expect(body, contains('writeRunUpdate'),
@@ -31,8 +47,7 @@ void main() {
 
     test('the discard write shape matches cancelRun (status cancelled + closed_at)', () {
       final src = File('lib/screens/recovery_gate.dart').readAsStringSync();
-      final idx = src.indexOf('_onDiscard(');
-      final body = src.substring(idx, (idx + 900).clamp(0, src.length));
+      final body = _onDiscardBody(src);
       expect(body, contains("'cancelled'"),
           reason: 'Discard must set status to the terminal value used by cancelRun()');
       expect(body, contains('closed_at'),
@@ -41,8 +56,7 @@ void main() {
 
     test('_onDiscard still clears local run_scratch unconditionally (existing behavior)', () {
       final src = File('lib/screens/recovery_gate.dart').readAsStringSync();
-      final idx = src.indexOf('_onDiscard(');
-      final body = src.substring(idx, (idx + 900).clamp(0, src.length));
+      final body = _onDiscardBody(src);
       expect(body, contains('clearScratch'),
           reason: 'The existing clearScratch(widget.userId) call must be preserved alongside the new server write');
     });
@@ -51,8 +65,7 @@ void main() {
   group('R5-AC2: discard with no known sessionId degrades gracefully', () {
     test('the server write is guarded by a sessionId != null check', () {
       final src = File('lib/screens/recovery_gate.dart').readAsStringSync();
-      final idx = src.indexOf('_onDiscard(');
-      final body = src.substring(idx, (idx + 900).clamp(0, src.length));
+      final body = _onDiscardBody(src);
       final guardIdx = body.indexOf('sessionId != null');
       final writeIdx = body.indexOf('writeRunUpdate');
       expect(guardIdx, greaterThanOrEqualTo(0),

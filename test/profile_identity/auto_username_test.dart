@@ -131,12 +131,18 @@ void main() {
         expect(methodStart, greaterThan(0),
             reason: 'upsertProfileIgnore must be declared in database_service.dart');
 
-        // Extract the method body — look for ignoreDuplicates within 600 chars
-        // after the method declaration (the method is ~20 lines).
-        final methodRegion = content.substring(
+        // Extract the real method body, up to the next sibling method's own
+        // signature - the method's real boundary, not a guessed character
+        // count that would silently mis-window if the method grows or
+        // shrinks.
+        final nextMethodStart = content.indexOf(
+          'Future<void> updateProfile(String userId, Map<String, dynamic> patch) async {',
           methodStart,
-          (methodStart + 600).clamp(0, content.length),
         );
+        expect(nextMethodStart, greaterThan(methodStart),
+            reason: 'Landmark not found: updateProfile after upsertProfileIgnore. '
+                'database_service.dart\'s structure moved - update this anchor, do not delete the check.');
+        final methodRegion = content.substring(methodStart, nextMethodStart);
 
         expect(
           methodRegion.contains('ignoreDuplicates: true'),
