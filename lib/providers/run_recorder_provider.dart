@@ -67,20 +67,59 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     // plain-Dart service on every scan call. This is the one legitimate
     // Riverpod (ref) access point in the chain - lasso.dart and
     // run_recorder_service.dart never import zonesProvider themselves.
+    //
+    // zonesProvider(city) is a StreamProvider.autoDispose. Riverpod's
+    // invalidate() only schedules a resubscription - it keeps serving the
+    // previous cached value (asyncTransition always calls copyWithPrevious)
+    // until the resubscribed stream actually emits, which happens
+    // asynchronously. A synchronous read taken right after a claim can
+    // therefore still miss the zone that claim just produced. To make the
+    // scan correct by construction instead of racing that emission, every
+    // successful claim also writes its outline straight into
+    // _pendingOwnedZoneEdges below, and this closure merges both sources.
     svc.ownedZoneEdgesProvider = () {
       final city = RunRecorderService.instance.activeCity;
       if (city.isEmpty) return const [];
       final userId = _ref.read(authProvider).user?['id'] as String?;
       if (userId == null) return const [];
       final zones = _ref.read(zonesProvider(city)).valueOrNull ?? const [];
-      return zones
-          .where((z) => z.status == ZoneStatus.owned && z.ownerId == userId)
-          .expand((z) => z.outlines)
-          .toList();
+      final freshOwned = zones.where(
+        (z) => z.status == ZoneStatus.owned && z.ownerId == userId,
+      );
+      // Drop any pending entry the fresh snapshot has now caught up with, so
+      // the map never serves a shape the server has since moved on from and
+      // never grows without bound across a long run.
+      for (final z in freshOwned) {
+        _pendingOwnedZoneEdges.remove(z.id);
+      }
+      return [
+        ...freshOwned.expand((z) => z.outlines),
+        ..._pendingOwnedZoneEdges.values.expand((edges) => edges),
+      ];
     };
   }
 
   final Ref _ref;
+
+  /// Outlines for zones claimed this session whose ownership has not yet
+  /// been confirmed by a fresh [zonesProvider] emission. Keyed by zone id so
+  /// a stale entry is pruned the moment the real snapshot catches up (see
+  /// [ownedZoneEdgesProvider] above).
+  final Map<String, List<List<LatLng>>> _pendingOwnedZoneEdges = {};
+
+  /// Registers the outline just produced by a successful claim so the very
+  /// next scan can already treat it as an owned-zone wall, without waiting
+  /// on the invalidated [zonesProvider] stream to re-emit.
+  void _registerPendingOwnedZoneEdge(String zoneId, List<LatLng> outline) {
+    _pendingOwnedZoneEdges[zoneId] = [List<LatLng>.from(outline)];
+  }
+
+  /// Test-only hook mirroring what [confirmClaim] does internally right
+  /// after a successful claim, so tests can exercise the merge behaviour of
+  /// [ownedZoneEdgesProvider] without driving a full network claim.
+  @visibleForTesting
+  void debugRegisterPendingOwnedZoneEdge(String zoneId, List<LatLng> outline) =>
+      _registerPendingOwnedZoneEdge(zoneId, outline);
 
   final _autoClaimOutcomeController =
       StreamController<({ClaimOutcome outcome, List<LatLng> polygon})>.broadcast();
@@ -254,6 +293,10 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         // Fire-and-forget - never propagates to caller.
         unawaited(NotificationGateway.fireDispute(city));
       }
+      // Make the claimed outline visible to the very next scan immediately -
+      // invalidating zonesProvider below does not do this synchronously
+      // (see the comment on ownedZoneEdgesProvider in the constructor).
+      _registerPendingOwnedZoneEdge(outcome.affectedZoneId!, track);
       _ref.invalidate(zonesProvider(city));
       _ref.invalidate(userRunPointsProvider((userId: userId, city: city)));
     }
@@ -270,6 +313,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     RunRecorderService.instance.ownedZoneEdgesProvider = null;
     RunRecorderService.instance.stateNotifier.removeListener(_onServiceState);
     RunRecorderService.instance.trackVersion.removeListener(_onTrackVersion);
+    _pendingOwnedZoneEdges.clear();
     _autoClaimOutcomeController.close();
     _gateRejectionController.close();
     super.dispose();
