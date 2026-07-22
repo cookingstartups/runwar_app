@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_map/flutter_map.dart';
@@ -24,7 +24,9 @@ import '../services/permission_service.dart';
 import '../widgets/battery_warning_banner.dart';
 import '../widgets/location_denied_gate.dart';
 import '../widgets/territory_overlay_painter.dart';
-import '../widgets/intro/intro_helpers.dart' show sharedEdgePolylines, formatSqm;
+import '../widgets/zone_level_badge.dart';
+import '../widgets/intro/intro_helpers.dart'
+    show sharedEdgePolylines, formatSqm, IntroContinuity;
 import '../geo/lasso.dart' show polygonArea, pointInPolygon;
 import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
@@ -143,6 +145,15 @@ class _MapScreenState extends ConsumerState<MapScreen>
   double _euTailLengthPx = 0.0;
   int _euCapturedSqm = 0;
   ClaimOutcome? _lastClaimOutcome;
+
+  // ── Capture flash overlay state ───────────────────────────────────────────
+  // One-shot fill flare + ping ring on a successful claim, layered above the
+  // E&U overlay and eased out over IntroContinuity.kCaptureFlashDuration.
+  // Purely additive - never mutates the steady level-derived alpha the
+  // persistent zone polygon renders underneath.
+  AnimationController? _captureFlashController;
+  List<Offset> _captureFlashPoly = const [];
+  Color _captureFlashColor = kAccent;
 
   @override
   void initState() {
@@ -277,6 +288,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     SuperpowerService.instance.onShieldEarned = null;
     _terrainPulse.dispose();
     _euController?.dispose();
+    _captureFlashController?.dispose();
     _posSub?.cancel();
     super.dispose();
   }
@@ -666,6 +678,36 @@ class _MapScreenState extends ConsumerState<MapScreen>
     });
   }
 
+  /// Starts the one-shot capture flash: the claimed area's fill flares to
+  /// [IntroContinuity.kBlock1EndFillAlpha] and an expanding ping ring plays
+  /// from its centroid, both easing back out over
+  /// [IntroContinuity.kCaptureFlashDuration]. Purely additive - the
+  /// persistent zone polygon underneath keeps rendering its own
+  /// level-derived steady alpha throughout (_buildUnifiedOwnedPolygons is
+  /// never touched by this), so the visible fill eases back to the steady
+  /// value on its own once the flash's own added alpha decays to zero.
+  void _startCaptureFlash(List<Offset> claimedPoly, Color color) {
+    if (!mounted || claimedPoly.length < 3) return;
+    _captureFlashController?.dispose();
+    final ctrl = AnimationController(
+      vsync: this,
+      duration: IntroContinuity.kCaptureFlashDuration,
+    );
+    _captureFlashController = ctrl;
+    setState(() {
+      _captureFlashPoly = claimedPoly;
+      _captureFlashColor = color;
+    });
+    ctrl.forward().then((_) {
+      if (mounted && _captureFlashController == ctrl) {
+        setState(() {
+          _captureFlashController = null;
+          _captureFlashPoly = const [];
+        });
+      }
+    });
+  }
+
   /// Handles a silent auto-claim gate rejection (R1) — surfaces a distinct,
   /// non-blocking toast per gate. Never fires on the successful claim path
   /// (enforced upstream in RunRecorderService._scanForAutoClaim).
@@ -805,6 +847,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
         capturedSqm: sqm,
         outcome: outcome,
       );
+      // One-shot capture flash - same success gate, evaluated through the
+      // shared predicate so it can never drift from the trigger contract.
+      if (_isCaptureFlashTrigger(outcome.result)) {
+        _startCaptureFlash(newBlockScreenPts, ownerColor);
+      }
     }
 
     // Mission 1: successful claim triggers celebration overlay + edge fn.
@@ -1229,6 +1276,20 @@ class _MapScreenState extends ConsumerState<MapScreen>
             ),
             child: const SizedBox.expand(),
           ),
+        // One-shot capture flash -- fill flare + ping ring on the claimed
+        // area, easing back to the persistent polygon's own steady alpha.
+        if (_captureFlashController != null)
+          AnimatedBuilder(
+            animation: _captureFlashController!,
+            builder: (_, __) => CustomPaint(
+              painter: _CaptureFlashPainter(
+                polyPts: _captureFlashPoly,
+                color: _captureFlashColor,
+                t: _captureFlashController!.value,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
         // Runners nearby chip — top-left, only visible when rivals within 1 km.
         StreamBuilder<List<PlayerPresence>>(
           stream: RealtimePresenceService.instance.playersStream,
@@ -1404,6 +1465,17 @@ class _MapScreenState extends ConsumerState<MapScreen>
           child: DisputeCountdownLabel(zoneId: z.id),
         ));
       }
+    }
+    // One numeric influence-level badge per rendered holding (contiguity
+    // group, same grouping the fill uses) - never one per zone or outline.
+    // Non-interactive: the per-zone GestureDetector above already owns taps.
+    for (final label in _computeZoneLevelLabels(zones)) {
+      markers.add(Marker(
+        point: label.anchor,
+        width: 28,
+        height: 28,
+        child: IgnorePointer(child: ZoneLevelBadge(level: label.level)),
+      ));
     }
     return markers;
   }
@@ -1962,6 +2034,162 @@ LatLng _centroid(List<LatLng> pts) {
   final lat = pts.fold(0.0, (s, p) => s + p.latitude) / pts.length;
   final lng = pts.fold(0.0, (s, p) => s + p.longitude) / pts.length;
   return LatLng(lat, lng);
+}
+
+// ── Capture flash trigger + per-holding level labels ────────────────────────
+
+/// True when [result] represents a real territorial gain (a first claim or
+/// a successful conquest) - the only outcomes that play the one-shot
+/// capture flash. A dispute has not resolved into a gain yet, and a failed
+/// claim landed nothing, so neither ever flashes.
+bool _isCaptureFlashTrigger(TerritoryResult result) =>
+    result == TerritoryResult.claimed || result == TerritoryResult.conquered;
+
+/// Test-only seam for [_isCaptureFlashTrigger] (mirrors the `...ForTesting`
+/// convention used by [groupAdjacentZonesForTesting]).
+@visibleForTesting
+bool isCaptureFlashTriggerForTesting(TerritoryResult result) =>
+    _isCaptureFlashTrigger(result);
+
+/// One rendered holding's numeric influence-level label: an anchor point
+/// and the level to display there.
+typedef ZoneLevelLabel = ({LatLng anchor, int level});
+
+/// The group's displayed influence level: the max across its member zones,
+/// clamped 1..15 - identical to the reduction _buildUnifiedOwnedPolygons
+/// performs for the fill alpha (map_screen.dart's own steady-state formula),
+/// extracted here so the fill and the label always agree on the same number.
+int _groupInfluenceLevel(List<Zone> group) =>
+    group.map((z) => z.influenceLevel).reduce(math.max).clamp(1, 15);
+
+/// Test-only seam for [_groupInfluenceLevel].
+@visibleForTesting
+int groupInfluenceLevelForTesting(List<Zone> group) =>
+    _groupInfluenceLevel(group);
+
+/// Anchor point for a group's level label. Tries the group-wide average
+/// centroid first (correct for the common convex / single-outline case); if
+/// that lands outside every member outline (a concave or MultiPolygon-shaped
+/// group), falls back to each outline's own local centroid in turn, then
+/// finally to the largest outline's own centroid even if it still fails the
+/// containment check - a label anchor is always returned, never left
+/// unresolved.
+LatLng _groupLabelAnchor(List<Zone> group) {
+  final outlines = <List<LatLng>>[
+    for (final z in group)
+      ...(z.outlines.isNotEmpty ? z.outlines : [z.points]),
+  ];
+  if (outlines.isEmpty) return const LatLng(0, 0);
+
+  final groupCentroid = _centroid(outlines.expand((o) => o).toList());
+  for (final outline in outlines) {
+    if (pointInPolygon(groupCentroid, outline)) return groupCentroid;
+  }
+
+  List<LatLng>? largest;
+  for (final outline in outlines) {
+    if (largest == null || outline.length > largest.length) largest = outline;
+    final localCentroid = _centroid(outline);
+    if (pointInPolygon(localCentroid, outline)) return localCentroid;
+  }
+  return _centroid(largest!);
+}
+
+/// Test-only seam for [_groupLabelAnchor].
+@visibleForTesting
+LatLng groupLabelAnchorForTesting(List<Zone> group) => _groupLabelAnchor(group);
+
+/// One label per rendered holding: groups owned zones the same way the fill
+/// does (same-owner + [_groupAdjacentZonesImpl]) and returns one
+/// (anchor, level) pair per group - never one per zone and never one per
+/// outline within a group. Disputed zones are never labeled (they are not a
+/// held holding).
+List<ZoneLevelLabel> _computeZoneLevelLabels(List<Zone> zones) {
+  final owned = zones.where((z) => z.status == ZoneStatus.owned).toList();
+  final byOwner = <String, List<Zone>>{};
+  for (final z in owned) {
+    byOwner.putIfAbsent(z.ownerId, () => []).add(z);
+  }
+  final out = <ZoneLevelLabel>[];
+  for (final entry in byOwner.entries) {
+    for (final group in _groupAdjacentZonesImpl(entry.value)) {
+      out.add((
+        anchor: _groupLabelAnchor(group),
+        level: _groupInfluenceLevel(group),
+      ));
+    }
+  }
+  return out;
+}
+
+/// Test-only seam for [_computeZoneLevelLabels].
+@visibleForTesting
+List<ZoneLevelLabel> zoneLevelLabelsForTesting(List<Zone> zones) =>
+    _computeZoneLevelLabels(zones);
+
+/// Screen-space centroid (average of vertices) - the capture flash
+/// painter's own analogue of [_centroid], operating on [Offset] instead of
+/// [LatLng].
+Offset _offsetCentroid(List<Offset> pts) {
+  if (pts.isEmpty) return Offset.zero;
+  final dx = pts.fold(0.0, (s, p) => s + p.dx) / pts.length;
+  final dy = pts.fold(0.0, (s, p) => s + p.dy) / pts.length;
+  return Offset(dx, dy);
+}
+
+/// Paints the one-shot capture flash: the claimed polygon's fill flares to
+/// [IntroContinuity.kBlock1EndFillAlpha] and a ping ring expands from its
+/// centroid, both easing out to zero over the controller's duration. Purely
+/// additive over the persistent PolygonLayer fill - never mutates the
+/// steady level-derived alpha _buildUnifiedOwnedPolygons computes.
+class _CaptureFlashPainter extends CustomPainter {
+  const _CaptureFlashPainter({
+    required this.polyPts,
+    required this.color,
+    required this.t,
+  });
+
+  /// Screen-space vertices of the claimed area.
+  final List<Offset> polyPts;
+  final Color color;
+
+  /// Animation progress in [0.0, 1.0] over the flash duration.
+  final double t;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (polyPts.length < 3) return;
+    final eased = Curves.easeOut.transform(t.clamp(0.0, 1.0));
+
+    final flashAlpha = IntroContinuity.kBlock1EndFillAlpha * (1.0 - eased);
+    if (flashAlpha > 0.001) {
+      final path = Path()..addPolygon(polyPts, true);
+      canvas.drawPath(
+        path,
+        Paint()..color = color.withValues(alpha: flashAlpha),
+      );
+    }
+
+    final ringAlpha =
+        ((1.0 - eased) * IntroContinuity.kCaptureFlashRingPeakAlpha)
+            .clamp(0.0, 1.0);
+    if (ringAlpha > 0.001) {
+      final centroid = _offsetCentroid(polyPts);
+      final radius = eased * IntroContinuity.kCaptureFlashRingMaxRadius;
+      canvas.drawCircle(
+        centroid,
+        radius,
+        Paint()
+          ..color = color.withValues(alpha: ringAlpha)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CaptureFlashPainter old) =>
+      old.t != t || old.polyPts != polyPts || old.color != color;
 }
 
 /// Haversine distance in metres between two lat/lng points.
