@@ -1,0 +1,128 @@
+// supabase/functions/tests/claim_territory_split_wiring_test.ts
+//
+// Source-inspection checks against handler.ts's call-site wiring for the
+// level-gated merge (AC-5, AC-13), the reversible split on re-run (AC-7),
+// and the no-retroactive-fuse invariant (AC-9). These target
+// orchestration/DB-write logic embedded in handler.ts's request handler -
+// the row selection, the RPC call shape, the unconditional last_active_at
+// write - which genuinely cannot be exercised without a live Supabase
+// instance (mocking the client here would exceed the project's >5-mocks-
+// escalate rule for a handler touching select / update / rpc calls across
+// three or more tables), so source inspection is kept for those specific
+// pieces only.
+//
+// The request handler and the split-then-merge orchestration it drives both
+// live in claim_territory/handler.ts; index.ts is only the thin
+// Deno.serve() entrypoint, so this file reads handler.ts.
+//
+// The decision MATH behind the split (does this count as a partial overlap
+// or a full containment, is the remainder above the sliver floor) has no
+// I/O in it and is covered behaviourally instead, in
+// claim_territory_split_geometry_test.ts. Repeat-run damping is now a
+// level cap only - covered behaviourally by
+// claim_territory_level_up_cap_test.ts against computeNextInfluenceLevel.
+//
+// Run: npx deno test supabase/functions/tests/claim_territory_split_wiring_test.ts
+
+import { assert } from 'https://deno.land/std@0.224.0/assert/mod.ts';
+
+const SRC_PATH = new URL('../claim_territory/handler.ts', import.meta.url);
+
+function readSrc(): string {
+  return Deno.readTextFileSync(SRC_PATH);
+}
+
+// ---------------------------------------------------------------------------
+// AC-5 / AC-13 - level equality feeds into the merge candidate construction
+// ---------------------------------------------------------------------------
+
+Deno.test('the merge candidate ZoneInput carries influenceLevel through to computeZoneMerges', () => {
+  const src = readSrc();
+  assert(src.includes('influenceLevel:'),
+    'handler.ts must pass influenceLevel into each constructed ZoneInput so the level-equality '
+      + 'gate inside computeZoneMerges has data to gate on');
+});
+
+Deno.test(
+  'R2 invariant (unaffected by the level gate): the merge candidate query still scopes to owner_id, city and status owned',
+  () => {
+    const src = readSrc();
+    assert(src.includes("eq('owner_id'"), "The merge query must still filter .eq('owner_id', playerId)");
+    assert(src.includes("eq('city'"), "The merge query must still filter .eq('city', city)");
+    assert(src.includes("eq('status', 'owned')"),
+      "A disputed same-owner zone must still be excluded from the merge candidate set regardless "
+        + 'of the new level-equality gate - the status filter and the level gate are independent');
+  },
+);
+
+// ---------------------------------------------------------------------------
+// AC-4 / AC-11 regression: MAX/SUM aggregation is unchanged once a group is
+// already guaranteed equal-level by the new gate.
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'unification still takes the MAX influence_level across an (now-guaranteed-equal-level) group',
+  () => {
+    const src = readSrc();
+    assert(src.includes('survivorInfluenceLevel') && src.includes('p_influence_level: survivorInfluenceLevel'),
+      'The apply_zone_merge RPC call must still be given influence_level aggregated as the MAX');
+    const reduceIdx = src.indexOf('const survivorInfluenceLevel');
+    assert(reduceIdx >= 0);
+    assert(src.slice(reduceIdx, reduceIdx + 200).includes('Math.max'),
+      'influence_level aggregation must remain a MAX, unchanged by the new level-equality gate');
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Repeat-run damping - level cap only, no time-based gate
+// ---------------------------------------------------------------------------
+
+// The level DECISION itself (MAX across the group plus one level-up, capped
+// at 15) is covered behaviourally by claim_territory_level_up_cap_test.ts
+// against computeNextInfluenceLevel.
+
+Deno.test('last_active_at still refreshes unconditionally on every claim', () => {
+  const src = readSrc();
+  assert(src.includes('survivorLastActiveAt') && src.includes('p_last_active_at: survivorLastActiveAt'),
+    'last_active_at must still be written on every claim');
+});
+
+// ---------------------------------------------------------------------------
+// AC-7 - reversible split on re-run of part of a fused area
+// ---------------------------------------------------------------------------
+
+Deno.test('a dedicated sliver-tolerance constant for split remainders is defined, distinct from the merge threshold', () => {
+  const src = readSrc();
+  assert(src.includes('kMinSplitFragmentAreaSqm'),
+    'handler.ts must define kMinSplitFragmentAreaSqm (AC-7) as its own constant, not a reuse of the '
+      + '25m merge/proximity threshold - area and distance are different quantities');
+});
+
+// The split classification and remainder-area math (partial overlap vs
+// full containment, sliver-tolerance discard) are covered behaviourally by
+// claim_territory_split_geometry_test.ts against computeZoneSplit. What
+// remains genuinely wiring-only is that the write actually goes out over
+// the dedicated RPC, which cannot be confirmed without a live Supabase
+// instance.
+Deno.test('the split write goes through a dedicated apply_zone_split RPC', () => {
+  const src = readSrc();
+  assert(src.includes("supabase.rpc('apply_zone_split'"),
+    'The split write must go through a dedicated apply_zone_split RPC (one UPDATE, no absorbed-row '
+      + 'DELETE), mirroring the atomic-write discipline already used by apply_zone_merge');
+});
+
+// ---------------------------------------------------------------------------
+// AC-9 - no retroactive/periodic fuse
+// ---------------------------------------------------------------------------
+
+// Already true of today's source (one call site); expected to remain true
+// after this feature ships - a regression lock against a future periodic
+// job being added, not a new-behaviour probe.
+Deno.test('computeZoneMerges is only ever invoked from inside the claim request handler', () => {
+  const src = readSrc();
+  const occurrences = src.split('computeZoneMerges(').length - 1;
+  assert(occurrences === 1,
+    'computeZoneMerges must be called exactly once, from the claim-event merge block - a second '
+      + 'call site anywhere in this file would indicate a periodic/retroactive fuse path, which '
+      + 'AC-9 explicitly forbids');
+});

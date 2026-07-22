@@ -1509,13 +1509,36 @@ class _MapScreenState extends ConsumerState<MapScreen>
           continue;
         }
 
-        // Union every outline of every zone in this group as its own
-        // disjoint subpath (design.md Section 4/Consequences #4). A zone
-        // whose own geometry is already a MultiPolygon (a Tier-2 server
-        // merge) contributes one subpath per member outline, with
-        // NO bridging between them; Path.combine(PathOperation.union, ...)
-        // composes disjoint contours correctly on its own, so this only
-        // requires feeding it every outline instead of assuming one per zone.
+        // Per-zone fill pass (fill-only, no border of its own): each
+        // sub-area keeps its own alpha, derived from its own
+        // influenceLevel rather than the group's max, so unequal-level
+        // adjacent zones stay visually distinguishable even while they
+        // share one outline below.
+        for (final z in group) {
+          final zLevel = z.influenceLevel.clamp(1, 15);
+          final zFillAlpha = 0.0633 * zLevel * (0.75 + 0.25 * pulse);
+          for (final outline in z.outlines) {
+            out.add(Polygon(
+              points: outline,
+              isFilled: true,
+              color: ownerColor.withValues(alpha: zFillAlpha),
+              borderStrokeWidth: 0,
+              isDotted: false,
+            ));
+          }
+        }
+
+        // Shared-outline pass (unchanged geometry computation): union every
+        // outline of every zone in this group as its own disjoint subpath
+        // (design.md Section 4/Consequences #4). A zone whose own geometry
+        // is already a MultiPolygon (a Tier-2 server merge) contributes one
+        // subpath per member outline, with NO bridging between them;
+        // Path.combine(PathOperation.union, ...) composes disjoint contours
+        // correctly on its own, so this only requires feeding it every
+        // outline instead of assuming one per zone. Only the stroke is
+        // emitted here now - fill was moved to the per-zone pass above, so
+        // this reads as one continuous edge with no interior seam and no
+        // competing per-sub-area border underneath it.
         final cam = _mapController.camera;
         var unified = Path();
         for (final z in group) {
@@ -1553,8 +1576,8 @@ class _MapScreenState extends ConsumerState<MapScreen>
           if (contourPts.length >= 3) {
             out.add(Polygon(
               points: contourPts,
-              isFilled: true,
-              color: ownerColor.withValues(alpha: fillAlpha),
+              isFilled: false,
+              color: Colors.transparent,
               borderColor: ownerColor.withValues(alpha: borderAlpha),
               borderStrokeWidth: strokeWidth,
               isDotted: false,
