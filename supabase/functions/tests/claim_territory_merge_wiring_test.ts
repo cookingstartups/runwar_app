@@ -77,11 +77,16 @@ Deno.test('Unification takes the MAX influence_level across the merged group (ne
 
 Deno.test('Unification applies the survivor UPDATE and absorbed DELETEs atomically via the apply_zone_merge RPC, not step-wise table writes', () => {
   const src = readSrc();
+  // The merge application block now lives inside runSplitAndMerge, an
+  // exported top-level function extracted so the split-then-merge
+  // orchestration can be driven by a real executable test against an
+  // injected fake database client (see split-then-merge reconciliation
+  // fix). It is the last thing defined in the file, so the block's end is
+  // just the end of the file rather than the next 'if (conqueredId)' -
+  // that landmark now lives earlier, inside the request handler.
   const groupBlockStart = src.indexOf('if (group) {');
   assert(groupBlockStart >= 0, 'The merge application block (if (group) {...}) must exist');
-  const groupBlockEnd = src.indexOf('if (conqueredId)', groupBlockStart);
-  assert(groupBlockEnd > groupBlockStart, 'The merge application block must end before the response-building section');
-  const groupBlock = src.slice(groupBlockStart, groupBlockEnd);
+  const groupBlock = src.slice(groupBlockStart);
 
   assert(groupBlock.includes("supabase.rpc('apply_zone_merge'"),
     'The merge application block must call the apply_zone_merge RPC so the survivor write and absorbed deletes are one transaction');

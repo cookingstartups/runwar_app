@@ -7,6 +7,11 @@ import type { ZoneInput } from './merge_geometry.ts';
 // correction) - the runtime bindings, like computeZoneMerges above, are
 // loaded lazily below, inside the `if (!disputedId)` guard.
 import type { ZoneSplitResult } from './merge_geometry.ts';
+// Type-only imports of the pure functions themselves, used only to type the
+// corresponding parameters of runSplitAndMerge below (the real bindings are
+// still obtained via the lazy dynamic import inside the request handler,
+// strictly within the `if (!disputedId)` guard, and passed in from there).
+import type { computeLevelUpOutcome, computeZoneMerges, computeZoneSplit } from './merge_geometry.ts';
 // Area of the merged geometry is always recomputed from the merge result,
 // never summed from source zones (overlapping/adjacent source zones would
 // double-count their shared area if simply added together).
@@ -149,7 +154,12 @@ function outlinesOf(geom: { type?: string; coordinates?: unknown } | null | unde
   return [];
 }
 
-Deno.serve(async (req) => {
+// The request handler is a named, exported function - not the anonymous
+// callback passed straight to Deno.serve - so a test can import this module
+// and reach the handler without the module-level Deno.serve() side effect
+// starting a real listener (guarded below by `import.meta.main`, which is
+// false when this file is imported rather than run directly).
+export async function handleClaimTerritoryRequest(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
@@ -340,7 +350,7 @@ Deno.serve(async (req) => {
 
     // Merge only for claimed/conquered outcomes - disputed is excluded even
     // though a new owned row for `playerId` was just inserted.
-    let finalZoneId = newId;
+    let finalZoneId: string = newId;
     let merged = false;
     let absorbedZoneIds: string[] = [];
     let zoneGeomJson = JSON.stringify({ type: 'Polygon', coordinates: [ring] });
@@ -388,147 +398,37 @@ Deno.serve(async (req) => {
         })
         .flat();
 
-      // AC-7: reversible split on re-run of part of a same-level-fused zone.
-      // Detected BEFORE the merge/level-up scan below - does this claim's own
-      // new ring retrace PART of an existing same-owner zone's stored edge
-      // (a genuine partial overlap), rather than either missing it entirely
-      // or wholly enclosing it from outside (the pre-existing ownedOverlapIds
-      // containment path, untouched by this feature, AC-14's note)? Runs
-      // per-candidate-zone, not assuming exactly one overlap.
-      for (const candidate of inputs) {
-        if (candidate.id === newId) continue;
-        const splitResult: ZoneSplitResult = computeZoneSplit(
-          candidate.ring,
-          ring,
-          kMinSplitFragmentAreaSqm,
-        );
-        if (splitResult.case !== 'partialOverlap') continue;
-
-        if (splitResult.remainderDiscarded || !splitResult.remainder) {
-          // Nothing meaningful survives of the old boundary below the
-          // sliver-tolerance floor - the re-run's own polygon (already
-          // inserted above as newId) absorbs the whole prior area, and the
-          // old row is deleted outright rather than persisted as a
-          // near-zero-area remainder.
-          await supabase.from('zones').delete().eq('id', candidate.id);
-          continue;
-        }
-
-        // Write the untouched remainder back to the original survivor row -
-        // same id, same influence_level, created_at untouched. A dedicated
-        // RPC distinct from apply_zone_merge: one UPDATE, no absorbed-row
-        // DELETE, mirroring the same atomic-write discipline.
-        // computeZoneSplit's own contract guarantees `remainder` is a real
-        // GeoJSON Polygon/MultiPolygon whenever it is non-null (only the
-        // `unknown`-typed `coordinates` field is loosened for the pure
-        // module's own external type-independence) - narrowed here for
-        // toWkt/turfArea, which need the concrete coordinate array shape.
-        const remainderGeom = splitResult.remainder as
-          | { type: 'Polygon'; coordinates: number[][][] }
-          | { type: 'MultiPolygon'; coordinates: number[][][][] };
-        const { error: splitErr } = await supabase.rpc('apply_zone_split', {
-          p_zone_id: candidate.id,
-          p_geom_wkt: toWkt(remainderGeom),
-          p_geom_json: JSON.stringify(remainderGeom),
-          p_area_m2: turfArea(remainderGeom),
-          p_updated_at: now,
-        });
-        if (splitErr) return err(`Zone split failed: ${splitErr.message}`, 500);
-      }
-
-      const groups = computeZoneMerges(inputs, kMergeThresholdMeters);
-      const group = groups.find((g) => g.survivorId === newId || g.absorbedIds.includes(newId));
-
-      if (group) {
-        const uniqueAbsorbedIds = [...new Set(group.absorbedIds)];
-        // No history kept on unification: aggregate additive fields into the
-        // survivor, then delete the absorbed rows outright. No lineage-tracking
-        // column is written; exactly one row remains per unified territory.
-        // The survivor's created_at (oldest in the group) is left untouched.
-        const survivorInfluence = (influenceById.get(group.survivorId) ?? 1) +
-          uniqueAbsorbedIds.reduce((sum, id) => sum + (influenceById.get(id) ?? 1), 0);
-
-        const groupIds = [group.survivorId, ...uniqueAbsorbedIds];
-
-        // last_active_at: most-recent activity across the merged group, not
-        // just the survivor's own value. Read from lastActiveAtById, which
-        // was populated from the candidate-row SELECT executed above, before
-        // any write this claim makes - so this already IS each member's
-        // PRIOR (pre-this-claim) last_active_at, exactly what AC-8's cooldown
-        // check needs to compare against.
-        const survivorLastActiveAt = groupIds.reduce<string | null>((max, id) => {
-          const v = lastActiveAtById.get(id) ?? null;
-          if (!v) return max;
-          if (!max || v > max) return v;
-          return max;
-        }, null);
-
-        // influence_level: MAX across the group (never summed - merging
-        // never grants a free fortification level on its own), THEN subject
-        // to AC-8's level-up cooldown gate: a re-claim while the group's
-        // most recent prior activity is still within kLevelUpCooldownMs
-        // keeps the already-held level; once the cooldown has elapsed, the
-        // re-claim is an ordinary level-up event, clamped at 15 by
-        // computeLevelUpOutcome (matching the column's own CHECK
-        // constraint).
-        const survivorInfluenceLevel = computeLevelUpOutcome(
-          survivorLastActiveAt, Date.now(), kLevelUpCooldownMs,
-          groupIds.reduce((max, id) => Math.max(max, influenceLevelById.get(id) ?? 1), 1),
-        ).nextLevel;
-
-        // credits_earned: additive, same rationale as influence above.
-        const survivorCreditsEarned = groupIds.reduce(
-          (sum, id) => sum + (creditsEarnedById.get(id) ?? 0),
-          0,
-        );
-
-        // shield_active: the merged zone is shielded if ANY group member was
-        // shielded; when so, shield_expires_at is the latest expiry among the
-        // shielded members. Otherwise keep the survivor's own (non-shielding)
-        // value untouched.
-        const anyShieldActive = groupIds.some((id) => shieldActiveById.get(id) === true);
-        const survivorShieldExpiresAt = anyShieldActive
-          ? groupIds.reduce<string | null>((max, id) => {
-            if (!shieldActiveById.get(id)) return max;
-            const v = shieldExpiresAtById.get(id) ?? null;
-            if (!v) return max;
-            if (!max || v > max) return v;
-            return max;
-          }, null)
-          : shieldExpiresAtById.get(group.survivorId) ?? null;
-
-        // area_m2: ALWAYS recomputed from the merged geometry (turf area on
-        // the merge result). Never sum source areas - overlapping or
-        // adjacent zones would double-count shared area.
-        const survivorAreaM2 = turfArea(group.geometry);
-
-        zoneGeomJson = JSON.stringify(group.geometry);
-        finalZoneId = group.survivorId;
-        merged = true;
-        absorbedZoneIds = uniqueAbsorbedIds;
-
-        // Atomic write: the survivor aggregate UPDATE and every absorbed-row
-        // DELETE happen inside a single Postgres transaction via the
-        // apply_zone_merge RPC, so a crash mid-merge can never leave a stale
-        // absorbed row alongside an already-updated survivor (or vice versa).
-        // No history is kept: absorbed rows are deleted outright inside the
-        // RPC, no lineage-tracking column is written.
-        const { error: mergeErr } = await supabase.rpc('apply_zone_merge', {
-          p_survivor_id: group.survivorId,
-          p_absorbed_ids: uniqueAbsorbedIds,
-          p_geom_wkt: toWkt(group.geometry),
-          p_geom_json: zoneGeomJson,
-          p_influence: survivorInfluence,
-          p_influence_level: survivorInfluenceLevel,
-          p_credits_earned: survivorCreditsEarned,
-          p_last_active_at: survivorLastActiveAt,
-          p_shield_active: anyShieldActive,
-          p_shield_expires_at: survivorShieldExpiresAt,
-          p_area_m2: survivorAreaM2,
-          p_updated_at: now,
-        });
-        if (mergeErr) return err(`Zone merge failed: ${mergeErr.message}`, 500);
-      }
+      // The split-then-merge sequence (the reversible-split scan for a
+      // partial re-run, mutation reconciliation, then the level-gated
+      // unification merge) is
+      // extracted to runSplitAndMerge below so it is real, executable
+      // orchestration coverage - driven here against the live `supabase`
+      // client, and in tests against an injected fake covering only the
+      // narrow `zones` delete/rpc surface it actually calls.
+      const splitMergeOutcome = await runSplitAndMerge({
+        supabase,
+        inputs,
+        newId,
+        newRing: ring,
+        now,
+        kMergeThresholdMeters,
+        kMinSplitFragmentAreaSqm,
+        kLevelUpCooldownMs,
+        computeZoneSplit,
+        computeZoneMerges,
+        computeLevelUpOutcome,
+        influenceById,
+        influenceLevelById,
+        creditsEarnedById,
+        lastActiveAtById,
+        shieldActiveById,
+        shieldExpiresAtById,
+      });
+      if (splitMergeOutcome instanceof Response) return splitMergeOutcome;
+      finalZoneId = splitMergeOutcome.finalZoneId;
+      merged = splitMergeOutcome.merged;
+      absorbedZoneIds = splitMergeOutcome.absorbedZoneIds;
+      zoneGeomJson = splitMergeOutcome.zoneGeomJson;
     }
 
     if (conqueredId) {
@@ -563,4 +463,297 @@ Deno.serve(async (req) => {
   } catch (e) {
     return err((e as Error).message, 500);
   }
-});
+}
+
+if (import.meta.main) {
+  Deno.serve(handleClaimTerritoryRequest);
+}
+
+// The narrow slice of the Supabase client this function actually calls -
+// a delete-by-id on `zones`, and an RPC invocation. Kept to just this shape
+// so a test can drive the exact same code with a fake client instead of a
+// live database, without having to fake the rest of the handler's Supabase
+// surface (auth, select, insert, the rival-scan update calls).
+export interface SplitMergeDbClient {
+  from(table: 'zones'): {
+    delete(): { eq(column: 'id', value: string): PromiseLike<{ error: { message: string } | null }> };
+  };
+  rpc(
+    fn: string,
+    args: Record<string, unknown>,
+  ): PromiseLike<{ error: { message: string } | null }>;
+}
+
+export interface SplitMergeParams {
+  supabase: SplitMergeDbClient;
+  inputs: ZoneInput[];
+  newId: string;
+  newRing: number[][];
+  now: string;
+  kMergeThresholdMeters: number;
+  kMinSplitFragmentAreaSqm: number;
+  kLevelUpCooldownMs: number;
+  computeZoneSplit: typeof computeZoneSplit;
+  computeZoneMerges: typeof computeZoneMerges;
+  computeLevelUpOutcome: typeof computeLevelUpOutcome;
+  influenceById: Map<string, number>;
+  influenceLevelById: Map<string, number>;
+  creditsEarnedById: Map<string, number>;
+  lastActiveAtById: Map<string, string | null>;
+  shieldActiveById: Map<string, boolean>;
+  shieldExpiresAtById: Map<string, string | null>;
+}
+
+export interface SplitMergeSuccess {
+  finalZoneId: string;
+  merged: boolean;
+  absorbedZoneIds: string[];
+  zoneGeomJson: string;
+}
+
+// Runs the split-then-merge sequence for a single claim: first scans the
+// claimant's own candidate zones for a partial re-run of a same-level-fused
+// zone (deletes a fully absorbed candidate, or shrinks one to its
+// split remainder via the apply_zone_split RPC), THEN reconciles the
+// in-memory candidate list against those mutations, and only then runs the
+// proximity-merge/unification scan (apply_zone_merge). The reconciliation
+// step exists because the split loop mutates the database directly while
+// `inputs` was built once, before the loop ran - without it, a deleted or
+// shrunk candidate row would still be fed into the merge computation
+// unchanged, which can pick a just-deleted row as the merge survivor (the
+// apply_zone_merge UPDATE then matches zero rows, no error is raised, and
+// the real absorbed rows are still deleted - the merge write silently
+// vanishes) or run the merge against a stale pre-split full ring.
+export async function runSplitAndMerge(
+  params: SplitMergeParams,
+): Promise<Response | SplitMergeSuccess> {
+  const {
+    supabase,
+    inputs,
+    newId,
+    newRing,
+    now,
+    kMergeThresholdMeters,
+    kMinSplitFragmentAreaSqm,
+    kLevelUpCooldownMs,
+    computeZoneSplit,
+    computeZoneMerges,
+    computeLevelUpOutcome,
+    influenceById,
+    influenceLevelById,
+    creditsEarnedById,
+    lastActiveAtById,
+    shieldActiveById,
+    shieldExpiresAtById,
+  } = params;
+
+  // AC-7: reversible split on re-run of part of a same-level-fused zone.
+  // Detected BEFORE the merge/level-up scan below - does this claim's own
+  // new ring retrace PART of an existing same-owner zone's stored edge
+  // (a genuine partial overlap), rather than either missing it entirely
+  // or wholly enclosing it from outside (the pre-existing ownedOverlapIds
+  // containment path, untouched by this feature, AC-14's note)? Runs
+  // per-candidate-zone, not assuming exactly one overlap.
+  //
+  // `inputs` can carry MULTIPLE entries for the same row id (a MultiPolygon
+  // row is expanded to one ZoneInput per outline at the call site). Once one
+  // outline of a row resolves to a delete or a split, `processedRowIds`
+  // stops any remaining outline of that same row from being deleted or
+  // split a second time.
+  const deletedRowIds = new Set<string>();
+  const remainderGeomByRowId = new Map<
+    string,
+    { type: 'Polygon'; coordinates: number[][][] } | { type: 'MultiPolygon'; coordinates: number[][][][] }
+  >();
+  const processedRowIds = new Set<string>();
+
+  for (const candidate of inputs) {
+    if (candidate.id === newId) continue;
+    if (processedRowIds.has(candidate.id)) continue;
+
+    const splitResult: ZoneSplitResult = computeZoneSplit(
+      candidate.ring,
+      newRing,
+      kMinSplitFragmentAreaSqm,
+    );
+    if (splitResult.case !== 'partialOverlap') continue;
+
+    processedRowIds.add(candidate.id);
+
+    if (splitResult.remainderDiscarded || !splitResult.remainder) {
+      // Nothing meaningful survives of the old boundary below the
+      // sliver-tolerance floor - the re-run's own polygon (already
+      // inserted above as newId) absorbs the whole prior area, and the
+      // old row is deleted outright rather than persisted as a
+      // near-zero-area remainder. A failed delete must surface as an error
+      // response, exactly like the split and merge RPC failures below -
+      // silently continuing here would leave both the stale full zone and
+      // the new claim present, with no error to the client and no log.
+      const { error: deleteErr } = await supabase.from('zones').delete().eq('id', candidate.id);
+      if (deleteErr) return err(`Zone delete failed: ${deleteErr.message}`, 500);
+      deletedRowIds.add(candidate.id);
+      continue;
+    }
+
+    // Write the untouched remainder back to the original survivor row -
+    // same id, same influence_level, created_at untouched. A dedicated
+    // RPC distinct from apply_zone_merge: one UPDATE, no absorbed-row
+    // DELETE, mirroring the same atomic-write discipline.
+    // computeZoneSplit's own contract guarantees `remainder` is a real
+    // GeoJSON Polygon/MultiPolygon whenever it is non-null (only the
+    // `unknown`-typed `coordinates` field is loosened for the pure
+    // module's own external type-independence) - narrowed here for
+    // toWkt/turfArea, which need the concrete coordinate array shape.
+    const remainderGeom = splitResult.remainder as
+      | { type: 'Polygon'; coordinates: number[][][] }
+      | { type: 'MultiPolygon'; coordinates: number[][][][] };
+    const { error: splitErr } = await supabase.rpc('apply_zone_split', {
+      p_zone_id: candidate.id,
+      p_geom_wkt: toWkt(remainderGeom),
+      p_geom_json: JSON.stringify(remainderGeom),
+      p_area_m2: turfArea(remainderGeom),
+      p_updated_at: now,
+    });
+    if (splitErr) return err(`Zone split failed: ${splitErr.message}`, 500);
+    remainderGeomByRowId.set(candidate.id, remainderGeom);
+  }
+
+  // Reconcile `inputs` against the mutations just made, before merge
+  // computation runs: drop every entry whose row was deleted outright
+  // above, and replace the ring(s) of every split row with the outline(s)
+  // of its remainder geometry - a MultiPolygon remainder still yields one
+  // entry per outline, sharing the row id. A row untouched by the loop
+  // above is carried over exactly as it was read. Only row existence and
+  // ring geometry are refreshed here; createdAt and influenceLevel are
+  // copied over unchanged from the row's original entry - those already
+  // hold each row's PRIOR (pre-this-claim) values, which the level-up
+  // cooldown gate below depends on, and must not be touched by this
+  // reconciliation.
+  const reconciledInputs: ZoneInput[] = [];
+  const expandedRowIds = new Set<string>();
+  for (const candidate of inputs) {
+    if (candidate.id === newId) {
+      reconciledInputs.push(candidate);
+      continue;
+    }
+    if (deletedRowIds.has(candidate.id)) continue;
+
+    const remainderGeom = remainderGeomByRowId.get(candidate.id);
+    if (remainderGeom) {
+      if (expandedRowIds.has(candidate.id)) continue;
+      expandedRowIds.add(candidate.id);
+      for (const outlineRing of outlinesOf(remainderGeom)) {
+        reconciledInputs.push({
+          id: candidate.id,
+          ring: outlineRing,
+          createdAt: candidate.createdAt,
+          influenceLevel: candidate.influenceLevel,
+        });
+      }
+      continue;
+    }
+
+    reconciledInputs.push(candidate);
+  }
+
+  const groups = computeZoneMerges(reconciledInputs, kMergeThresholdMeters);
+  const group = groups.find((g) => g.survivorId === newId || g.absorbedIds.includes(newId));
+
+  let finalZoneId = newId;
+  let merged = false;
+  let absorbedZoneIds: string[] = [];
+  let zoneGeomJson = JSON.stringify({ type: 'Polygon', coordinates: [newRing] });
+
+  if (group) {
+    const uniqueAbsorbedIds = [...new Set(group.absorbedIds)];
+    // No history kept on unification: aggregate additive fields into the
+    // survivor, then delete the absorbed rows outright. No lineage-tracking
+    // column is written; exactly one row remains per unified territory.
+    // The survivor's created_at (oldest in the group) is left untouched.
+    const survivorInfluence = (influenceById.get(group.survivorId) ?? 1) +
+      uniqueAbsorbedIds.reduce((sum, id) => sum + (influenceById.get(id) ?? 1), 0);
+
+    const groupIds = [group.survivorId, ...uniqueAbsorbedIds];
+
+    // last_active_at: most-recent activity across the merged group, not
+    // just the survivor's own value. Read from lastActiveAtById, which
+    // was populated from the candidate-row SELECT executed by the caller,
+    // before any write this claim makes - so this already IS each member's
+    // PRIOR (pre-this-claim) last_active_at, exactly what the cooldown
+    // check needs to compare against.
+    const survivorLastActiveAt = groupIds.reduce<string | null>((max, id) => {
+      const v = lastActiveAtById.get(id) ?? null;
+      if (!v) return max;
+      if (!max || v > max) return v;
+      return max;
+    }, null);
+
+    // influence_level: MAX across the group (never summed - merging
+    // never grants a free fortification level on its own), THEN subject
+    // to the level-up cooldown gate: a re-claim while the group's
+    // most recent prior activity is still within kLevelUpCooldownMs
+    // keeps the already-held level; once the cooldown has elapsed, the
+    // re-claim is an ordinary level-up event, clamped at 15 by
+    // computeLevelUpOutcome (matching the column's own CHECK
+    // constraint).
+    const survivorInfluenceLevel = computeLevelUpOutcome(
+      survivorLastActiveAt, Date.now(), kLevelUpCooldownMs,
+      groupIds.reduce((max, id) => Math.max(max, influenceLevelById.get(id) ?? 1), 1),
+    ).nextLevel;
+
+    // credits_earned: additive, same rationale as influence above.
+    const survivorCreditsEarned = groupIds.reduce(
+      (sum, id) => sum + (creditsEarnedById.get(id) ?? 0),
+      0,
+    );
+
+    // shield_active: the merged zone is shielded if ANY group member was
+    // shielded; when so, shield_expires_at is the latest expiry among the
+    // shielded members. Otherwise keep the survivor's own (non-shielding)
+    // value untouched.
+    const anyShieldActive = groupIds.some((id) => shieldActiveById.get(id) === true);
+    const survivorShieldExpiresAt = anyShieldActive
+      ? groupIds.reduce<string | null>((max, id) => {
+        if (!shieldActiveById.get(id)) return max;
+        const v = shieldExpiresAtById.get(id) ?? null;
+        if (!v) return max;
+        if (!max || v > max) return v;
+        return max;
+      }, null)
+      : shieldExpiresAtById.get(group.survivorId) ?? null;
+
+    // area_m2: ALWAYS recomputed from the merged geometry (turf area on
+    // the merge result). Never sum source areas - overlapping or
+    // adjacent zones would double-count shared area.
+    const survivorAreaM2 = turfArea(group.geometry);
+
+    zoneGeomJson = JSON.stringify(group.geometry);
+    finalZoneId = group.survivorId;
+    merged = true;
+    absorbedZoneIds = uniqueAbsorbedIds;
+
+    // Atomic write: the survivor aggregate UPDATE and every absorbed-row
+    // DELETE happen inside a single Postgres transaction via the
+    // apply_zone_merge RPC, so a crash mid-merge can never leave a stale
+    // absorbed row alongside an already-updated survivor (or vice versa).
+    // No history is kept: absorbed rows are deleted outright inside the
+    // RPC, no lineage-tracking column is written.
+    const { error: mergeErr } = await supabase.rpc('apply_zone_merge', {
+      p_survivor_id: group.survivorId,
+      p_absorbed_ids: uniqueAbsorbedIds,
+      p_geom_wkt: toWkt(group.geometry),
+      p_geom_json: zoneGeomJson,
+      p_influence: survivorInfluence,
+      p_influence_level: survivorInfluenceLevel,
+      p_credits_earned: survivorCreditsEarned,
+      p_last_active_at: survivorLastActiveAt,
+      p_shield_active: anyShieldActive,
+      p_shield_expires_at: survivorShieldExpiresAt,
+      p_area_m2: survivorAreaM2,
+      p_updated_at: now,
+    });
+    if (mergeErr) return err(`Zone merge failed: ${mergeErr.message}`, 500);
+  }
+
+  return { finalZoneId, merged, absorbedZoneIds, zoneGeomJson };
+}
