@@ -73,15 +73,20 @@ const double kSimulationAccelerationMultiplier = 12.0;
 const int kSimulationMinFixDelayMs = 120;
 const int kSimulationMaxFixDelayMs = 4000;
 
-// Minimum area (sqm) a split-off remainder fragment must clear when a
-// re-run retraces part of a same-level-fused zone's own edge (see
+// Minimum area (sqm) a split-off remainder fragment used to have to clear
+// when a re-run retraces part of a same-level-fused zone's own edge (see
 // computeZoneSplit in supabase/functions/claim_territory/merge_geometry.ts).
-// This gate is enforced server-side only, in claim_territory/handler.ts -
-// the split decision needs the existing zone's stored geometry, which the
-// client does not hold. This client-side copy exists purely as a documented
-// numeric-parity reference (and a future display value), not a live gate;
-// it performs no check on its own. Must stay numerically equal to the
-// server-side kMinSplitFragmentAreaSqm in claim_territory/handler.ts.
+// Superseded server-side (app-T0587): the split's remainder is now snapped
+// to the shared hex grid (supabase/functions/claim_territory/hex_quantize.ts,
+// ported from lib/geo/hex_quantize.dart) and kept whenever any grid cell
+// survives the difference, rather than discarded below this raw-area floor.
+// This constant is NOT deleted - it remains the fallback floor for the one
+// degenerate case where the existing zone is too small for the grid to
+// cover any cell at all (see computeZoneSplit's rawDifferenceFallback), and
+// it stays a documented numeric-parity reference for that fallback. It
+// performs no check on its own; the client does not hold the existing
+// zone's stored geometry needed to run this. Must stay numerically equal to
+// the server-side kMinSplitFragmentAreaSqm in claim_territory/handler.ts.
 const double kMinSplitFragmentAreaSqm = 375.0;
 
 // Maximum number of session-elapsed-deferred loop closures held at once.

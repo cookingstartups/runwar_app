@@ -252,8 +252,17 @@ Deno.test('a candidate row that keeps a split remainder feeds the REMAINDER ring
   const remainderWestLng = lngAt(20); // the kept east-half remainder's own west edge
   const staleWestLng = 33.0; // zoneC's original, pre-split west edge
 
+  // app-T0587: the remainder ring is now snapped to the nearest shared
+  // hex-grid boundary rather than being the exact raw-geometry difference,
+  // so its west edge can sit up to roughly one grid cell's extent
+  // (kHexCellCircumradiusM, currently 10 m) away from the unsnapped
+  // half-split edge - still nowhere near the stale full-ring edge this test
+  // guards against. A generous 15 m tolerance (comfortably above the 10 m
+  // snap bound) keeps this a real "not the stale ring" check without
+  // pinning to exact pre-snap coordinates.
+  const snapToleranceDeg = 15 / LNG_M;
   assert(
-    Math.abs(westmostLng - remainderWestLng) < 1e-9,
+    Math.abs(westmostLng - remainderWestLng) < snapToleranceDeg,
     `the merge scan must see zoneC's REMAINDER ring (west edge ~${remainderWestLng}), not its stale ` +
       `pre-split full ring (west edge ~${staleWestLng}) - got westmost longitude ${westmostLng}`,
   );

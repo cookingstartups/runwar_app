@@ -33,6 +33,13 @@ import { booleanPointInPolygon } from 'https://esm.sh/@turf/boolean-point-in-pol
 import { pointOnFeature } from 'https://esm.sh/@turf/point-on-feature@7';
 import { difference } from 'https://esm.sh/@turf/difference@7';
 import { polygon as turfPolygon, featureCollection } from 'https://esm.sh/@turf/helpers@7';
+import {
+  bboxCenterLat,
+  cellSetDifference,
+  coveredCellSet,
+  dissolveCells,
+  kHexCellCircumradiusM,
+} from './hex_quantize.ts';
 
 // Turf's own d.ts generics vary in arity across published versions of the
 // `geojson` type package it depends on, so a plain `Feature<Polygon>` import
@@ -282,12 +289,49 @@ export function unionCandidateRings(
 
 // ---------------------------------------------------------------------------
 // computeZoneSplit - reversible split on re-run of part of a same-level-fused
-// zone (AC-7). Pure, no I/O: takes the existing zone's stored ring and the
+// zone (AC-7, later superseded by app-T0587's snap-to-boundary behaviour
+// below). Pure, no I/O: takes the existing zone's stored ring and the
 // re-run's own newly-captured ring, classifies the relationship, and (for a
-// genuine partial overlap) computes the remainder geometry via Turf
-// `difference`, subject to a sliver-tolerance floor. The caller (handler.ts)
-// owns row selection and the apply_zone_split RPC write; this function never
-// touches the database.
+// genuine partial overlap) computes the remainder geometry. The caller
+// (handler.ts) owns row selection and the apply_zone_split RPC write; this
+// function never touches the database.
+//
+// app-T0587 - snap the cut to the nearest existing hex-grid boundary instead
+// of discarding a below-floor fragment:
+//   Both the existing zone's stored ring and the incoming re-run ring are
+//   quantised to the SAME shared hex grid (hex_quantize.ts, ported 1:1 from
+//   lib/geo/hex_quantize.dart - kHexCellCircumradiusM must stay numerically
+//   identical between the two). The remainder is then the set of existing
+//   grid cells NOT covered by the incoming ring, dissolved back into ring
+//   geometry - i.e. the split cut is nudged onto the nearest cell edge
+//   rather than left wherever the raw GPS traces happened to cross. This
+//   bounds the snap's displacement to at most one cell's extent
+//   (kHexCellCircumradiusM, currently 10 m) from the true cut, per the task's
+//   worked-example comparison, and - because the grid is a fixed shared
+//   reference rather than derived from either trace - repeated re-runs of
+//   the same ground converge onto the same cell boundaries instead of
+//   drifting or shredding the zone into more rows with each pass.
+//
+//   The old kMinSplitFragmentAreaSqm area floor is superseded, not layered
+//   alongside this: a hex-quantised remainder is either empty (no cell
+//   survives the difference - the re-run's own polygon absorbed every cell
+//   of the old zone at grid resolution, so the old row is fully discarded
+//   exactly as an above-floor-but-now-covered fragment always should be) or
+//   it is a real, non-degenerate set of whole grid cells - there is no
+//   floating-point-noise sliver left for an area floor to catch, because
+//   quantisation already collapsed anything smaller than a single cell to
+//   nothing before the floor would ever run. Running both mechanisms would
+//   leave two conflicting sources of truth for "was this fragment kept or
+//   discarded"; only the grid-emptiness check decides now.
+//
+//   Fallback: if the existing zone's ring is too small for the hex grid to
+//   cover ANY cell center at all (coveredCellSet returns empty - see
+//   hex_quantize.ts's own documented degenerate-input contract), quantised
+//   snapping has nothing to work from. In that case this function falls
+//   back to the pre-T0587 raw-geometry Turf `difference` + area-floor path
+//   so a legitimately tiny existing zone is not spuriously wiped: the floor
+//   check on raw geometry is a *fallback safety net* for this one degenerate
+//   case, not a live rule that runs in the ordinary quantised path above.
 // ---------------------------------------------------------------------------
 
 export type SplitCase = 'partialOverlap' | 'fullContainment' | 'noOverlap';
@@ -296,6 +340,26 @@ export interface ZoneSplitResult {
   case: SplitCase;
   remainder: { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown } | null;
   remainderDiscarded: boolean;
+}
+
+function rawDifferenceFallback(
+  existing: TurfFeature<PolygonGeom>,
+  incoming: TurfFeature<PolygonGeom>,
+  minFragmentAreaSqm: number,
+): ZoneSplitResult {
+  const diff = difference(featureCollection([existing, incoming]));
+  if (!diff) {
+    return { case: 'partialOverlap', remainder: null, remainderDiscarded: true };
+  }
+  const remainderAreaSqm = turfArea(diff);
+  if (remainderAreaSqm < minFragmentAreaSqm) {
+    return { case: 'partialOverlap', remainder: null, remainderDiscarded: true };
+  }
+  return {
+    case: 'partialOverlap',
+    remainder: diff.geometry as { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown },
+    remainderDiscarded: false,
+  };
 }
 
 export function computeZoneSplit(
@@ -320,33 +384,48 @@ export function computeZoneSplit(
   }
 
   // Genuine partial overlap: the re-run retraces PART of the existing zone's
-  // own edge. Subtract the re-run's polygon from the existing zone's stored
-  // geometry - this is the ONE new boolean-geometry operation this feature
-  // adds server-side (AC-1's sliver needs none, see the client-side capture
-  // logic in lasso.dart).
-  const diff = difference(featureCollection([existing, incoming]));
-  if (!diff) {
-    // Turf's difference returns null when the subtraction leaves nothing -
-    // the re-run's polygon fully consumed the existing zone's area even
-    // though it did not geometrically CONTAIN it (e.g. an irregular re-run
-    // that still covers every remaining scrap). Treat identically to a
-    // below-floor remainder: nothing meaningful survives of the old
-    // boundary, so the re-run absorbs the whole prior area.
+  // own edge. Snap the cut to the shared hex grid (see the module-level
+  // comment above) using the EXISTING zone's own bbox-center latitude as the
+  // reference latitude for both quantisations - fixed per zone, so repeated
+  // re-splits of the same row always project onto the identical grid rather
+  // than drifting with each re-run's own bbox.
+  const refLatDeg = bboxCenterLat(existingRing);
+  const existingCells = coveredCellSet(existingRing, kHexCellCircumradiusM, refLatDeg);
+  if (existingCells.size === 0) {
+    // Degenerate case: the existing zone is too small for the grid to cover
+    // even one cell center. Fall back to raw-geometry difference with the
+    // pre-T0587 area floor rather than spuriously wiping a real (if tiny)
+    // zone. See the module-level comment above.
+    return rawDifferenceFallback(existing, incoming, minFragmentAreaSqm);
+  }
+
+  const newCells = coveredCellSet(newRing, kHexCellCircumradiusM, refLatDeg);
+  const remainderCells = cellSetDifference(existingCells, newCells);
+  if (remainderCells.length === 0) {
+    // Nothing of the existing zone survives at grid resolution - the re-run
+    // absorbs the whole prior area, exactly as a full raw-geometry
+    // consumption always did.
     return { case: 'partialOverlap', remainder: null, remainderDiscarded: true };
   }
 
-  const remainderAreaSqm = turfArea(diff);
-  if (remainderAreaSqm < minFragmentAreaSqm) {
-    // Sliver tolerance (AC-7's unwanted-behaviour clause): discard geometric
-    // noise rather than persisting a near-zero-area row. The re-run's own
-    // polygon absorbs that ground instead - handled by the caller's ordinary
-    // claim/insert path, not by this function.
+  const rings = dissolveCells(remainderCells, kHexCellCircumradiusM, refLatDeg);
+  if (rings.length === 0) {
+    // Should not happen given a non-empty cell set, but mirrors the
+    // degenerate-output contract documented in hex_quantize.ts - treat as
+    // nothing usable survived rather than crash.
     return { case: 'partialOverlap', remainder: null, remainderDiscarded: true };
   }
+
+  const geometry = rings.length === 1
+    ? { type: 'Polygon' as const, coordinates: [closedRing(rings[0])] }
+    : {
+      type: 'MultiPolygon' as const,
+      coordinates: rings.map((r) => [closedRing(r)]),
+    };
 
   return {
     case: 'partialOverlap',
-    remainder: diff.geometry as { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown },
+    remainder: geometry,
     remainderDiscarded: false,
   };
 }
