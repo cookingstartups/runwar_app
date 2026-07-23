@@ -360,6 +360,31 @@ class RunRecorderService {
 
   List<LatLng> get track => List.unmodifiable(_track);
   List<LatLng> get trackSnapshot => List.unmodifiable(_track);
+
+  // Index into _track where the CURRENT painted trail segment begins: the
+  // most recently claimed loop's own end index, or 0 while no claim has
+  // landed yet this session. Derived from the same _maxConsumedEndIdx anchor
+  // _scanForAutoClaim already uses to keep a new candidate loop from
+  // re-including already-claimed ground, so the painted trail and the claim
+  // geometry can never disagree on where the current segment starts. This
+  // never mutates anything - it is a read-only projection of _consumedSpans,
+  // updated by the same dispatch path a real run and a simulated run both
+  // share (_scanForAutoClaim / _drainDeferredCrossings / the rehydration
+  // rescan), so a reset fires identically for a real or a simulated claim.
+  int get currentSegmentStartIndex =>
+      _consumedSpans.isEmpty ? 0 : _maxConsumedEndIdx;
+
+  // The current (not-yet-claimed) painted trail segment: _track from
+  // currentSegmentStartIndex through the live end of the trail. Resets to a
+  // shorter list the moment a claim lands, because currentSegmentStartIndex
+  // advances past the claimed span - the underlying _track itself is never
+  // truncated or cleared by this.
+  List<LatLng> get currentSegmentTrack {
+    final start = currentSegmentStartIndex;
+    if (start >= _track.length) return const <LatLng>[];
+    return List.unmodifiable(_track.sublist(start));
+  }
+
   DateTime? get startedAt => _startedAt;
   DateTime? get closedAt => _closedAt;
 

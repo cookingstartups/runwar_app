@@ -1103,7 +1103,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
                   );
                 },
               ),
-            // Own trace: local-only. Rendered from RunRecorderService.trackSnapshot.
+            // Own trace: local-only. Rendered from RunRecorderService.currentSegmentTrack -
+            // the trail from the last claim (or run start) onward, so it stays fully
+            // painted until the NEXT claim, then visibly resets to the claim point.
             // Never broadcast via presence - see realtime_presence_service.dart broadcast block.
             // Do not add presence fields for track / polyline data.
             // Live track polyline while recording.
@@ -1114,7 +1116,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
               if (recState != RecorderState.recording) {
                 return const SizedBox.shrink();
               }
-              final track = RunRecorderService.instance.trackSnapshot;
+              final track = RunRecorderService.instance.currentSegmentTrack;
               if (track.length < 2) return const SizedBox.shrink();
               return PolylineLayer(polylines: [
                 Polyline(
@@ -1135,7 +1137,10 @@ class _MapScreenState extends ConsumerState<MapScreen>
               if (recState != RecorderState.recording) return const SizedBox.shrink();
               final LatLng? ownPos = _simOrRealOwnPosition();
               if (ownPos == null) return const SizedBox.shrink();
-              final snap = RunRecorderService.instance.trackSnapshot;
+              // Comet tail derived from the same current-segment trail as the
+              // persistent polyline above, so the comet never trails behind
+              // points from a loop that already claimed and reset.
+              final snap = RunRecorderService.instance.currentSegmentTrack;
               final tail = snap.length <= 6
                   ? List<LatLng>.from(snap)
                   : snap.sublist(snap.length - 6);
