@@ -75,6 +75,16 @@ class RunRecorderService {
   // Durable session identity minted at startRun and recovered on crash/resume.
   String? _currentSessionId;
 
+  // Buffer + flush scheduling for proximity-fast-path GPS fixes (see
+  // onGpsFixBatch above and _bufferProximityGpsFix). Flushed when the buffer
+  // reaches _proximityGpsBatchMax fixes OR _proximityGpsFlushInterval
+  // elapses since the first buffered fix, whichever comes first, so a batch
+  // is never held indefinitely just because the runner stopped moving.
+  final List<Map<String, dynamic>> _proximityGpsBuffer = [];
+  Timer? _proximityGpsFlushTimer;
+  static const int _proximityGpsBatchMax = 5;
+  static const Duration _proximityGpsFlushInterval = Duration(seconds: 2);
+
   // True while a tester-only simulated replay is driving _onPosition instead
   // of the real device GPS stream. This is the single switch that decides
   // which source is live; see beginSimulation() for the isolation guarantee.
@@ -260,6 +270,15 @@ class RunRecorderService {
   // can stream it to gps_samples via OutboxAwareWriter without this service
   // importing connectivity or Riverpod.
   Future<void> Function(Map<String, dynamic> sample)? onGpsFix;
+
+  // Callback invoked with a BATCH of proximity-fast-path GPS fixes so the
+  // provider layer can upsert them together in a single OutboxAwareWriter
+  // call, instead of the proximity path issuing one upsert per fix. The
+  // proximity pre-check bypasses the spacing filter, so it can fire on every
+  // raw fix while a runner lingers near a loop-closing point; buffering those
+  // fixes and flushing them as a batch (see _bufferProximityGpsFix) keeps
+  // that path from turning into an unbounded stream of single-row upserts.
+  Future<void> Function(List<Map<String, dynamic>> samples)? onGpsFixBatch;
 
   // Supplies a fresh snapshot of the runner's own owned-zone outlines (one
   // entry per outline, closed ring, same city as the active run) at the
@@ -491,15 +510,20 @@ class RunRecorderService {
             // through to the spacing-filter path, so a given fix is streamed
             // from exactly one of the two call sites, never both.
             //
+            // Unlike the spacing-filter path below, this path is buffered
+            // and flushed as a batch (_bufferProximityGpsFix) rather than
+            // written immediately: the proximity pre-check bypasses the
+            // spacing filter, so it can otherwise fire once per raw fix
+            // while the runner lingers near the loop-closing point.
+            //
             // The server write always uses the real, unprefixed
             // _activeUserId - never the namespaced scratchUid above, which
             // exists only to keep simulated scratch rows out of
             // resumeFromScratch.
             final uid = _activeUserId;
             final sid = _currentSessionId;
-            final gpsCb = onGpsFix;
-            if (uid != null && gpsCb != null && sid != null) {
-              gpsCb({
+            if (uid != null && sid != null) {
+              _bufferProximityGpsFix({
                 'run_id': sid,
                 'session_id': sid,
                 'user_id': uid,
@@ -511,16 +535,6 @@ class RunRecorderService {
                 // every row written during a simulation is forced true
                 // regardless of the fixture's own recorded value.
                 'is_mocked': _simActive ? true : pos.isMocked,
-              }).catchError((e, st) {
-                // Fire-and-forget stays non-blocking - the GPS loop must
-                // never stall on a write failure - but the failure is now
-                // observable instead of silently disappearing.
-                ErrorLogService.logClientError(
-                  provider: 'run_recorder_service.onGpsFix.proximity',
-                  error: e,
-                  stackTrace: st,
-                  retryCount: 0,
-                );
               });
             }
           }
@@ -591,6 +605,46 @@ class RunRecorderService {
     _scanForAutoClaim();
   }
 
+  // Buffers a proximity-fast-path GPS fix and schedules (or triggers) a
+  // flush. Flushes early once the buffer reaches _proximityGpsBatchMax so a
+  // burst of fixes never grows unbounded; otherwise the pending timer flushes
+  // whatever is buffered after _proximityGpsFlushInterval so a short, sparse
+  // burst still reaches the server promptly instead of waiting for the max.
+  void _bufferProximityGpsFix(Map<String, dynamic> sample) {
+    _proximityGpsBuffer.add(sample);
+    if (_proximityGpsBuffer.length >= _proximityGpsBatchMax) {
+      _flushProximityGpsBuffer();
+      return;
+    }
+    _proximityGpsFlushTimer ??=
+        Timer(_proximityGpsFlushInterval, _flushProximityGpsBuffer);
+  }
+
+  // Flushes the buffered proximity-path fixes as a single batch via
+  // onGpsFixBatch. Safe to call when the buffer is empty (no-op) so it can
+  // be invoked unconditionally from stopRun/cancelRun/reset without a
+  // caller-side emptiness check.
+  void _flushProximityGpsBuffer() {
+    _proximityGpsFlushTimer?.cancel();
+    _proximityGpsFlushTimer = null;
+    if (_proximityGpsBuffer.isEmpty) return;
+    final batch = List<Map<String, dynamic>>.of(_proximityGpsBuffer);
+    _proximityGpsBuffer.clear();
+    final cb = onGpsFixBatch;
+    if (cb == null) return;
+    cb(batch).catchError((e, st) {
+      // Fire-and-forget stays non-blocking - the GPS loop must never stall
+      // on a write failure - but the failure is now observable instead of
+      // silently disappearing.
+      ErrorLogService.logClientError(
+        provider: 'run_recorder_service.onGpsFixBatch.proximity',
+        error: e,
+        stackTrace: st,
+        retryCount: 0,
+      );
+    });
+  }
+
   Future<void> _startForegroundTask() async {
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
@@ -655,6 +709,9 @@ class RunRecorderService {
     _notifTimer = null;
     await _posSub?.cancel();
     _posSub = null;
+    // Flush any proximity-path fixes still awaiting a batch flush - the run
+    // is ending, so nothing else will trigger the pending timer.
+    _flushProximityGpsBuffer();
     if (!wasSimulation) {
       RealtimePresenceService.instance.setRecording(false);
       unawaited(FlutterForegroundTask.stopService());
@@ -720,6 +777,9 @@ class RunRecorderService {
     _notifTimer = null;
     await _posSub?.cancel();
     _posSub = null;
+    // Flush any proximity-path fixes still awaiting a batch flush - the run
+    // is ending, so nothing else will trigger the pending timer.
+    _flushProximityGpsBuffer();
     if (!wasSimulation) {
       RealtimePresenceService.instance.setRecording(false);
       unawaited(FlutterForegroundTask.stopService());
@@ -1650,12 +1710,26 @@ class RunRecorderService {
     onAutoClaim = null;
     onGateRejected = null;
     onGpsFix = null;
+    onGpsFixBatch = null;
     onRunUpdate = null;
     ownedZoneEdgesProvider = null;
     _lastFixTimestamp = null;
     _deferredCrossings.clear();
     _clockGuardTrips = 0;
+    _proximityGpsFlushTimer?.cancel();
+    _proximityGpsFlushTimer = null;
+    _proximityGpsBuffer.clear();
   }
+
+  /// Forces an immediate flush of any buffered proximity-path GPS fixes,
+  /// bypassing the flush timer/batch-size threshold. Test-only: production
+  /// code relies on the timer/threshold or the stopRun/cancelRun flush.
+  @visibleForTesting
+  void flushProximityGpsBufferForTesting() => _flushProximityGpsBuffer();
+
+  /// Number of proximity-path fixes currently buffered awaiting a flush.
+  @visibleForTesting
+  int get proximityGpsBufferLengthForTesting => _proximityGpsBuffer.length;
 }
 
 /// RED-phase data-only placeholder for SPEC-0143's deferred-crossing value

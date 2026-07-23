@@ -52,6 +52,18 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         networkUp: up,
       );
     };
+    // Wire the proximity-fast-path batch callback: writeGpsSamples already
+    // accepts a list, so a buffered batch of fixes reaches gps_samples via a
+    // single upsert instead of one upsert per fix.
+    svc.onGpsFixBatch = (samples) async {
+      final up =
+          _ref.read(connectivityProvider).whenData((v) => v).valueOrNull ??
+              false;
+      await OutboxAwareWriter.instance.writeGpsSamples(
+        samples,
+        networkUp: up,
+      );
+    };
     // Wire runs row updates (stub/stop/cancel/lasso-link).
     svc.onRunUpdate = (sid, fields) async {
       final up =
