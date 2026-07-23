@@ -102,164 +102,18 @@ class AuthService {
     return _currentUser;
   }
 
-  /// Called once from main.dart after DB init. Idempotent — safe to call
-  /// on every launch; players uses INSERT OR IGNORE; zones are
-  /// guarded by an existence check so they are inserted at most once.
-  Future<void> seedDemoDataIfNeeded() async {
-    // Guard: bots upsert into the remote `bots` table which requires an
-    // authenticated Supabase session; skip seeding on a bare/anonymous launch.
-    if (SupabaseService.instance.currentUserId == null) return;
-
-    final nowIso = DateTime.now().toUtc().toIso8601String();
-
-    // Bots: idempotent via upsert ignore on primary key.
-    final botRows = _allDemoUsers.map((u) => {
-      'id': u['id'],
-      'username': u['username'],
-      'city': 'Valencia',
-      'color': u['color'],
-      'score': 1,
-      'is_active': true,
-      'created_at': nowIso,
-    }).toList();
-    await DatabaseService.instance.bulkUpsertBots(botRows);
-
-    // Zones: guard with existence check to avoid duplicates.
-    final existingZones = await DatabaseService.instance.getZonesByOwner(_r1, limit: 1);
-    if (existingZones.isEmpty) {
-      final zoneRows = _allDemoZones.map((z) => {
-        'id': _uuid.v4(),
-        'owner_id': z['owner'],
-        'city': 'Valencia',
-        'geom_json': z['geom'],
-        'status': z['status'],
-        'influence': z['influence'],
-        'created_at': nowIso,
-        'updated_at': nowIso,
-      }).toList();
-      await DatabaseService.instance.bulkInsertZones(zoneRows);
-    }
-  }
-
-
-  // ── Demo world data (lng first — RFC 7946) ───────────────────────────────────
-
-  static const _r1  = '60b22465-ccbd-424b-a694-397f1c4468a5'; // SOCARRAT
-  static const _r2  = 'a49c23d7-6450-43ac-901d-81a6b1f0313a'; // MASCLETÀ
-  static const _r3  = 'f52d155c-ea42-459c-905d-2f4f9b2b4919'; // FALLERA
-  static const _r4  = 'ff6061b1-1f20-4cdc-ac56-17b1b3b08dac'; // PILOTARI
-  static const _r5  = 'f42c552f-65f3-4520-8cac-bc3a83040e32'; // TARONGERO
-  static const _r6  = '0d6a1a29-5944-4b58-9d0e-1466a352302c'; // NINOT
-  static const _r7  = '824d028e-1c0f-4703-ac61-c923d051c03f'; // SEQUIERO
-  static const _r8  = 'ad9be266-849f-4869-837c-30eaa133a40f'; // ARROSSER
-  static const _r9  = '14500c6b-940f-4092-9f20-8b65b5896b64'; // MICALET
-  static const _r10 = '706dc524-a47a-43b6-a819-452b6ffd3363'; // LLOTGER
-  static const _r11 = '67a16f98-c0f6-4e9f-8ae1-1e3b18382edf'; // BUNYOLERO
-  static const _r12 = 'ed21d846-3c96-4af0-892c-311064a6884d'; // HORCHATER
-  static const _r13 = 'cceae57c-48c8-49b1-94b0-59c51a18484f'; // SOROLLÀ
-  static const _r14 = 'c8b1e559-6785-40f6-84cd-dae6176f0ceb'; // BARQUERO
-  static const _r15 = '0cab1f1a-21b3-46f8-a367-a309337ea4bf'; // PESCAILLA
-
-  static const List<Map<String, dynamic>> _allDemoUsers = [
-    {'id': _r1,  'email': 'r1@runwar.demo',  'username': 'SOCARRAT',  'color': '#FF8500', 'influence': 5},
-    {'id': _r2,  'email': 'r2@runwar.demo',  'username': 'MASCLETÀ',  'color': '#00CFFF', 'influence': 6},
-    {'id': _r3,  'email': 'r3@runwar.demo',  'username': 'FALLERA',   'color': '#39FF6B', 'influence': 4},
-    {'id': _r4,  'email': 'r4@runwar.demo',  'username': 'PILOTARI',  'color': '#FF4500', 'influence': 3},
-    {'id': _r5,  'email': 'r5@runwar.demo',  'username': 'TARONGERO', 'color': '#FFD700', 'influence': 4},
-    {'id': _r6,  'email': 'r6@runwar.demo',  'username': 'NINOT',     'color': '#FF69B4', 'influence': 3},
-    {'id': _r7,  'email': 'r7@runwar.demo',  'username': 'SEQUIERO',  'color': '#9370DB', 'influence': 3},
-    {'id': _r8,  'email': 'r8@runwar.demo',  'username': 'ARROSSER',  'color': '#20B2AA', 'influence': 3},
-    {'id': _r9,  'email': 'r9@runwar.demo',  'username': 'MICALET',   'color': '#FF1493', 'influence': 3},
-    {'id': _r10, 'email': 'r10@runwar.demo', 'username': 'LLOTGER',   'color': '#00CED1', 'influence': 3},
-    {'id': _r11, 'email': 'r11@runwar.demo', 'username': 'BUNYOLERO', 'color': '#ADFF2F', 'influence': 3},
-    {'id': _r12, 'email': 'r12@runwar.demo', 'username': 'HORCHATER', 'color': '#FF6347', 'influence': 3},
-    {'id': _r13, 'email': 'r13@runwar.demo', 'username': 'SOROLLÀ',   'color': '#BA55D3', 'influence': 3},
-    {'id': _r14, 'email': 'r14@runwar.demo', 'username': 'BARQUERO',  'color': '#F0E68C', 'influence': 3},
-    {'id': _r15, 'email': 'r15@runwar.demo', 'username': 'PESCAILLA', 'color': '#7FFFD4', 'influence': 3},
-  ];
-
-  static const List<Map<String, dynamic>> _allDemoZones = [
-    // ── RUZAFA_KID — southern runner ─────────────────────────────────────────
-    // Ruzafa Central
-    {'owner': _r1, 'status': 'owned', 'influence': 5,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3742,39.4638],[-0.3726,39.4636],[-0.3708,39.4640],[-0.3702,39.4650],[-0.3706,39.4662],[-0.3722,39.4668],[-0.3740,39.4665],[-0.3746,39.4654],[-0.3742,39.4638]]]}'},
-    // Gran Vía
-    {'owner': _r1, 'status': 'owned', 'influence': 5,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3728,39.4672],[-0.3708,39.4668],[-0.3690,39.4670],[-0.3678,39.4676],[-0.3682,39.4686],[-0.3696,39.4690],[-0.3718,39.4690],[-0.3730,39.4684],[-0.3728,39.4672]]]}'},
-    // Ayuntamiento fringe
-    {'owner': _r1, 'status': 'owned', 'influence': 5,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3762,39.4688],[-0.3748,39.4686],[-0.3736,39.4690],[-0.3733,39.4700],[-0.3740,39.4710],[-0.3755,39.4712],[-0.3764,39.4704],[-0.3762,39.4688]]]}'},
-
-    // ── BEACH_RAT — coastal runner ────────────────────────────────────────────
-    // Malvarrosa beach
-    {'owner': _r2, 'status': 'owned', 'influence': 6,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3278,39.4790],[-0.3255,39.4790],[-0.3240,39.4798],[-0.3235,39.4815],[-0.3240,39.4835],[-0.3258,39.4840],[-0.3278,39.4832],[-0.3282,39.4815],[-0.3278,39.4790]]]}'},
-    // Cabanyal
-    {'owner': _r2, 'status': 'owned', 'influence': 6,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3345,39.4728],[-0.3320,39.4725],[-0.3298,39.4730],[-0.3290,39.4742],[-0.3294,39.4758],[-0.3312,39.4765],[-0.3335,39.4762],[-0.3345,39.4748],[-0.3345,39.4728]]]}'},
-    // Jardines del Turia — park corridor
-    {'owner': _r2, 'status': 'owned', 'influence': 5,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3688,39.4758],[-0.3665,39.4755],[-0.3645,39.4758],[-0.3640,39.4768],[-0.3648,39.4778],[-0.3668,39.4780],[-0.3688,39.4778],[-0.3692,39.4768],[-0.3688,39.4758]]]}'},
-
-    // ── NORTE — north Valencia runner ─────────────────────────────────────────
-    // Benimaclet
-    {'owner': _r3, 'status': 'owned', 'influence': 4,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3585,39.4838],[-0.3558,39.4835],[-0.3540,39.4840],[-0.3535,39.4852],[-0.3542,39.4865],[-0.3560,39.4870],[-0.3580,39.4868],[-0.3588,39.4855],[-0.3585,39.4838]]]}'},
-    // Campanar
-    {'owner': _r3, 'status': 'owned', 'influence': 4,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3992,39.4808],[-0.3968,39.4805],[-0.3948,39.4810],[-0.3940,39.4822],[-0.3946,39.4836],[-0.3962,39.4842],[-0.3982,39.4840],[-0.3995,39.4828],[-0.3992,39.4808]]]}'},
-    // El Carmen fringe
-    {'owner': _r3, 'status': 'owned', 'influence': 4,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3808,39.4718],[-0.3790,39.4715],[-0.3778,39.4720],[-0.3775,39.4730],[-0.3780,39.4742],[-0.3796,39.4745],[-0.3810,39.4740],[-0.3808,39.4718]]]}'},
-
-    // ── PILOTARI — Garrofera/Patraix south-west: elongated WE oval ~1.3 km ─
-    {'owner': _r4, 'status': 'owned', 'influence': 3,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.4020,39.4545],[-0.3975,39.4510],[-0.3920,39.4495],[-0.3868,39.4502],[-0.3840,39.4528],[-0.3842,39.4562],[-0.3878,39.4585],[-0.3935,39.4592],[-0.3988,39.4580],[-0.4020,39.4558],[-0.4020,39.4545]]]}'},
-
-    // ── TARONGERO — Mestalla stadium district: compact rounded square ~800m
-    {'owner': _r5, 'status': 'owned', 'influence': 4,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3655,39.4720],[-0.3615,39.4712],[-0.3568,39.4718],[-0.3540,39.4740],[-0.3542,39.4768],[-0.3572,39.4788],[-0.3618,39.4795],[-0.3658,39.4782],[-0.3675,39.4758],[-0.3665,39.4733],[-0.3655,39.4720]]]}'},
-
-    // ── NINOT — Quatre Carreres south-east: wide shallow rectangle ~1.4 km
-    {'owner': _r6, 'status': 'owned', 'influence': 3,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3792,39.4488],[-0.3728,39.4462],[-0.3658,39.4458],[-0.3608,39.4472],[-0.3592,39.4502],[-0.3600,39.4538],[-0.3648,39.4562],[-0.3718,39.4568],[-0.3778,39.4555],[-0.3810,39.4528],[-0.3812,39.4498],[-0.3792,39.4488]]]}'},
-
-    // ── SEQUIERO — Nazaret port: tall narrow NS strip ~1.5 km ────────────
-    {'owner': _r7, 'status': 'owned', 'influence': 3,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3345,39.4550],[-0.3302,39.4540],[-0.3268,39.4522],[-0.3248,39.4488],[-0.3252,39.4445],[-0.3282,39.4412],[-0.3325,39.4408],[-0.3358,39.4428],[-0.3368,39.4468],[-0.3362,39.4512],[-0.3348,39.4542],[-0.3345,39.4550]]]}'},
-
-    // ── ARROSSER — Trinitat/Poblets Marítims: diagonal coastal strip ~1.3 km
-    {'owner': _r8, 'status': 'owned', 'influence': 3,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3438,39.4730],[-0.3392,39.4718],[-0.3345,39.4702],[-0.3308,39.4682],[-0.3288,39.4652],[-0.3292,39.4622],[-0.3322,39.4610],[-0.3368,39.4618],[-0.3410,39.4638],[-0.3450,39.4660],[-0.3462,39.4692],[-0.3455,39.4718],[-0.3438,39.4730]]]}'},
-
-    // ── MICALET — El Carmen old town: small irregular pentagon ~600m ──────
-    {'owner': _r9, 'status': 'owned', 'influence': 3,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3858,39.4782],[-0.3820,39.4775],[-0.3788,39.4752],[-0.3778,39.4728],[-0.3788,39.4706],[-0.3818,39.4698],[-0.3852,39.4702],[-0.3872,39.4722],[-0.3875,39.4750],[-0.3865,39.4772],[-0.3858,39.4782]]]}'},
-
-    // ── LLOTGER — Extramurs west of old town: medium irregular ~1.0 km ───
-    {'owner': _r10, 'status': 'owned', 'influence': 3,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3968,39.4712],[-0.3918,39.4695],[-0.3872,39.4685],[-0.3838,39.4668],[-0.3830,39.4638],[-0.3848,39.4612],[-0.3895,39.4598],[-0.3948,39.4602],[-0.3990,39.4622],[-0.4008,39.4652],[-0.4000,39.4688],[-0.3978,39.4708],[-0.3968,39.4712]]]}'},
-
-    // ── BUNYOLERO — Jesús south: compact slightly trapezoidal ~900m ───────
-    {'owner': _r11, 'status': 'owned', 'influence': 3,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3862,39.4578],[-0.3812,39.4558],[-0.3758,39.4545],[-0.3718,39.4548],[-0.3700,39.4572],[-0.3705,39.4600],[-0.3742,39.4620],[-0.3798,39.4628],[-0.3848,39.4620],[-0.3872,39.4598],[-0.3862,39.4578]]]}'},
-
-    // ── HORCHATER — Campanar NW: wide trapezoid ~1.4 km ──────────────────
-    {'owner': _r12, 'status': 'owned', 'influence': 3,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.4100,39.4932],[-0.4038,39.4905],[-0.3968,39.4885],[-0.3918,39.4868],[-0.3898,39.4838],[-0.3918,39.4808],[-0.3972,39.4792],[-0.4042,39.4792],[-0.4112,39.4818],[-0.4150,39.4852],[-0.4148,39.4898],[-0.4118,39.4922],[-0.4100,39.4932]]]}'},
-
-    // ── SOROLLÀ — Algirós east-central: irregular pentagon ~1.1 km ───────
-    {'owner': _r13, 'status': 'owned', 'influence': 3,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3595,39.4858],[-0.3545,39.4848],[-0.3490,39.4835],[-0.3445,39.4808],[-0.3428,39.4772],[-0.3440,39.4738],[-0.3482,39.4715],[-0.3542,39.4708],[-0.3595,39.4720],[-0.3630,39.4750],[-0.3628,39.4798],[-0.3608,39.4838],[-0.3595,39.4858]]]}'},
-
-    // ── BARQUERO — Patraix south-west: roughly square ~1.1 km ───────────
-    {'owner': _r14, 'status': 'owned', 'influence': 3,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.4025,39.4648],[-0.3972,39.4628],[-0.3918,39.4612],[-0.3868,39.4608],[-0.3845,39.4580],[-0.3858,39.4550],[-0.3898,39.4532],[-0.3952,39.4528],[-0.4012,39.4542],[-0.4055,39.4572],[-0.4062,39.4610],[-0.4042,39.4638],[-0.4025,39.4648]]]}'},
-
-    // ── PESCAILLA — Cabanyal/Grau coastal: tall NS strip ~1.5 km ─────────
-    {'owner': _r15, 'status': 'owned', 'influence': 3,
-     'geom': '{"type":"Polygon","coordinates":[[[-0.3338,39.4752],[-0.3298,39.4740],[-0.3265,39.4718],[-0.3248,39.4692],[-0.3248,39.4662],[-0.3265,39.4632],[-0.3295,39.4610],[-0.3330,39.4602],[-0.3362,39.4612],[-0.3380,39.4642],[-0.3380,39.4678],[-0.3368,39.4712],[-0.3352,39.4740],[-0.3338,39.4752]]]}'},
-  ];
+  /// Called once from main.dart after DB init.
+  ///
+  /// This is intentionally a no-op. `bots` has no client-writable RLS policy
+  /// (server/migration-managed only — see supabase/migrations/0032_bots_table.sql)
+  /// and the demo `zones` rows are owned by fixed bot IDs, which can never
+  /// satisfy `zones_owner_all`'s `auth.uid() = owner_id` check for a real
+  /// signed-in user. Both writes were structurally guaranteed to fail with a
+  /// row-level-security error under the current access model — the bots are
+  /// already seeded once via migration, and this call attempted a redundant,
+  /// always-failing write on every app launch. Left as a no-op stub (rather
+  /// than deleted outright) so callers/tests don't need to change.
+  Future<void> seedDemoDataIfNeeded() async {}
 
   // Hard-coded alpha access codes — valid offline without Supabase lookup.
   static const _kAlphaCodes = {'ALPHA1'};

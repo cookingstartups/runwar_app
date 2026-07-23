@@ -69,15 +69,8 @@ Future<void> main() async {
     await RunRecoveryService.instance.sweepStale();
     final sessionUserId = SupabaseService.instance.supabase.auth.currentSession?.user.id;
     debugPrint('[main] isConnected=${SupabaseService.instance.isConnected} session=$sessionUserId');
-    // Demo seed + daily decay only make sense once a real user session exists.
-    // Without a session, RLS blocks anon writes and seedDemoData is a wasted
-    // round-trip on every cold boot of an unauthenticated app.
+    // Daily decay only makes sense once a real user session exists.
     if (sessionUserId != null) {
-      try {
-        await AuthService.instance.seedDemoDataIfNeeded();
-      } catch (e) {
-        debugPrint('[main] seedDemoData skipped: $e');
-      }
       await TerritoryService.instance.runDailyDecayIfDue('Valencia', sessionUserId);
     }
   } catch (e) {
