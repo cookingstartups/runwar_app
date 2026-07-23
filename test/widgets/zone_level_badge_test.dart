@@ -1,27 +1,28 @@
 // test/widgets/zone_level_badge_test.dart
 //
-// RED phase: imports resolve to files that do not yet exist.
-// Each test maps to one GIVEN/WHEN/THEN from design.md §4 + phase spec §8
-// (lines 983-985). Phase spec lines 866-872 (grey/green/blue/purple/gold) are
-// SUPERSEDED by the Team Lead brief's 5-tier palette encoded in design.md §4.
-// Tests use design.md §4 colors exclusively.
+// Fortification ring badge — covers:
+//   1. Tier color per level band (core/arc color).
+//   2. Arc progress fraction within a tier (0..1 of the 3-level band).
+//   3. Crown replaces the arc only at the Citadel tier (L13-15).
+//   4. No numeric text is rendered on the map badge (moved to tap-sheet).
 //
-// Design contract (design.md §4 ZoneLevelBadge):
+// Design contract (widget source, lib/widgets/zone_level_badge.dart):
 //   5-tier color map:
-//     Tier 0: levels 1-3  → green  0xFF4CAF50
-//     Tier 1: levels 4-6  → lime   0xFFCDDC39
-//     Tier 2: levels 7-9  → amber  0xFFFFC107
-//     Tier 3: levels 10-12→ orange 0xFFFF9800
-//     Tier 4: levels 13-15→ red    0xFFF44336
-//   Formula: final idx = ((level.clamp(1, 15) - 1) ~/ 3).clamp(0, 4)
-//   Out-of-range (e.g. level=16) clamps to level=15 → tier 4 (red)
+//     Tier 0: levels 1-3   → green  0xFF4CAF50 (Outpost)
+//     Tier 1: levels 4-6   → lime   0xFFCDDC39 (Stronghold)
+//     Tier 2: levels 7-9   → amber  0xFFFFC107 (Fortress)
+//     Tier 3: levels 10-12 → orange 0xFFFF9800 (Bastion)
+//     Tier 4: levels 13-15 → red    0xFFF44336 (Citadel)
+//   Formula: idx = ((level.clamp(1, 15) - 1) ~/ 3).clamp(0, 4)
+//   Progress fraction: (((level.clamp(1,15)-1) % 3) + 1) / 3
+//   Out-of-range (e.g. level=16) clamps to level=15 → tier 4 (red, crown)
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:runwar_app/widgets/zone_level_badge.dart';
 
-// ── Color constants (design.md §4) ───────────────────────────────────────────
+// ── Color constants ──────────────────────────────────────────────────────────
 
 const Color kTier0Green  = Color(0xFF4CAF50); // levels 1-3
 const Color kTier1Lime   = Color(0xFFCDDC39); // levels 4-6
@@ -34,102 +35,122 @@ const Color kTier4Red    = Color(0xFFF44336); // levels 13-15
 Widget _pump(int level) =>
     MaterialApp(home: Scaffold(body: ZoneLevelBadge(level: level)));
 
-/// Finds the [Container] or [DecoratedBox] in [ZoneLevelBadge] that carries
-/// the background color and returns its effective [Color].
-Color _badgeColor(WidgetTester tester) {
-  // ZoneLevelBadge is specified as a 24×24 circle. We look for a Container
-  // whose decoration carries a BoxDecoration with a color matching a tier.
-  final containers = tester.widgetList<Container>(find.byType(Container));
-  for (final c in containers) {
-    final deco = c.decoration;
-    if (deco is BoxDecoration && deco.color != null) {
-      return deco.color!;
-    }
-  }
-  // Fallback: check DecoratedBox.
-  final boxes = tester.widgetList<DecoratedBox>(find.byType(DecoratedBox));
-  for (final b in boxes) {
-    if (b.decoration is BoxDecoration) {
-      final color = (b.decoration as BoxDecoration).color;
-      if (color != null) return color;
-    }
-  }
-  throw TestFailure('Could not find a colored Container or DecoratedBox in ZoneLevelBadge');
+FortificationRingPainter _painter(WidgetTester tester) {
+  final customPaint = tester.widget<CustomPaint>(find.byType(CustomPaint));
+  return customPaint.painter as FortificationRingPainter;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 void main() {
-  group('ZoneLevelBadge colors (design.md §4 5-tier palette)', () {
-    // GIVEN level=1 (tier 0)
-    // WHEN ZoneLevelBadge is rendered
-    // THEN background color is green 0xFF4CAF50
-    testWidgets('level 1 renders green (tier 0: 0xFF4CAF50)', (tester) async {
+  group('ZoneLevelBadge tier color', () {
+    testWidgets('level 1 renders green core/arc (tier 0)', (tester) async {
       await tester.pumpWidget(_pump(1));
-      expect(_badgeColor(tester), equals(kTier0Green),
-          reason: 'Level 1 is in tier 0 → green 0xFF4CAF50');
+      expect(_painter(tester).color, equals(kTier0Green));
     });
 
-    // GIVEN level=6 (boundary of tier 1)
-    // WHEN ZoneLevelBadge is rendered
-    // THEN background color is lime 0xFFCDDC39
-    testWidgets('level 6 renders lime (tier 1: 0xFFCDDC39)', (tester) async {
+    testWidgets('level 6 renders lime core/arc (tier 1)', (tester) async {
       await tester.pumpWidget(_pump(6));
-      expect(_badgeColor(tester), equals(kTier1Lime),
-          reason: 'Level 6 is in tier 1 → lime 0xFFCDDC39');
+      expect(_painter(tester).color, equals(kTier1Lime));
     });
 
-    // GIVEN level=9 (boundary of tier 2)
-    // WHEN ZoneLevelBadge is rendered
-    // THEN background color is amber 0xFFFFC107
-    testWidgets('level 9 renders amber (tier 2: 0xFFFFC107)', (tester) async {
+    testWidgets('level 9 renders amber core/arc (tier 2)', (tester) async {
       await tester.pumpWidget(_pump(9));
-      expect(_badgeColor(tester), equals(kTier2Amber),
-          reason: 'Level 9 is in tier 2 → amber 0xFFFFC107');
+      expect(_painter(tester).color, equals(kTier2Amber));
     });
 
-    // GIVEN level=12 (boundary of tier 3)
-    // WHEN ZoneLevelBadge is rendered
-    // THEN background color is orange 0xFFFF9800
-    testWidgets('level 12 renders orange (tier 3: 0xFFFF9800)', (tester) async {
+    testWidgets('level 12 renders orange core/arc (tier 3)', (tester) async {
       await tester.pumpWidget(_pump(12));
-      expect(_badgeColor(tester), equals(kTier3Orange),
-          reason: 'Level 12 is in tier 3 → orange 0xFFFF9800');
+      expect(_painter(tester).color, equals(kTier3Orange));
     });
 
-    // GIVEN level=15 (tier 4, maximum in-range)
-    // WHEN ZoneLevelBadge is rendered
-    // THEN background color is red 0xFFF44336
-    testWidgets('level 15 renders red (tier 4: 0xFFF44336)', (tester) async {
+    testWidgets('level 15 renders red core/arc (tier 4)', (tester) async {
       await tester.pumpWidget(_pump(15));
-      expect(_badgeColor(tester), equals(kTier4Red),
-          reason: 'Level 15 is in tier 4 → red 0xFFF44336');
+      expect(_painter(tester).color, equals(kTier4Red));
     });
 
-    // GIVEN level=16 (out-of-range, above max)
-    // WHEN ZoneLevelBadge is rendered
-    // THEN clamps to 15 → tier 4 (red 0xFFF44336)
-    testWidgets('level 16 (out-of-range) renders red — clamped to level 15', (tester) async {
+    testWidgets('level 16 (out-of-range) clamps to red (tier 4)',
+        (tester) async {
       await tester.pumpWidget(_pump(16));
-      expect(_badgeColor(tester), equals(kTier4Red),
-          reason: 'Level 16 must clamp to 15 → tier 4 (red 0xFFF44336)');
+      expect(_painter(tester).color, equals(kTier4Red));
     });
 
-    // Additional boundary verification: level 3 (last of tier 0) and level 4
-    // (first of tier 1) must differ — validates the formula at the boundary.
-    testWidgets('level 3 is green (tier 0) and level 4 is lime (tier 1) — boundary correct', (tester) async {
+    testWidgets('level 3 is green and level 4 is lime — boundary correct',
+        (tester) async {
       await tester.pumpWidget(_pump(3));
-      final color3 = _badgeColor(tester);
+      final color3 = _painter(tester).color;
 
       await tester.pumpWidget(_pump(4));
-      final color4 = _badgeColor(tester);
+      final color4 = _painter(tester).color;
 
-      expect(color3, equals(kTier0Green),
-          reason: 'Level 3 must be green (tier 0)');
-      expect(color4, equals(kTier1Lime),
-          reason: 'Level 4 must be lime (tier 1)');
-      expect(color3, isNot(equals(color4)),
-          reason: 'Tier boundary at level 3→4 must produce different colors');
+      expect(color3, equals(kTier0Green));
+      expect(color4, equals(kTier1Lime));
+      expect(color3, isNot(equals(color4)));
+    });
+  });
+
+  group('ZoneLevelBadge arc progress within tier', () {
+    testWidgets('level 4 (first of Stronghold) → progress 1/3',
+        (tester) async {
+      await tester.pumpWidget(_pump(4));
+      expect(_painter(tester).progress, closeTo(1 / 3, 0.0001));
+    });
+
+    testWidgets('level 5 (mid of Stronghold) → progress 2/3',
+        (tester) async {
+      await tester.pumpWidget(_pump(5));
+      expect(_painter(tester).progress, closeTo(2 / 3, 0.0001));
+    });
+
+    testWidgets('level 6 (last of Stronghold) → progress 3/3 (full ring)',
+        (tester) async {
+      await tester.pumpWidget(_pump(6));
+      expect(_painter(tester).progress, closeTo(1.0, 0.0001));
+    });
+
+    testWidgets('level 7 (first of Fortress) resets progress to 1/3',
+        (tester) async {
+      await tester.pumpWidget(_pump(7));
+      expect(_painter(tester).progress, closeTo(1 / 3, 0.0001));
+    });
+  });
+
+  group('ZoneLevelBadge crown at Citadel (max tier)', () {
+    testWidgets('level 12 (Bastion, not max) has no crown', (tester) async {
+      await tester.pumpWidget(_pump(12));
+      expect(_painter(tester).showCrown, isFalse);
+    });
+
+    testWidgets('level 13 (first of Citadel) shows crown', (tester) async {
+      await tester.pumpWidget(_pump(13));
+      expect(_painter(tester).showCrown, isTrue);
+    });
+
+    testWidgets('level 14 (mid Citadel) shows crown', (tester) async {
+      await tester.pumpWidget(_pump(14));
+      expect(_painter(tester).showCrown, isTrue);
+    });
+
+    testWidgets('level 15 (max) shows crown with full progress',
+        (tester) async {
+      await tester.pumpWidget(_pump(15));
+      final painter = _painter(tester);
+      expect(painter.showCrown, isTrue);
+      expect(painter.progress, equals(1.0));
+    });
+
+    testWidgets('level 16 (out-of-range) clamps into Citadel → crown',
+        (tester) async {
+      await tester.pumpWidget(_pump(16));
+      expect(_painter(tester).showCrown, isTrue);
+    });
+  });
+
+  group('ZoneLevelBadge renders no raw number on the map', () {
+    testWidgets('no Text widget shows the numeric level', (tester) async {
+      await tester.pumpWidget(_pump(7));
+      expect(find.text('7'), findsNothing);
+      expect(find.byType(Text), findsNothing);
     });
   });
 }
