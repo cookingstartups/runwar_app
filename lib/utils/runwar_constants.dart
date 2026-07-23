@@ -130,3 +130,30 @@ const bool kEnforceShapeGates = false;
 // At the 50 m point spacing (kTrackPointSpacingM), 4 segments is about
 // 200 m of genuinely new trail.
 const int kMinNewLoopTrailSegments = 4;
+
+// ---------------------------------------------------------------------------
+// Render-only polygon smoothing (see lib/geo/polygon_smoothing.dart).
+// ---------------------------------------------------------------------------
+
+// Chaikin corner-cutting iterations applied to a zone outline purely for
+// display. Two passes rounds visible GPS jaggedness without the point count
+// (4x per pass) getting expensive across every rendered zone every frame.
+const int kZoneRenderSmoothingIterations = 2;
+
+// ---------------------------------------------------------------------------
+// Hex-grid geometry quantisation (see lib/geo/hex_quantize.dart).
+// ---------------------------------------------------------------------------
+
+// Circumradius (metres) of the shared hex grid used to quantise a captured
+// polygon so two independent traces of the same real-world loop converge on
+// the same stored cell boundary. PROVISIONAL default, not yet reviewed for
+// game balance: chosen to sit comfortably below the ~39 m edge of the
+// smallest legal claim (see kMinCapturedAreaDiagonalM's derivation of the
+// 1500 sqm floor in territory-mechanics.md) while staying well above typical
+// GPS jitter, so a single legal claim always spans many cells and a claim's
+// area is not itself distorted by cell granularity. Roughly comparable to a
+// real H3 resolution between 11 and 12 (edge length ~24 m / ~9 m). A
+// @game-theory pass should confirm or replace this value before this
+// quantisation feeds anything gameplay-facing (contiguity, split-snap,
+// scoring) - see app-T0583/app-T0587 handoff notes.
+const double kHexCellCircumradiusM = 10.0;
