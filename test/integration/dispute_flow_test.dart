@@ -43,6 +43,7 @@ import 'package:runwar_app/widgets/zone_level_badge.dart';
 import 'package:runwar_app/widgets/dispute_countdown_label.dart';
 import 'package:runwar_app/providers/app_config_provider.dart';
 import 'package:runwar_app/providers/auth_provider.dart';
+import 'package:runwar_app/providers/cities_provider.dart';
 import 'package:runwar_app/providers/profile_provider.dart';
 import 'package:runwar_app/providers/run_recorder_provider.dart';
 import 'package:runwar_app/providers/disputes_repository_provider.dart';
@@ -146,6 +147,24 @@ Map<String, dynamic> _openDisputeRow() => {
 // in all widget/integration tests. SquadLead should refactor
 // RunRecorderNotifier to accept an injected RunRecorderService for Phase 2.
 
+// MapScreen drives a continuously repeating pulse animation on its terrain
+// fill/border (AnimationController with repeat(reverse: true)) that by design
+// never stops. tester.pumpAndSettle() waits for zero pending frames, so any
+// tree containing MapScreen makes it hang forever. Use this bounded pump
+// sequence instead everywhere the widget tree includes MapScreen: it drains
+// microtasks/futures and advances animations/modal transitions across a
+// fixed number of frames without waiting for that pulse to stop.
+//
+// cityConfigProvider races a real network call against a 3-second timeout
+// (falling back to CityConfig.valencia on either), so the bounded window here
+// covers that full window with margin rather than a handful of short frames.
+Future<void> _settle(WidgetTester tester) async {
+  await tester.pump();
+  for (var i = 0; i < 8; i++) {
+    await tester.pump(const Duration(milliseconds: 500));
+  }
+}
+
 void main() {
   setUpAll(() async {
     // Initialize Supabase with stub credentials so legacy CtfService doesn't
@@ -215,6 +234,12 @@ void main() {
                 <String, dynamic>{'id': userId, 'city': 'Valencia'},
           ),
           runRecorderProvider.overrideWith((_) => _StubRunRecorderNotifier()),
+          // MapScreen resolves its active city from joinedCitySlugsProvider, not
+          // from the profile's 'city' field, so this must be overridden or the
+          // screen shows the empty-state ('No city joined yet') and never renders
+          // any zone markers.
+          joinedCitySlugsProvider(_kCurrentUserId)
+              .overrideWith((ref) async => ['valencia']),
         ],
       );
       addTearDown(container.dispose);
@@ -230,9 +255,9 @@ void main() {
       // (city = 'Valencia') and zonesProvider('Valencia') subscribes to
       // zonesController. Broadcast streams drop events with no listeners, so
       // the zone must be emitted AFTER the subscription is established.
-      await tester.pumpAndSettle();
+      await _settle(tester);
       zonesController.add([Zone.fromGeoJsonRow(_rivalZoneRow())]);
-      await tester.pumpAndSettle();
+      await _settle(tester);
 
       // Step 2: the map center should be Valencia (39.4699, -0.3763).
       // We verify the cityConfigProvider was resolved with Valencia coordinates
@@ -247,7 +272,7 @@ void main() {
       // badge marker — avoids relying on flutter_map's coordinate projection
       // which is unreliable in test viewports.
       await tester.tap(find.byKey(const ValueKey('zone-z1')));
-      await tester.pumpAndSettle();
+      await _settle(tester);
 
       // AttackSheet should be present (either directly or via ModalBottomSheet).
       expect(find.byType(AttackSheet), findsOneWidget,
@@ -262,7 +287,7 @@ void main() {
           .thenAnswer((_) => Stream.value(Dispute.fromRow(_openDisputeRow())));
 
       zonesController.add([Zone.fromGeoJsonRow(_rivalZoneRow(status: 'disputed'))]);
-      await tester.pumpAndSettle();
+      await _settle(tester);
 
       // DisputeCountdownLabel must now be visible on the map polygon marker.
       // (The 'Zone disputed!' snackbar only fires via confirmClaim() — covered
@@ -274,7 +299,7 @@ void main() {
       final conqueredRow = _rivalZoneRow(status: 'owned', influenceLevel: 1);
       conqueredRow['owner_id'] = _kCurrentUserId;
       zonesController.add([Zone.fromGeoJsonRow(conqueredRow)]);
-      await tester.pumpAndSettle();
+      await _settle(tester);
 
       // Snackbar text ('Zone conquered!') only fires via confirmClaim() — covered
       // by unit tests. Verify the observable UI state: badge resets to level 1.
@@ -307,6 +332,12 @@ void main() {
                 <String, dynamic>{'id': userId, 'city': 'Valencia'},
           ),
           runRecorderProvider.overrideWith((_) => _StubRunRecorderNotifier()),
+          // MapScreen resolves its active city from joinedCitySlugsProvider, not
+          // from the profile's 'city' field, so this must be overridden or the
+          // screen shows the empty-state ('No city joined yet') and never renders
+          // any zone markers.
+          joinedCitySlugsProvider(_kCurrentUserId)
+              .overrideWith((ref) async => ['valencia']),
           // disputesRepositoryProvider must be overridden so that
           // DisputeCountdownLabel (via disputeCountdownProvider) sees the
           // stubbed dispute when the zone emits 'disputed' status.
@@ -346,10 +377,10 @@ void main() {
 
       // Settle first so profileGateProvider resolves and zonesProvider subscribes
       // to zonesController. Broadcast streams drop events with no active listeners.
-      await tester.pumpAndSettle();
+      await _settle(tester);
       // Emit disputed zone at level 3.
       zonesController.add([Zone.fromGeoJsonRow(_rivalZoneRow(status: 'disputed', influenceLevel: 3))]);
-      await tester.pumpAndSettle();
+      await _settle(tester);
 
       // DisputeCountdownLabel should be visible initially.
       expect(find.byType(DisputeCountdownLabel), findsAtLeastNWidgets(1),
@@ -365,7 +396,7 @@ void main() {
           .thenAnswer((_) => Stream.value(null));
 
       zonesController.add([Zone.fromGeoJsonRow(resolvedRow)]);
-      await tester.pumpAndSettle();
+      await _settle(tester);
 
       // DisputeCountdownLabel must no longer be visible (zone is 'owned' again).
       expect(find.byType(DisputeCountdownLabel), findsNothing,
