@@ -441,3 +441,44 @@ export function computeZoneSplit(
 export function computeNextInfluenceLevel(currentLevel: number): number {
   return Math.min(15, currentLevel + 1);
 }
+
+// ---------------------------------------------------------------------------
+// computeClaimInfluence - sublinear, area-scaled claim reward.
+//
+// Replaces a flat `influence: 1` previously assigned to every new zone,
+// every conquest, and every merge survivor regardless of captured size. A
+// flat award made the cheapest claim that only just clears the server's
+// area floor (evaluateCapturedRingGates's minCapturedAreaSqm, 1500 sqm)
+// exactly as valuable as a claim covering ten times more ground - the
+// dominant strategy became spamming minimum-size loops up to the daily
+// claim cap rather than running a genuinely larger one, and no floor value
+// can fix that on its own (raising the floor only raises the price of the
+// cheapest spammable claim, it does not stop spamming from being optimal).
+//
+// Square-root scaling ties the award to real captured area while damping
+// runaway growth: doubling area does not double the award, so a merge
+// survivor's influence must be recomputed straight from its OWN final
+// area (this function, fed the merged geometry's true area) rather than
+// summed from the pre-merge members' influence values - the same
+// never-sum-source-areas discipline handler.ts's survivorAreaM2 already
+// applies to area itself (turfArea on the merge result, area double-counts
+// otherwise). Summing sqrt-scaled per-member values instead of
+// recomputing from the total would still reward splitting a claim into
+// many small pieces and merging them, because sqrt is concave: the sum of
+// several sqrts of a total exceeds the sqrt of that total.
+//
+// kInfluenceAreaNormSqm is anchored to the same 1500 sqm the server's own
+// area floor enforces (evaluateCapturedRingGates's minCapturedAreaSqm), so
+// a claim that only just clears the floor keeps the pre-existing baseline
+// influence of 1 - only a claim larger than the floor is ever worth more
+// than the old flat award, never less. Clamped to [1, 15] to match
+// INFLUENCE_MAX (see zones.influence's application-level range, mirrored
+// in TerritoryService.computeDecayStep's own 1..15 clamp) so this new
+// formula can never produce a value decay and display code doesn't
+// already expect.
+const kInfluenceAreaNormSqm = 1500;
+
+export function computeClaimInfluence(areaM2: number): number {
+  const raw = Math.sqrt(Math.max(0, areaM2) / kInfluenceAreaNormSqm);
+  return Math.min(15, Math.max(1, raw));
+}

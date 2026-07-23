@@ -30,7 +30,12 @@
 
 import { assert, assertEquals, assertFalse } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import { runSplitAndMerge, type SplitMergeDbClient, type SplitMergeSuccess } from '../claim_territory/handler.ts';
-import { computeNextInfluenceLevel, computeZoneMerges, computeZoneSplit } from '../claim_territory/merge_geometry.ts';
+import {
+  computeClaimInfluence,
+  computeNextInfluenceLevel,
+  computeZoneMerges,
+  computeZoneSplit,
+} from '../claim_territory/merge_geometry.ts';
 import type { MergeGroup, ZoneInput } from '../claim_territory/merge_geometry.ts';
 import { area as turfArea } from 'https://esm.sh/@turf/area@7';
 
@@ -279,11 +284,27 @@ Deno.test('Unification applies the survivor UPDATE and absorbed DELETEs atomical
   assertEquals(mergeCall!.args.p_absorbed_ids, ['new-claim-zone']);
 });
 
-Deno.test('Unification aggregates additive fields into the survivor', async () => {
-  const { mergeCall } = await runMergeScenario({ influence: 5 }, { influence: 3 });
+Deno.test('Unification recomputes influence from the merged area instead of summing pre-merge member values', async () => {
+  // Deliberately supply per-member influence values (5 and 3) whose naive
+  // sum (8) would have been the OLD behavior's expected result, then prove
+  // the actual RPC call ignores them entirely and instead reflects
+  // computeClaimInfluence(the merged geometry's real area) - summing would
+  // still reward splitting one claim into many small pieces and merging
+  // them back together (see computeClaimInfluence's doc comment).
+  let capturedGroups: MergeGroup[] = [];
+  const { mergeCall } = await runMergeScenario({ influence: 5 }, { influence: 3 }, (groups) => {
+    capturedGroups = groups;
+  });
   assert(mergeCall, 'expected a merge RPC call');
-  assertEquals(mergeCall!.args.p_influence, 8,
-    'the survivor row update must aggregate influence (sum across the merged group: 5 + 3 = 8), not just copy one member\'s value');
+  assertEquals(capturedGroups.length, 1, 'expected exactly one merge group');
+
+  const expectedAreaM2 = turfArea(capturedGroups[0].geometry);
+  const expectedInfluence = computeClaimInfluence(expectedAreaM2);
+
+  assertEquals(mergeCall!.args.p_influence, expectedInfluence,
+    'p_influence must be computeClaimInfluence(the merged geometry\'s real area), not the naive sum (5 + 3 = 8) of pre-merge member values');
+  assert(mergeCall!.args.p_influence !== 8,
+    'this scenario\'s own expected influence must differ from the naive sum, or the exact-match assertion above would not distinguish the two');
 });
 
 Deno.test('Unification sums credits_earned across the merged group', async () => {

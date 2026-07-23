@@ -12,6 +12,7 @@ import type { ZoneSplitResult } from './merge_geometry.ts';
 // still obtained via the lazy dynamic import inside the request handler,
 // strictly within the `if (!disputedId)` guard, and passed in from there).
 import type { computeNextInfluenceLevel, computeZoneMerges, computeZoneSplit } from './merge_geometry.ts';
+import { computeClaimInfluence } from './merge_geometry.ts';
 // Area of the merged geometry is always recomputed from the merge result,
 // never summed from source zones (overlapping/adjacent source zones would
 // double-count their shared area if simply added together).
@@ -426,7 +427,12 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
           conqueredId = zone.id;
           await supabase.from('zones').update({
             owner_id: playerId,
-            influence: 1,
+            // Sublinear, area-scaled award (computeClaimInfluence) replacing
+            // a flat 1 - see that function's doc comment in
+            // merge_geometry.ts for why a flat per-claim award is
+            // exploitable and why a claim exactly at the area floor still
+            // keeps the old baseline of 1.
+            influence: computeClaimInfluence(capturedGates.areaSqm),
             status: 'owned',
             contested_by_id: null,
             updated_at: new Date().toISOString(),
@@ -465,7 +471,9 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
       city,
       geom: toWkt(ring),
       geom_json: JSON.stringify({ type: 'Polygon', coordinates: [ring] }),
-      influence: 1,
+      // Sublinear, area-scaled award - see computeClaimInfluence's doc
+      // comment in merge_geometry.ts.
+      influence: computeClaimInfluence(capturedGates.areaSqm),
       status: 'owned',
       contested_by_id: null,
       created_at: now,
@@ -657,7 +665,10 @@ export async function runSplitAndMerge(
     computeZoneSplit,
     computeZoneMerges,
     computeNextInfluenceLevel,
-    influenceById,
+    // influenceById is still populated by the caller (SplitMergeParams keeps
+    // it, other call sites may rely on it) but is no longer read here -
+    // survivorInfluence is now recomputed straight from the merged area via
+    // computeClaimInfluence, not summed from pre-merge member values.
     influenceLevelById,
     creditsEarnedById,
     lastActiveAtById,
@@ -788,8 +799,22 @@ export async function runSplitAndMerge(
     // survivor, then delete the absorbed rows outright. No lineage-tracking
     // column is written; exactly one row remains per unified territory.
     // The survivor's created_at (oldest in the group) is left untouched.
-    const survivorInfluence = (influenceById.get(group.survivorId) ?? 1) +
-      uniqueAbsorbedIds.reduce((sum, id) => sum + (influenceById.get(id) ?? 1), 0);
+
+    // area_m2: ALWAYS recomputed from the merged geometry (turf area on the
+    // merge result). Never sum source areas - overlapping or adjacent zones
+    // would double-count shared area. Computed here (rather than just
+    // before the RPC call below, where it used to live) because
+    // survivorInfluence now depends on it.
+    const survivorAreaM2 = turfArea(group.geometry);
+
+    // influence: recomputed from the survivor's OWN final area via
+    // computeClaimInfluence - never summed from the pre-merge members'
+    // influence values. Summing would still reward splitting one claim
+    // into many small pieces and merging them, since sqrt is concave (see
+    // computeClaimInfluence's doc comment in merge_geometry.ts); merging N
+    // equal-area pieces into one territory must be worth exactly what a
+    // single claim of that same total area is worth, never more.
+    const survivorInfluence = computeClaimInfluence(survivorAreaM2);
 
     const groupIds = [group.survivorId, ...uniqueAbsorbedIds];
 
@@ -814,7 +839,10 @@ export async function runSplitAndMerge(
       groupIds.reduce((max, id) => Math.max(max, influenceLevelById.get(id) ?? 1), 1),
     );
 
-    // credits_earned: additive, same rationale as influence above.
+    // credits_earned: additive across the group - unlike influence above,
+    // this is a cumulative lifetime counter (not an ongoing income-rate
+    // multiplier), so summing prior members' earned credits is correct and
+    // carries no spam-then-merge incentive of its own.
     const survivorCreditsEarned = groupIds.reduce(
       (sum, id) => sum + (creditsEarnedById.get(id) ?? 0),
       0,
@@ -834,11 +862,6 @@ export async function runSplitAndMerge(
         return max;
       }, null)
       : shieldExpiresAtById.get(group.survivorId) ?? null;
-
-    // area_m2: ALWAYS recomputed from the merged geometry (turf area on
-    // the merge result). Never sum source areas - overlapping or
-    // adjacent zones would double-count shared area.
-    const survivorAreaM2 = turfArea(group.geometry);
 
     zoneGeomJson = JSON.stringify(group.geometry);
     finalZoneId = group.survivorId;
