@@ -293,34 +293,95 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
     const playerId = user.id;
 
     const body = await req.json();
-    const { track, city } = body;
-
-    if (!track || track.type !== 'LineString' || !Array.isArray(track.coordinates)) {
-      return err('Invalid track GeoJSON');
-    }
+    const { track, tracks, city } = body;
     if (!city) return err('Missing city');
-
-    const coords: number[][] = track.coordinates;
-    if (coords.length < 3) return err('Track too short');
 
     // Data-sanity cap (NOT anti-cheat): reject a single hop far beyond any plausible
     // GPS gap so an obviously-corrupt track can't produce a garbage polygon. Real runs
     // decimate to a >=50 m point spacing and legitimate GPS dropouts routinely reach
     // ~250 m, so this cap is deliberately generous. Real speed/teleport anti-cheat is
     // owned by the separate anti-cheat pipeline, not by this gate.
-    for (let i = 1; i < coords.length; i++) {
-      const [lng1, lat1] = coords[i - 1];
-      const [lng2, lat2] = coords[i];
-      if (haversineM(lat1, lng1, lat2, lng2) > 2000) {
+    function hasCorruptHop(c: number[][]): boolean {
+      for (let i = 1; i < c.length; i++) {
+        const [lng1, lat1] = c[i - 1];
+        const [lng2, lat2] = c[i];
+        if (haversineM(lat1, lng1, lat2, lng2) > 2000) return true;
+      }
+      return false;
+    }
+
+    // `tracks` (plural) is a same-run, multiple-closed-loop batch: two or
+    // more loops the CALLER has already grouped as mutually within the 25 m
+    // seal radius (kMergeThresholdMeters below), submitted as ONE claim
+    // request instead of one request per loop. Each member ring is gated
+    // individually first (same floors a lone `track` clears), then the group
+    // is unioned into a single sealed ring via unionCandidateRings - the same
+    // trueUnion algorithm computeZoneMerges already uses for merging a new
+    // claim with pre-existing adjacent territory, reused here rather than
+    // reimplemented. `track` (singular) stays the ordinary one-loop path,
+    // completely unchanged.
+    let coords: number[][];
+    if (Array.isArray(tracks) && tracks.length > 0) {
+      const ringsRaw: number[][][] = [];
+      for (const t of tracks) {
+        if (!t || t.type !== 'LineString' || !Array.isArray(t.coordinates)) {
+          return err('Invalid track GeoJSON');
+        }
+        const c: number[][] = t.coordinates;
+        if (c.length < 3) return err('Track too short');
+        if (hasCorruptHop(c)) {
+          return ok({ result: 'failed', reason: 'corrupt_track' });
+        }
+        const gates = evaluateCapturedRingGates(c);
+        if (!gates.passed) {
+          return ok({ result: 'failed', reason: gates.reason ?? 'too_short' });
+        }
+        ringsRaw.push(c);
+      }
+      if (ringsRaw.length === 1) {
+        coords = ringsRaw[0];
+      } else {
+        const { unionCandidateRings } = await import('./merge_geometry.ts');
+        const unionGeom = unionCandidateRings(ringsRaw, kMergeThresholdMeters);
+        if (unionGeom.type === 'Polygon') {
+          coords = unionGeom.coordinates[0];
+        } else {
+          // Rare hard-failure case (a genuine gap somewhere in the group
+          // that the erosion step could not fully close back into one
+          // ring) - fall back to the largest-area member outline rather
+          // than silently dropping the whole claim. Mirrors the same
+          // non-lossy-by-preference fallback merge_geometry.ts's own
+          // largestRing/pickContainingFragment already use.
+          let best = unionGeom.coordinates[0][0];
+          let bestArea = -1;
+          for (const poly of unionGeom.coordinates) {
+            const a = turfArea({ type: 'Polygon', coordinates: [poly[0]] });
+            if (a > bestArea) {
+              bestArea = a;
+              best = poly[0];
+            }
+          }
+          coords = best;
+        }
+      }
+    } else {
+      if (!track || track.type !== 'LineString' || !Array.isArray(track.coordinates)) {
+        return err('Invalid track GeoJSON');
+      }
+      coords = track.coordinates;
+      if (coords.length < 3) return err('Track too short');
+      if (hasCorruptHop(coords)) {
         return ok({ result: 'failed', reason: 'corrupt_track' });
       }
     }
 
-    // Geometric floors the captured ring must clear before the claim
-    // proceeds to zone-overlap evaluation. Area is always enforced; the
-    // shape floors (diagonal, compactness) are gated behind
+    // Geometric floors the captured (or unioned) ring must clear before the
+    // claim proceeds to zone-overlap evaluation. Area is always enforced;
+    // the shape floors (diagonal, compactness) are gated behind
     // kEnforceShapeGates - see evaluateCapturedRingGates and the flag's own
-    // doc comment above.
+    // doc comment above. Re-checked here even for the multi-track path
+    // (where every member ring already individually cleared this gate
+    // above) as a final defence-in-depth pass on the actual stored shape.
     const capturedGates = evaluateCapturedRingGates(coords);
     if (!capturedGates.passed) {
       return ok({ result: 'failed', reason: capturedGates.reason ?? 'too_short' });

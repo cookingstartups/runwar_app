@@ -182,9 +182,13 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     return RunRecorderService.instance.resumeFromScratch(userId);
   }
 
-  /// Handles an auto-claim callback fired by RunRecorderService when
-  /// a valid self-intersection is detected.
-  Future<void> _handleAutoClaim(List<LatLng> capturedPolygon) async {
+  /// Handles an auto-claim callback fired by RunRecorderService when a valid
+  /// self-intersection is detected. [capturedPolygons] carries one-or-more
+  /// sibling loops from the SAME run that RunRecorderService has already
+  /// grouped by the 25 m seal-merge proximity radius - a group of 2+ is
+  /// submitted as ONE claim so the server can union them into one
+  /// contiguous shape, instead of dispatching one claim per loop.
+  Future<void> _handleAutoClaim(List<List<LatLng>> capturedPolygons) async {
     final auth = _ref.read(authProvider);
     final userId = auth.user?['id'] as String?;
     if (userId == null) {
@@ -195,9 +199,10 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         retryCount: 0,
       );
       if (!_autoClaimOutcomeController.isClosed) {
-        _autoClaimOutcomeController.add(
-          (outcome: const ClaimOutcome(TerritoryResult.failed, null, reason: 'no_user_id'), polygon: capturedPolygon),
-        );
+        _autoClaimOutcomeController.add((
+          outcome: const ClaimOutcome(TerritoryResult.failed, null, reason: 'no_user_id'),
+          polygon: capturedPolygons.first,
+        ));
       }
       return;
     }
@@ -211,25 +216,29 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
         retryCount: 0,
       );
       if (!_autoClaimOutcomeController.isClosed) {
-        _autoClaimOutcomeController.add(
-          (outcome: const ClaimOutcome(TerritoryResult.failed, null, reason: 'no_joined_city'), polygon: capturedPolygon),
-        );
+        _autoClaimOutcomeController.add((
+          outcome: const ClaimOutcome(TerritoryResult.failed, null, reason: 'no_joined_city'),
+          polygon: capturedPolygons.first,
+        ));
       }
       return;
     }
     final city = capitalize(slugs.first);
     try {
-      final outcome = await confirmClaim(userId, city, capturedPolygon);
+      final outcome = await confirmClaim(userId, city, capturedPolygons);
       // Push outcome to the stream MapScreen listens on for the E&U overlay.
+      // The overlay is drawn from the first member polygon - the server's
+      // returned zone_geom_json (already invalidated into zonesProvider
+      // below) is the source of truth for the actual unioned shape.
       if (!_autoClaimOutcomeController.isClosed) {
         _autoClaimOutcomeController
-            .add((outcome: outcome, polygon: capturedPolygon));
+            .add((outcome: outcome, polygon: capturedPolygons.first));
       }
     } catch (e, st) {
       if (!_autoClaimOutcomeController.isClosed) {
         _autoClaimOutcomeController.add((
           outcome: ClaimOutcome(TerritoryResult.failed, null, reason: e.toString()),
-          polygon: capturedPolygon,
+          polygon: capturedPolygons.first,
         ));
       }
       ErrorLogService.logClientError(
@@ -241,21 +250,29 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     }
   }
 
-  /// Evaluates a territory claim using the captured polygon, persists the run,
-  /// and returns the [ClaimOutcome]. The recorder stays in `recording` state.
+  /// Evaluates a territory claim using the captured polygon(s), persists the
+  /// run, and returns the [ClaimOutcome]. The recorder stays in `recording`
+  /// state.
   ///
-  /// Pre: capturedPolygon.length >= 3; recorder state == recording.
+  /// [capturedPolygons] is one-or-more sibling loops already grouped by
+  /// RunRecorderService's proximity check - a single-loop closure is a list
+  /// of exactly one, unchanged from the prior single-polygon behaviour.
+  ///
+  /// Pre: every member of capturedPolygons has length >= 3; recorder state
+  ///      == recording.
   /// Post: claim attempted; provider invalidations fired; outcome surfaced
   ///       to MapScreen via _autoClaimOutcomeController.
   Future<ClaimOutcome> confirmClaim(
     String userId,
     String city,
-    List<LatLng> capturedPolygon,
+    List<List<LatLng>> capturedPolygons,
   ) async {
     final svc = RunRecorderService.instance;
-    // The captured polygon is what gets sent to the edge function for
+    // The captured polygon(s) are what get sent to the edge function for
     // territory evaluation.
-    final track = List<LatLng>.from(capturedPolygon);
+    final tracks = capturedPolygons
+        .map((p) => List<LatLng>.from(p))
+        .toList(growable: false);
     final startedAt = svc.startedAt;
 
     // Resolve connectivity once for this entire claim flow.
@@ -268,15 +285,31 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     ClaimOutcome? outcome;
     if (canWrite) {
       outcome = await TerritoryService.instance.claimViaEdgeFunction(
-        track,
+        tracks,
         city,
       );
     }
-    outcome ??=
-        await TerritoryService.instance.evaluateClaim(userId, city, track);
+    if (outcome == null) {
+      // Offline fallback: TerritoryService.evaluateClaim only ever computes
+      // a single ring locally (its own zone-union logic was already
+      // evaluated and rejected for this exact reason - see
+      // TerritoryService._mergeAdjacentZones's doc comment). Each sibling
+      // loop is evaluated sequentially and AWAITED, so no two of them race
+      // each other locally; a later ONLINE claim's server-side merge scan
+      // (claim_territory) still reconciles any siblings this offline path
+      // could not union, same as the pre-existing single-loop offline path
+      // already relies on for pre-existing adjacent territory.
+      for (final t in tracks) {
+        outcome = await TerritoryService.instance.evaluateClaim(userId, city, t);
+      }
+    }
+    // tracks is always non-empty (RunRecorderService never groups an empty
+    // batch), so the branches above always assign outcome at least once.
+    final resolvedOutcome = outcome!;
+    final track = tracks.first;
 
-    if (outcome.result != TerritoryResult.failed &&
-        outcome.affectedZoneId != null &&
+    if (resolvedOutcome.result != TerritoryResult.failed &&
+        resolvedOutcome.affectedZoneId != null &&
         startedAt != null) {
       final sessionId = svc.currentSessionId;
       // Link this claim's lasso and zone to the in-flight runs row.
@@ -287,7 +320,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
           sessionId,
           {
             'lasso_id': lassoId,
-            'zone_id': outcome.affectedZoneId!,
+            'zone_id': resolvedOutcome.affectedZoneId!,
             'user_id': userId,
           },
           networkUp: networkUp,
@@ -296,21 +329,21 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
       // Fire-and-forget: check if this run earned a SHIELD superpower.
       final runId = sessionId ?? _uuidV4();
       unawaited(SuperpowerService.instance.checkAndEarn(runId: runId));
-      if (outcome.result == TerritoryResult.disputed) {
+      if (resolvedOutcome.result == TerritoryResult.disputed) {
         // Fire-and-forget - never propagates to caller.
         unawaited(NotificationGateway.fireDispute(city));
       }
       // Make the claimed outline visible to the very next scan immediately -
       // invalidating zonesProvider below does not do this synchronously
       // (see the comment on ownedZoneEdgesProvider in the constructor).
-      _registerPendingOwnedZoneEdge(outcome.affectedZoneId!, track);
+      _registerPendingOwnedZoneEdge(resolvedOutcome.affectedZoneId!, track);
       _ref.invalidate(zonesProvider(city));
       _ref.invalidate(userRunPointsProvider((userId: userId, city: city)));
     }
 
     // Do NOT call svc.cancelRun() here.
     // The recorder stays in `recording` state so the next loop can form.
-    return outcome;
+    return resolvedOutcome;
   }
 
   @override

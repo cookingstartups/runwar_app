@@ -191,6 +191,73 @@ double _equirectangularDistanceM(LatLng a, LatLng b) {
 }
 
 // ---------------------------------------------------------------------------
+// _pointToSegmentDistanceM / minRingBoundaryDistanceM
+//
+// Distance-only helpers backing the client-side sibling-loop grouping
+// decision (RunRecorderService groups newly-closed loops from the SAME run
+// that fall within kProximityTriggerM of each other, so they can be
+// submitted as one claim instead of N independent ones). These do NOT
+// compute a polygon union - only a boundary-to-boundary minimum distance,
+// used purely to decide group membership. The actual sealed union geometry
+// is always computed server-side (claim_territory/merge_geometry.ts's
+// trueUnion, the same algorithm already used for merging a new claim with
+// pre-existing adjacent territory) - porting that dilate/union/erode
+// algorithm to pure Dart was already evaluated and rejected for the offline
+// zone-merge path (see TerritoryService._mergeAdjacentZones's doc comment)
+// and the same reasoning applies here.
+// ---------------------------------------------------------------------------
+
+double _pointToSegmentDistanceM(LatLng p, LatLng a, LatLng b) {
+  // Project onto the equirectangular plane centred near the segment so the
+  // closest-point-on-segment computation is a flat-plane one, consistent
+  // with the projection _equirectangularDistanceM itself uses.
+  const double latM = 110540.0;
+  final double lngM =
+      111320.0 * math.cos((a.latitude + b.latitude) / 2 * (math.pi / 180.0));
+  const double ax = 0, ay = 0; // a is the local origin
+  final double bx = (b.longitude - a.longitude) * lngM;
+  final double by = (b.latitude - a.latitude) * latM;
+  final double px = (p.longitude - a.longitude) * lngM;
+  final double py = (p.latitude - a.latitude) * latM;
+
+  final double abx = bx - ax;
+  final double aby = by - ay;
+  final double lenSq = abx * abx + aby * aby;
+  double t = lenSq > 0 ? ((px - ax) * abx + (py - ay) * aby) / lenSq : 0.0;
+  t = t.clamp(0.0, 1.0);
+  final double closestX = ax + t * abx;
+  final double closestY = ay + t * aby;
+  final double dx = px - closestX;
+  final double dy = py - closestY;
+  return math.sqrt(dx * dx + dy * dy);
+}
+
+/// Minimum boundary-to-boundary distance in metres between two closed
+/// polygon rings [a] and [b]: the smallest distance from any vertex of one
+/// ring to the nearest point on any edge of the other, checked both ways.
+/// Used ONLY to decide whether two loops closed in the same run are close
+/// enough (<= kProximityTriggerM) to be grouped into one claim submission -
+/// never to compute the actual merged/sealed shape (that happens
+/// server-side; see this section's doc comment above).
+double minRingBoundaryDistanceM(List<LatLng> a, List<LatLng> b) {
+  if (a.isEmpty || b.isEmpty) return double.infinity;
+  double best = double.infinity;
+  for (final pa in a) {
+    for (int j = 0; j < b.length; j++) {
+      final d = _pointToSegmentDistanceM(pa, b[j], b[(j + 1) % b.length]);
+      if (d < best) best = d;
+    }
+  }
+  for (final pb in b) {
+    for (int i = 0; i < a.length; i++) {
+      final d = _pointToSegmentDistanceM(pb, a[i], a[(i + 1) % a.length]);
+      if (d < best) best = d;
+    }
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------------------
 // trackDistanceM - total run distance
 //
 // Sums the great-circle (haversine) distance between every consecutive pair

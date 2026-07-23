@@ -81,11 +81,18 @@ List<LatLng> _largePolygon() => [
 
 class _AutoClaimCapture {
   final List<List<LatLng>> captured = [];
+  // Every dispatched group as its own entry - a group of 1 (the ordinary,
+  // still-most-common case in these tests) or 2+ (sibling loops from the
+  // same run that fell within the seal-merge proximity radius of each
+  // other). Most existing assertions only care about the FIRST member of
+  // each dispatched group, which `captured` above continues to expose.
+  final List<List<List<LatLng>>> capturedGroups = [];
   bool shouldThrow = false;
   bool shouldFail = false;
 
-  Future<void> call(List<LatLng> polygon) async {
-    captured.add(polygon);
+  Future<void> call(List<List<LatLng>> group) async {
+    captured.add(group.first);
+    capturedGroups.add(group);
     if (shouldThrow) throw Exception('network error');
   }
 }
@@ -922,12 +929,19 @@ void main() {
           reason: 'A crossing deferred in a cancelled session must never claim in a later, unrelated session');
     });
 
-    // Scenario 9: two independent crossings in one session are tracked and
-    // dispatched independently. Offsets scaled to the 30s claim-interval
-    // floor (previously 60s): both crossings must stay deferred while
-    // elapsed is still under 30s (10s, then 20s), and only drain once
-    // elapsed reaches 30s or more (35s).
-    test('two independent crossings in one session are each retained and dispatched exactly once', () async {
+    // Scenario 9: two crossings deferred in the same session are tracked
+    // independently (two distinct trail spans, so the dedup gate never
+    // conflates them) but - because the two figure-8 loops here sit well
+    // within the 25m seal-merge proximity radius of each other (the second
+    // loop continues directly from the first's own closing point) - they are
+    // grouped into ONE claim submission when the drain finally dispatches
+    // them, per the Panel 2 "Union" decision: sibling loops from the same run
+    // within kProximityTriggerM of each other submit as one claim, not N
+    // independent ones. Offsets scaled to the 30s claim-interval floor
+    // (previously 60s): both crossings must stay deferred while elapsed is
+    // still under 30s (10s, then 20s), and only drain once elapsed reaches
+    // 30s or more (35s).
+    test('two nearby crossings deferred in one session are retained independently, then dispatched together as one grouped claim', () async {
       final t0 = DateTime.now();
       svc.injectSessionStartTime(t0);
       svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 10)));
@@ -944,14 +958,21 @@ void main() {
 
       expect(svc.deferredCrossingCountForTesting, 2,
           reason: 'A second, later, geometrically distinct crossing must be tracked '
-              'independently of the first');
+              'independently of the first (two distinct trail spans), even '
+              'though the two loops sit close enough to later group into one '
+              'claim submission');
 
       svc.injectLastFixTimestamp(t0.add(const Duration(seconds: 35)));
       svc.runScanForAutoClaimForTesting();
       await Future<void>.delayed(Duration.zero);
 
-      expect(claimCapture.captured, hasLength(2),
-          reason: 'Both deferred crossings must eventually dispatch independently, each once');
+      expect(claimCapture.capturedGroups, hasLength(1),
+          reason: 'Both deferred crossings sit within the seal-merge proximity '
+              'radius of each other, so the drain must submit them as ONE '
+              'grouped claim rather than two independent ones');
+      expect(claimCapture.capturedGroups.single, hasLength(2),
+          reason: 'The one dispatched claim must carry BOTH sibling loops, '
+              'not silently drop either one');
       expect(svc.deferredCrossingCountForTesting, 0);
     });
   });

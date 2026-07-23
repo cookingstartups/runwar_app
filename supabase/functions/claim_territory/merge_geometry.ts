@@ -244,6 +244,43 @@ export function computeZoneMerges(zones: ZoneInput[], thresholdM: number): Merge
 }
 
 // ---------------------------------------------------------------------------
+// unionCandidateRings - unions two or more freshly-closed loops FROM THE SAME
+// claim request (a single run that self-closed more than one loop) into ONE
+// sealed shape, reusing the exact same trueUnion morphological-closing
+// algorithm computeZoneMerges above already uses for merging a new claim
+// with pre-existing adjacent territory. No new geometry algorithm is
+// introduced here - this is the same dilate/union/erode contract at the same
+// thresholdM, applied to sibling rings instead of database rows.
+//
+// Grouping (WHICH rings belong together) is decided by the caller BEFORE
+// this function is called - handler.ts only calls this once per already-
+// formed group, on rings the client (or an equivalent server-side pass) has
+// already established are mutually within thresholdM. This function only
+// computes the union geometry for a group that is already fixed; it never
+// re-decides membership and never drops a member silently.
+// ---------------------------------------------------------------------------
+
+export function unionCandidateRings(
+  rings: number[][][],
+  thresholdM: number,
+):
+  | { type: 'Polygon'; coordinates: number[][][] }
+  | { type: 'MultiPolygon'; coordinates: number[][][][] } {
+  if (rings.length === 0) {
+    throw new Error('unionCandidateRings: at least one ring is required');
+  }
+  if (rings.length === 1) {
+    return { type: 'Polygon', coordinates: [closedRing(rings[0])] };
+  }
+  const halfThresholdKm = (thresholdM / 2) / 1000;
+  const features = rings.map((r) => toTurfPolygon(r)) as TurfFeature<PolygonGeom>[];
+  const sealed = trueUnion(features, halfThresholdKm) ?? unionAll(features)!;
+  return sealed.geometry as
+    | { type: 'Polygon'; coordinates: number[][][] }
+    | { type: 'MultiPolygon'; coordinates: number[][][][] };
+}
+
+// ---------------------------------------------------------------------------
 // computeZoneSplit - reversible split on re-run of part of a same-level-fused
 // zone (AC-7). Pure, no I/O: takes the existing zone's stored ring and the
 // re-run's own newly-captured ring, classifies the relationship, and (for a
