@@ -14,7 +14,7 @@ import 'package:runwar_app/services/run_recorder_service.dart';
 
 class _AutoClaimCapture {
   final List<List<LatLng>> captured = [];
-  Future<void> call(List<LatLng> polygon) async => captured.add(polygon);
+  Future<void> call(List<List<LatLng>> group) async => captured.add(group.first);
 }
 
 // A genuine ~100 m x 100 m self-closing loop, the same proven relative

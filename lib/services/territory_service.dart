@@ -43,27 +43,39 @@ class TerritoryService {
   /// Call when Supabase is connected. Delegates claim validation to the
   /// claim_territory Edge Function (speed gate, teleport check, lasso, H3).
   /// Falls back to null on any error so the caller can retry locally.
+  ///
+  /// [tracks] carries one-or-more sibling loops from the SAME run, already
+  /// grouped by the caller's 25 m seal-merge proximity check. A single-loop
+  /// group (the ordinary case) is sent as the original `track` field,
+  /// unchanged from before this parameter existed - a group of 2+ is sent as
+  /// the new `tracks` field, an array of LineStrings, so the server can union
+  /// them into one contiguous shape (claim_territory/merge_geometry.ts's
+  /// unionCandidateRings) instead of registering N independent claims.
   Future<ClaimOutcome?> claimViaEdgeFunction(
-    List<LatLng> track,
+    List<List<LatLng>> tracks,
     String city,
   ) async {
     if (!SupabaseService.instance.isConnected) return null;
+    if (tracks.isEmpty) return null;
 
-    final coords =
-        track.map((p) => [p.longitude, p.latitude]).toList();
-    final geoJson = {
-      'type': 'LineString',
-      'coordinates': coords,
-    };
+    List<num> coordOf(LatLng p) => [p.longitude, p.latitude];
+    Map<String, Object> lineStringOf(List<LatLng> track) => {
+          'type': 'LineString',
+          'coordinates': track.map(coordOf).toList(),
+        };
+
+    final body = <String, Object>{'city': city};
+    if (tracks.length == 1) {
+      body['track'] = lineStringOf(tracks.first);
+    } else {
+      body['tracks'] = tracks.map(lineStringOf).toList();
+    }
 
     try {
       final response =
           await SupabaseService.instance.supabase.functions.invoke(
         SupabaseConfig.fnClaimTerritory,
-        body: {
-          'track': geoJson,
-          'city': city,
-        },
+        body: body,
       );
 
       final data = response.data as Map<String, dynamic>?;

@@ -87,7 +87,7 @@ LatLng _mid(LatLng a, LatLng b) =>
 
 class _AutoClaimCapture {
   final List<List<LatLng>> captured = [];
-  Future<void> call(List<LatLng> polygon) async => captured.add(polygon);
+  Future<void> call(List<List<LatLng>> group) async => captured.add(group.first);
 }
 
 void main() {

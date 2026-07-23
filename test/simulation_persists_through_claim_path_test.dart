@@ -53,9 +53,13 @@ class _ClaimCapturingRunRecorderNotifier extends RunRecorderNotifier {
   Future<ClaimOutcome> confirmClaim(
     String userId,
     String city,
-    List<LatLng> capturedPolygon,
+    List<List<LatLng>> capturedPolygons,
   ) async {
-    calls.add((userId: userId, city: city, polygon: List<LatLng>.from(capturedPolygon)));
+    calls.add((
+      userId: userId,
+      city: city,
+      polygon: List<LatLng>.from(capturedPolygons.first),
+    ));
     return const ClaimOutcome(TerritoryResult.claimed, 'zone-fake');
   }
 }

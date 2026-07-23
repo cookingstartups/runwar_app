@@ -15,7 +15,8 @@ import '../geo/lasso.dart'
         computeCapture,
         polygonArea,
         polygonBboxDiagonalM,
-        trackDistanceM;
+        trackDistanceM,
+        minRingBoundaryDistanceM;
 import '../utils/runwar_constants.dart';
 
 enum RecorderState { idle, recording }
@@ -146,6 +147,56 @@ class RunRecorderService {
     return count;
   }
 
+  // Groups a freshly, atomically-computed batch of newly-closed loop
+  // polygons from THIS run by mutual proximity, using the same 25 m seal
+  // radius (kProximityTriggerM) already used server-side to merge a new
+  // claim with pre-existing adjacent territory. A plain union-find over
+  // pairwise minRingBoundaryDistanceM: transitive (A-B close, B-C close, A-C
+  // far still end up in one group via B), same contract as
+  // merge_geometry.ts's computeZoneMerges grouping step. This function only
+  // DECIDES which polygons belong together - the actual sealed union
+  // geometry is always computed server-side (unionCandidateRings), never
+  // here.
+  //
+  // Callers must pass a batch collected and grouped in one synchronous pass,
+  // never assembled incrementally across awaited gaps - see the doc comment
+  // on _drainDeferredCrossings and _rescanRehydratedTrack's dispatch step for
+  // why this matters (a stale, previously-read snapshot can silently drop a
+  // sibling loop from its group).
+  List<List<List<LatLng>>> _groupPolygonsByProximity(
+      List<List<LatLng>> polygons) {
+    final n = polygons.length;
+    if (n <= 1) return polygons.map((p) => [p]).toList();
+    final parent = List<int>.generate(n, (i) => i);
+    int find(int i) {
+      while (parent[i] != i) {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+      }
+      return i;
+    }
+
+    void union(int a, int b) {
+      final ra = find(a), rb = find(b);
+      if (ra != rb) parent[ra] = rb;
+    }
+
+    for (int i = 0; i < n; i++) {
+      for (int j = i + 1; j < n; j++) {
+        if (minRingBoundaryDistanceM(polygons[i], polygons[j]) <=
+            kProximityTriggerM) {
+          union(i, j);
+        }
+      }
+    }
+
+    final groups = <int, List<List<LatLng>>>{};
+    for (int i = 0; i < n; i++) {
+      groups.putIfAbsent(find(i), () => []).add(polygons[i]);
+    }
+    return groups.values.toList();
+  }
+
   // Wall-clock moment of the FAB Start tap. Used as the claim-interval
   // gate's reference point for the FIRST claim of a session (0-to-claim).
   // Persists across multiple auto-claims within the same session.
@@ -187,7 +238,17 @@ class RunRecorderService {
 
   // Callback invoked when an auto-claim should fire. Set by the provider
   // during construction; the service does not import the provider layer.
-  Future<void> Function(List<LatLng> capturedPolygon)? onAutoClaim;
+  //
+  // Takes a LIST of one-or-more captured polygons, never a single polygon:
+  // when a run self-closes multiple loops that fall within the existing
+  // kProximityTriggerM seal-merge radius of EACH OTHER, they are grouped by
+  // [_groupPolygonsByProximity] and dispatched together as ONE claim so the
+  // server can union them into a single contiguous shape (merge_geometry.ts
+  // unionCandidateRings), instead of being submitted as N independent
+  // claims/zone rows. The live single-hit scan path only ever detects one
+  // loop per call, so it always dispatches a list of exactly one - this is
+  // not a behaviour change for that path, only a signature change.
+  Future<void> Function(List<List<LatLng>> capturedPolygons)? onAutoClaim;
 
   // Callback invoked when an auto-claim scan silently rejects a detected loop
   // closure at the area-floor or session-elapsed gate. Set by the provider
@@ -877,8 +938,11 @@ class RunRecorderService {
     if (cb != null) {
       // Fire-and-forget; exceptions are swallowed here so a failed claim
       // does not crash the GPS recording loop. The provider layer catches
-      // errors and surfaces them via _autoClaimOutcomeController.
-      cb(polygon).catchError((_) {});
+      // errors and surfaces them via _autoClaimOutcomeController. This scan
+      // only ever detects one loop per call, so it always dispatches a
+      // single-member group - grouping across sibling loops happens in the
+      // batch paths (_drainDeferredCrossings, _rescanRehydratedTrack).
+      cb([polygon]).catchError((_) {});
     }
   }
 
@@ -963,6 +1027,18 @@ class RunRecorderService {
     final pending = List<_DeferredCrossing>.of(_deferredCrossings);
     _deferredCrossings.clear();
 
+    // Collected freshly, in this one synchronous pass, before any dispatch
+    // fires - never assembled across an awaited gap. Grouping this batch by
+    // proximity BEFORE dispatch (rather than firing one independent
+    // fire-and-forget request per entry, as before) is what actually
+    // eliminates the race that used to defeat server-side merging here: two
+    // fire-and-forget requests issued back-to-back could each read the
+    // database before the other's insert committed, so neither ever saw the
+    // other's zone row to merge against. Grouping sibling loops into ONE
+    // request removes that race entirely - there is no second in-flight
+    // request left to race against.
+    final toDispatch = <List<LatLng>>[];
+
     for (final d in pending) {
       if (d.dispatched) continue; // second guard, belt and braces
       d.dispatched = true;
@@ -986,7 +1062,14 @@ class RunRecorderService {
       // Consume the trail span this polygon covers, mirroring the live
       // path's "consume before dispatch" rule.
       _consumedSpans.add([d.intersectingSegmentIdx, d.detectedAtTrailIndex]);
-      onAutoClaim?.call(d.polygon).catchError((_) {});
+      toDispatch.add(d.polygon);
+    }
+
+    if (toDispatch.isNotEmpty) {
+      final groups = _groupPolygonsByProximity(toDispatch);
+      for (final group in groups) {
+        onAutoClaim?.call(group).catchError((_) {});
+      }
     }
     // Record the drain as the new claim-interval reference point, same as
     // the live dispatch path. The whole batch is gated by one check above
@@ -1332,6 +1415,16 @@ class RunRecorderService {
   /// already guarantees this loop makes forward progress without needing a
   /// floor advance of its own.
   Future<void> _rescanRehydratedTrack() async {
+    // Collected across the whole rescan pass, dispatched only once the loop
+    // finishes: every span-consumption / dedup-gate / claim-interval
+    // bookkeeping step below still runs synchronously and in order exactly
+    // as before (none of it depends on a dispatch's return value), so
+    // deferring the actual onAutoClaim call to the end changes nothing about
+    // which loops get consumed or when - it only lets sibling loops closed
+    // during THIS SAME rescan be grouped by proximity and submitted as one
+    // claim instead of N independent ones, mirroring the live-session batch
+    // path in _drainDeferredCrossings.
+    final rescannedLoops = <List<LatLng>>[];
     for (int len = 2; len <= _track.length; len++) {
       final partial = _track.sublist(0, len);
       final ownedZoneEdges = ownedZoneEdgesProvider?.call() ?? const [];
@@ -1409,16 +1502,30 @@ class RunRecorderService {
       // Record this claim as the new claim-interval reference point, same
       // as the live dispatch path.
       _lastClaimAt = DateTime.now().toUtc();
-      final cb = onAutoClaim;
-      if (cb != null) {
-        // Run sequentially so concurrent zones never collide; await blocks
-        // the rescan loop but the session is still in `idle` UI-wise.
-        try {
-          await cb(polygon);
-        } catch (_) {}
-      }
+      rescannedLoops.add(polygon);
+    }
+
+    if (rescannedLoops.isEmpty) return;
+    final cb = onAutoClaim;
+    if (cb == null) return;
+    final groups = _groupPolygonsByProximity(rescannedLoops);
+    for (final group in groups) {
+      // Run sequentially so concurrent zones never collide; await blocks
+      // the rescan loop but the session is still in `idle` UI-wise.
+      try {
+        await cb(group);
+      } catch (_) {}
     }
   }
+
+  /// Test-only direct access to the sibling-loop proximity grouping
+  /// decision, without needing to drive a real GPS self-intersection scan
+  /// end to end. Same union-find/25m-threshold algorithm the drain and
+  /// rescan batch paths use internally.
+  @visibleForTesting
+  List<List<List<LatLng>>> groupPolygonsByProximityForTesting(
+          List<List<LatLng>> polygons) =>
+      _groupPolygonsByProximity(polygons);
 
   /// Deletes all run_scratch rows for [userId] without affecting [_track],
   /// the foreground service, or state.

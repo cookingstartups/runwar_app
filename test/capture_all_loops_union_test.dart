@@ -78,8 +78,8 @@ void main() {
       svc.onRunUpdate = (_, __) async {};
 
       final capturedPolygons = <List<LatLng>>[];
-      svc.onAutoClaim = (polygon) async {
-        capturedPolygons.add(polygon);
+      svc.onAutoClaim = (group) async {
+        capturedPolygons.addAll(group);
       };
 
       final started =
