@@ -32,6 +32,20 @@ class ClaimOutcome {
   final String? reason;
 }
 
+/// Result of one pure decay tick's arithmetic on a single zone. See
+/// [TerritoryService.computeDecayStep].
+class DecayStepResult {
+  const DecayStepResult({
+    required this.newInfluence,
+    required this.newLevel,
+    required this.levelCrossed,
+  });
+
+  final double newInfluence;
+  final int newLevel;
+  final bool levelCrossed;
+}
+
 class TerritoryService {
   TerritoryService._();
   static final TerritoryService instance = TerritoryService._();
@@ -391,16 +405,107 @@ class TerritoryService {
       final currentInf = (z['influence'] as num).toDouble();
       if (currentInf <= 1.0) continue;
 
-      final newInf = (currentInf - kDecayPerDay).clamp(1.0, 15.0);
-      await ds.updateZone(z['id'] as String, {
-        'influence': newInf,
+      final oldLevel =
+          ((z['influence_level'] as num?)?.toInt() ?? currentInf.floor())
+              .clamp(1, 15);
+      final step = computeDecayStep(
+        currentInfluence: currentInf,
+        oldLevel: oldLevel,
+        decayPerDay: kDecayPerDay,
+      );
+
+      final patch = <String, Object?>{
+        'influence': step.newInfluence,
         'updated_at': nowIso,
-      });
+      };
+      if (step.levelCrossed) {
+        patch['influence_level'] = step.newLevel;
+      }
+      await ds.updateZone(z['id'] as String, patch);
       decayed++;
+
+      // Retroactive fuse-on-parity: only when THIS tick actually stepped
+      // the zone's level down (not on every tick - most ticks move
+      // `influence` without crossing an integer boundary, ~1-in-26 days per
+      // decaying zone at the current rate) does the zone need an adjacency
+      // re-check against its same-owner neighbours. Cheap by construction:
+      // a geometry pass only runs on the rare tick that actually changed
+      // what's rendered, never on every decay tick.
+      if (step.levelCrossed) {
+        await _resolveDecayMerge(
+          ownerId: z['owner_id'] as String,
+          city: city,
+          zoneId: z['id'] as String,
+        );
+      }
     }
 
     if (decayed > 0) {
       debugPrint('[Territory] decay applied to $decayed zones in $city');
+    }
+  }
+
+  /// Pure decay-step arithmetic, extracted out of [_applyDecay] so it is
+  /// testable without a Supabase client.
+  ///
+  /// influence_level (the rendered/gating integer level, see
+  /// `database/models/zone.dart`) was previously never touched by decay -
+  /// only the continuous `influence` value used for passive-income accrual
+  /// moved. Deriving it here from the post-decay influence value means
+  /// decay can now step the rendered level down over time, at the same
+  /// ~26-days-per-level rate influence itself already decays at.
+  /// [levelCrossed] is true only when this single tick's decrement actually
+  /// moved [newLevel] below [oldLevel] - the signal callers use to gate the
+  /// retroactive fuse-on-parity check, so it fires on a boundary crossing
+  /// only, never on every tick.
+  static DecayStepResult computeDecayStep({
+    required double currentInfluence,
+    required int oldLevel,
+    required double decayPerDay,
+  }) {
+    final newInfluence = (currentInfluence - decayPerDay).clamp(1.0, 15.0);
+    final newLevel = newInfluence.floor().clamp(1, 15);
+    return DecayStepResult(
+      newInfluence: newInfluence,
+      newLevel: newLevel,
+      levelCrossed: newLevel < oldLevel,
+    );
+  }
+
+  // Calls the resolve_decay_merges Edge Function so a decay-driven level
+  // drop can fuse a zone with an already-adjacent, now-equal-level,
+  // same-owner neighbour - the same single-rule contiguity + level-equality
+  // gate claim_territory's own merge path uses (computeZoneMerges in
+  // merge_geometry.ts), reused server-side rather than re-implemented in
+  // Dart (see the no-op doc comment on _mergeAdjacentZones above for why a
+  // local geometry merge was rejected). Unlike a claim-triggered merge, this
+  // path grants no bonus level-up - the survivor's level is the plain max
+  // across the group, which is already what every linked member holds.
+  // Best-effort: a failure here just leaves the two zones as separate rows
+  // until the next opportunity (another decay crossing, or the next claim
+  // that touches either one) - it must never fail the decay tick itself.
+  Future<void> _resolveDecayMerge({
+    required String ownerId,
+    required String city,
+    required String zoneId,
+  }) async {
+    if (!SupabaseService.instance.isConnected) return;
+    try {
+      await SupabaseService.instance.supabase.functions.invoke(
+        SupabaseConfig.fnResolveDecayMerges,
+        body: <String, Object>{
+          'owner_id': ownerId,
+          'city': city,
+          'zone_id': zoneId,
+        },
+      );
+    } catch (e, st) {
+      ErrorLogService.logClientError(
+        provider: 'resolveDecayMerge',
+        error: '$e',
+        stackTrace: st,
+        retryCount: 0,
+      );
     }
   }
 

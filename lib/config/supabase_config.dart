@@ -34,4 +34,5 @@ class SupabaseConfig {
   static const String fnCtfClaimWin = 'ctf_claim_win';
   static const String fnSavePhone = 'save_phone';
   static const String fnJoinCityWaitlists = 'join_city_waitlists';
+  static const String fnResolveDecayMerges = 'resolve_decay_merges';
 }
