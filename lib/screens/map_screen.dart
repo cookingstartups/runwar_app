@@ -28,6 +28,7 @@ import '../widgets/zone_level_badge.dart';
 import '../widgets/intro/intro_helpers.dart'
     show sharedEdgePolylines, formatSqm, IntroContinuity;
 import '../geo/lasso.dart' show polygonArea, pointInPolygon;
+import '../geo/polygon_smoothing.dart' show chaikinSmoothClosed;
 import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
 import '../services/superpower_service.dart';
@@ -1485,6 +1486,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
     return markers;
   }
 
+  /// Render-only corner smoothing for a zone outline - see
+  /// lib/geo/polygon_smoothing.dart's header for why this must never touch
+  /// stored/dispatched geometry. Every Polygon widget built from raw zone
+  /// geometry below should route its points through this helper.
+  List<LatLng> _smoothedForRender(List<LatLng> ring) =>
+      chaikinSmoothClosed(ring, iterations: kZoneRenderSmoothingIterations);
+
   /// Builds the glow (background) polygon layer — wide low-alpha stroke per zone.
   List<Polygon> _buildPolygonsGlow(List<Zone> zones, double pulse) {
     final out = <Polygon>[];
@@ -1496,7 +1504,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
             _hexToColor(ownerProfile?['color']?.toString() ?? '#FF7A00');
         final glowAlpha = 0.12 + pulse * 0.14; // 12% → 26%
         out.add(Polygon(
-          points: z.points,
+          points: _smoothedForRender(z.points),
           isFilled: false,
           color: Colors.transparent,
           borderColor: ownerColor.withValues(alpha: glowAlpha),
@@ -1506,7 +1514,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
       } else if (z.status == ZoneStatus.disputed) {
         final glowAlpha = 0.08 + pulse * 0.10;
         out.add(Polygon(
-          points: z.points,
+          points: _smoothedForRender(z.points),
           isFilled: false,
           color: Colors.transparent,
           borderColor: _kDisputedColor.withValues(alpha: glowAlpha),
@@ -1530,7 +1538,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         final fillAlpha = 0.10 + pulse * 0.08; // 10% → 18%
         final borderAlpha = 0.50 + 0.30 * pulse;
         out.add(Polygon(
-          points: z.points,
+          points: _smoothedForRender(z.points),
           isFilled: true,
           color: _kDisputedColor.withValues(alpha: fillAlpha),
           borderColor: _kDisputedColor.withValues(alpha: borderAlpha),
@@ -1576,7 +1584,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
 
         if (group.length == 1 && group.first.outlines.length <= 1) {
           out.add(Polygon(
-            points: group.first.points,
+            points: _smoothedForRender(group.first.points),
             isFilled: true,
             color: ownerColor.withValues(alpha: fillAlpha),
             borderColor: ownerColor.withValues(alpha: borderAlpha),
@@ -1596,7 +1604,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
           final zFillAlpha = 0.0633 * zLevel * (0.75 + 0.25 * pulse);
           for (final outline in z.outlines) {
             out.add(Polygon(
-              points: outline,
+              points: _smoothedForRender(outline),
               isFilled: true,
               color: ownerColor.withValues(alpha: zFillAlpha),
               borderStrokeWidth: 0,
@@ -1620,7 +1628,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         var unified = Path();
         for (final z in group) {
           for (final outline in z.outlines) {
-            final screenPts = _projectToScreen(outline);
+            final screenPts = _projectToScreen(_smoothedForRender(outline));
             if (screenPts.isEmpty) continue;
             unified = Path.combine(PathOperation.union, unified, _makePoly(screenPts));
           }
