@@ -342,14 +342,23 @@ class SelfIntersection {
   // of a zone the runner already owns, rather than a self-crossing of the
   // trail itself. intersectingSegmentIdx has no meaning for this case (there
   // is no earlier trail segment to anchor it to); callers building the
-  // captured polygon must use loopStartTrailIndex as the anchor instead.
+  // captured polygon must find the trail's own earlier crossing of
+  // ownedWallRing instead (see findOwnedWallLoopEntryIdx below), falling
+  // back to loopStartTrailIndex only when no such earlier crossing exists.
   final bool isOwnedZoneWall;
+
+  // The specific owned-zone ring the newest segment crossed, when
+  // isOwnedZoneWall is true. Null otherwise. Callers use this to search the
+  // trail for its own earlier crossing of the SAME wall, which is the true
+  // start of the newly-closed loop.
+  final List<LatLng>? ownedWallRing;
 
   const SelfIntersection({
     required this.intersectionPoint,
     required this.intersectingSegmentIdx,
     this.isProximityClosure = false,
     this.isOwnedZoneWall = false,
+    this.ownedWallRing,
   });
 }
 
@@ -398,6 +407,7 @@ SelfIntersection? detectSelfIntersection(
           intersectionPoint: pt,
           intersectingSegmentIdx: -1,
           isOwnedZoneWall: true,
+          ownedWallRing: ring,
         );
       }
     }
@@ -429,6 +439,47 @@ SelfIntersection? detectSelfIntersection(
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// findOwnedWallLoopEntryIdx
+//
+// An owned-zone-wall hit (SelfIntersection.isOwnedZoneWall) has no earlier
+// trail segment to anchor the captured polygon to on its own - the crossing
+// is between the newest trail segment and a zone wall, not two trail
+// segments. But when the trail already crossed that SAME wall earlier this
+// session, that earlier crossing IS the true start of the newly-closed
+// loop: everything before it is transit that has nothing to do with this
+// loop, exactly like the transit-pole trimmed by a normal self-crossing.
+//
+// Mirrors detectSelfIntersection's own scan (earliest match in range wins,
+// same anti-backtrack exclusion of the newest segment via the k-2 upper
+// bound) but tests trail-vs-ring instead of newest-segment-vs-ring. Returns
+// -1 when no earlier crossing of the same wall exists in range - in that
+// case the whole searched range genuinely is the new loop and the caller
+// should fall back to its own default anchor.
+// ---------------------------------------------------------------------------
+
+int findOwnedWallLoopEntryIdx(
+  List<LatLng> trail,
+  List<LatLng> ring,
+  int searchStart,
+  int k,
+) {
+  if (ring.length < 2) return -1;
+  final start = searchStart < 1 ? 1 : searchStart;
+  for (int i = start; i <= k - 2; i++) {
+    final segA = trail[i - 1];
+    final segB = trail[i];
+    for (int e = 0; e < ring.length; e++) {
+      final edgeA = ring[e];
+      final edgeB = ring[(e + 1) % ring.length];
+      if (segmentSegmentIntersection(edgeA, edgeB, segA, segB) != null) {
+        return i;
+      }
+    }
+  }
+  return -1;
 }
 
 // ---------------------------------------------------------------------------
