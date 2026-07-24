@@ -12,11 +12,13 @@ import 'telemetry_service.dart';
 import '../geo/lasso.dart'
     show
         detectSelfIntersection,
+        findOwnedWallLoopEntryIdx,
         computeCapture,
         polygonArea,
         polygonBboxDiagonalM,
         trackDistanceM,
-        minRingBoundaryDistanceM;
+        minRingBoundaryDistanceM,
+        SelfIntersection;
 import '../utils/runwar_constants.dart';
 
 enum RecorderState { idle, recording }
@@ -155,6 +157,37 @@ class RunRecorderService {
       if (!inConsumed) count++;
     }
     return count;
+  }
+
+  // Capture anchor for an owned-zone-wall hit (rw_app-T0602). The naive
+  // fallback used here when nothing else applies - _maxConsumedEndIdx + 1, or
+  // 0 when _consumedSpans is empty - conflates "nothing consumed THIS
+  // session yet" with "no prior claim exists anywhere": when the player
+  // already owns the zone whose wall the newest segment just crossed (from
+  // an earlier session), anchoring at 0 captures the WHOLE track instead of
+  // just the newly-closed loop.
+  //
+  // The fix: search the trail itself for its own earlier crossing of the
+  // SAME owned wall (findOwnedWallLoopEntryIdx in lasso.dart). If the trail
+  // already crossed that wall earlier this session, that crossing is the
+  // true start of the new loop - everything before it is transit, exactly
+  // like the transit-pole a normal self-crossing trims via
+  // intersectingSegmentIdx. Only when no such earlier crossing exists (the
+  // player genuinely walked the whole track before ever touching this wall)
+  // does the old fallback anchor apply.
+  int _ownedWallCaptureAnchorIdx(
+    SelfIntersection hit,
+    List<LatLng> trail,
+    int k,
+  ) {
+    final fallbackAnchor =
+        _consumedSpans.isEmpty ? 0 : _maxConsumedEndIdx + 1;
+    final ring = hit.ownedWallRing;
+    if (ring == null) return fallbackAnchor;
+    final searchStart = _consumedSpans.isEmpty ? 1 : _maxConsumedEndIdx + 1;
+    final entryIdx =
+        findOwnedWallLoopEntryIdx(trail, ring, searchStart, k);
+    return entryIdx >= 0 ? entryIdx : fallbackAnchor;
   }
 
   // Groups a freshly, atomically-computed batch of newly-closed loop
@@ -849,15 +882,13 @@ class RunRecorderService {
 
     final k = _track.length - 1;
     // An owned-zone-wall hit has no earlier trail segment to anchor to (see
-    // lasso.dart's -1 sentinel doc comment); computeCapture's anchor is the
-    // highest end index across every consumed span, plus one, or 0 when
-    // nothing has been consumed yet (not _maxConsumedEndIdx + 1 == 1 in that
-    // case), so the captured polygon covers the WHOLE unconsumed corridor
-    // run so far - starting at trail index 0, same as the very first run
-    // through this path today - rather than re-including ground an earlier
-    // dispatched claim already covers.
+    // lasso.dart's -1 sentinel doc comment). _ownedWallCaptureAnchorIdx finds
+    // the trail's own earlier crossing of the SAME owned wall when one
+    // exists (the true loop start), falling back to the highest consumed
+    // end index (plus one), or 0 when nothing has been consumed yet, only
+    // when no such earlier crossing exists (rw_app-T0602).
     final captureAnchorIdx = hit.isOwnedZoneWall
-        ? (_consumedSpans.isEmpty ? 0 : _maxConsumedEndIdx + 1)
+        ? _ownedWallCaptureAnchorIdx(hit, _track, k)
         : hit.intersectingSegmentIdx;
     final polygon = computeCapture(
       _track,
@@ -1519,12 +1550,10 @@ class RunRecorderService {
         ownedZoneEdges: ownedZoneEdges,
       );
       if (hit == null) continue;
-      // Mirrors _scanForAutoClaim's anchor choice: an owned-zone-wall hit has
-      // no earlier trail segment to anchor to (intersectingSegmentIdx is the
-      // -1 sentinel), so the highest consumed end index (plus one), or 0
-      // when nothing has been consumed yet, is used instead.
+      // Mirrors _scanForAutoClaim's anchor choice - see
+      // _ownedWallCaptureAnchorIdx (rw_app-T0602).
       final captureAnchorIdx = hit.isOwnedZoneWall
-          ? (_consumedSpans.isEmpty ? 0 : _maxConsumedEndIdx + 1)
+          ? _ownedWallCaptureAnchorIdx(hit, partial, len - 1)
           : hit.intersectingSegmentIdx;
       final polygon = computeCapture(
         partial,
