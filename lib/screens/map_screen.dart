@@ -1213,7 +1213,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
             _FogLayer(
               userId: userId,
               city: city,
-              currentPosition: _currentPosition,
+              currentPosition: _simOrRealOwnPosition(),
             ),
           ],
         ),
@@ -2242,7 +2242,7 @@ bool _isRevealedByFog(
 class _FogLayer extends ConsumerWidget {
   final String userId;
   final String city;
-  final Position? currentPosition;
+  final LatLng? currentPosition;
 
   const _FogLayer({
     required this.userId,
@@ -2266,10 +2266,7 @@ class _FogLayer extends ConsumerWidget {
 
     // Live GPS → 1 km immediate visibility even before any run is saved.
     if (currentPosition != null) {
-      centers.add((
-        point: LatLng(currentPosition!.latitude, currentPosition!.longitude),
-        radiusM: 1000,
-      ));
+      centers.add((point: currentPosition!, radiusM: 1000));
     }
 
     // Cap for performance (200 holes is plenty for any realistic run history).
