@@ -42,6 +42,7 @@ import 'widgets/offline_overlay.dart';
 import 'providers/permission_priming_provider.dart';
 import 'screens/permission_priming_screen.dart';
 import 'services/permission_service.dart' show PermKind;
+import 'utils/runwar_constants.dart';
 
 /// Runs the daily trial tick then returns current trial status.
 /// Re-evaluated on app foreground via _RouteGuard's WidgetsBindingObserver.
@@ -414,8 +415,13 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
     }
 
     // Gate 4: trial expired?
+    // Beta testers are exempt from the paywall gate itself — trial state
+    // (streak, processDailyTick, days remaining) keeps running normally for
+    // them so the data stays consistent, only the gate is bypassed.
     final trial = trialAsync?.value;
-    if (trial != null && trial.isExpired) {
+    final userEmail = (authState.user?['email'] as String?)?.toLowerCase();
+    final isBetaTester = userEmail != null && kBetaTesterEmails.contains(userEmail);
+    if (trial != null && trial.isExpired && !isBetaTester) {
       return PaywallScreen(streak: trial.streak);
     }
 

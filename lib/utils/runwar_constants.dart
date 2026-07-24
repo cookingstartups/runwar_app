@@ -56,6 +56,16 @@ const double kMinCapturedAreaCompactness = 0.15;
 // 150 m in player terms is well under a single lap of a real city block.
 const double kMinCapturedPathLengthM = 150.0;
 
+// Beta-tester emails exempt from the 14-day trial paywall gate (main.dart
+// Gate 4). Lowercase, exact match against the signed-in user's email. This
+// only bypasses the paywall screen itself — trial state (streak,
+// processDailyTick, days remaining) keeps running normally for these
+// accounts so the underlying data stays consistent if support ever inspects
+// it.
+const Set<String> kBetaTesterEmails = {
+  'cookingstartupscom@gmail.com',
+};
+
 // Tester-only run replay simulation. Divides every real inter-fix delay by
 // this factor when the operator picks accelerated timing, so a run recorded
 // over tens of real minutes plays back in a few minutes on-device while

@@ -39,11 +39,13 @@ import 'package:runwar_app/screens/auth/login_screen.dart';
 import 'package:runwar_app/screens/auth/cities_selection_screen.dart';
 import 'package:runwar_app/screens/intro_screen.dart';
 import 'package:runwar_app/screens/main_shell.dart';
+import 'package:runwar_app/screens/paywall_screen.dart';
 import 'package:runwar_app/screens/permission_priming_screen.dart';
 
 // Permission priming gate — does not exist yet (RED).
 import 'package:runwar_app/providers/permission_priming_provider.dart';
 import 'package:runwar_app/services/permission_service.dart' show PermKind;
+import 'package:runwar_app/providers/connectivity_provider.dart';
 
 // AuthService — needed to construct AuthNotifier stubs.
 import 'package:runwar_app/services/auth_service.dart';
@@ -66,6 +68,19 @@ class _UnauthAuthNotifier extends AuthNotifier {
 class _AuthedAuthNotifier extends AuthNotifier {
   _AuthedAuthNotifier() : super(AuthService.instance) {
     state = const AuthState(user: {'id': 'user-abc-123'});
+  }
+
+  @override
+  Future<void> signIn(String email, String password) async {}
+  @override
+  Future<void> signUp(String email, String password) async {}
+}
+
+/// AuthNotifier that emits an authenticated [AuthState] with a given email.
+/// Used to test the Gate 4 beta-tester paywall exemption.
+class _AuthedWithEmailNotifier extends AuthNotifier {
+  _AuthedWithEmailNotifier(String email) : super(AuthService.instance) {
+    state = AuthState(user: {'id': 'user-abc-123', 'email': email});
   }
 
   @override
@@ -796,6 +811,89 @@ void main() {
         reason:
             'logClientError must return a completed Future and never throw',
       );
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Gate 4: beta-tester paywall exemption
+  // ──────────────────────────────────────────────────────────────────────────
+  group('Gate 4: beta-tester emails are exempt from the trial paywall', () {
+    // Forces the app "online" so OfflineOverlay never masks the routing
+    // gate under test — the sandbox test runner has no connectivity plugin
+    // and connectivityProvider would otherwise error/resolve offline.
+    final onlineOverride =
+        connectivityProvider.overrideWith((ref) => Stream.value(true));
+
+    List<Override> expiredTrialProviders(String userId) => [
+          hasPhoneProvider(userId).overrideWith((ref) async => true),
+          joinedCitySlugsProvider(userId)
+              .overrideWith((ref) async => ['valencia']),
+          profileGateProvider(userId).overrideWith((ref) async => {
+                'username': 'alice',
+                'invited_at': '2025-01-01T00:00:00Z',
+              }),
+          missionStatusProvider(userId).overrideWith(
+            (ref) async => MissionStatus(
+              firstMissionCompletedAt: DateTime.fromMillisecondsSinceEpoch(1),
+              firstAttackCompletedAt: DateTime.fromMillisecondsSinceEpoch(1),
+              zoneCount: 1,
+            ),
+          ),
+          trialStatusProvider(userId).overrideWith(
+            (ref) async =>
+                const TrialStatus(started: true, daysRemaining: 0, streak: 3),
+          ),
+        ];
+
+    // GIVEN a user whose email is in kBetaTesterEmails AND their trial is expired
+    // WHEN _RouteGuard.build() evaluates Gate 4
+    // THEN PaywallScreen is never shown — the guard falls through to the next
+    // gate (RecoveryGate → MainShell) instead of the paywall.
+    testWidgets(
+        'a beta-tester email never reaches PaywallScreen even when trial.isExpired',
+        (tester) async {
+      const userId = 'user-abc-123';
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 2));
+      });
+      await tester.pumpWidget(_scope([
+        authProvider.overrideWith(
+            (ref) => _AuthedWithEmailNotifier('cookingstartupscom@gmail.com')),
+        _showcaseSeenOverride,
+        onlineOverride,
+        ...expiredTrialProviders(userId),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.byType(PaywallScreen), findsNothing,
+          reason:
+              'A beta-tester email must never be routed to PaywallScreen, '
+              'regardless of trial.isExpired');
+    });
+
+    // GIVEN a user whose email is NOT in kBetaTesterEmails AND their trial is expired
+    // WHEN _RouteGuard.build() evaluates Gate 4
+    // THEN PaywallScreen is shown as before — no regression for regular users
+    testWidgets(
+        'a non-listed email still reaches PaywallScreen when trial.isExpired',
+        (tester) async {
+      const userId = 'user-abc-123';
+      await tester.pumpWidget(_scope([
+        authProvider.overrideWith(
+            (ref) => _AuthedWithEmailNotifier('regular.user@example.com')),
+        _showcaseSeenOverride,
+        onlineOverride,
+        ...expiredTrialProviders(userId),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.byType(PaywallScreen), findsOneWidget,
+          reason:
+              'A non-listed email must still be routed to PaywallScreen '
+              'when trial.isExpired is true');
     });
   });
 
