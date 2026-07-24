@@ -220,6 +220,80 @@ void main() {
               'of whether a trackVersion tick happened to land on the exact stop/start boundary');
     });
   });
+
+  // ===========================================================================
+  // SPEC-0145: the fog-of-war live-GPS reveal hole must follow the shared
+  // own-position derivation (_simOrRealOwnPosition), not raw real-device GPS,
+  // so it tracks a simulated/replayed position instead of the operator's
+  // actual physical location. Source-inspection per flutter-test-patterns.md.
+  // ===========================================================================
+
+  group('SPEC-0145 item 1: the _FogLayer call site passes the shared derivation, not the raw field', () {
+    test('the fog-overlay call site passes currentPosition: _simOrRealOwnPosition(), not _currentPosition', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final callIdx = src.indexOf('_FogLayer(');
+      expect(callIdx, greaterThanOrEqualTo(0),
+          reason: 'Landmark not found: "_FogLayer(". map_screen.dart\'s structure moved - update this anchor.');
+      final closeIdx = src.indexOf(');', callIdx);
+      expect(closeIdx, greaterThan(callIdx),
+          reason: 'Landmark not found: the closing ");" of the _FogLayer(...) call.');
+      final call = src.substring(callIdx, closeIdx);
+      expect(call, contains('currentPosition: _simOrRealOwnPosition()'),
+          reason: 'this is the one _FogLayer call site in the file; it must pass the shared '
+              'simulation-aware own-position derivation so the live-GPS reveal hole tracks a '
+              'simulated/replayed position rather than the real-GPS-only _currentPosition field '
+              '(this is also the regression lock: reintroducing raw _currentPosition here must fail)');
+      expect(call, isNot(contains('currentPosition: _currentPosition')),
+          reason: 'the raw real-GPS field must no longer be passed directly to _FogLayer');
+    });
+  });
+
+  group('SPEC-0145 item 2: _FogLayer.currentPosition is typed LatLng?, not Position?', () {
+    test('the _FogLayer field declaration reads final LatLng? currentPosition;', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final classIdx = src.indexOf('class _FogLayer extends ConsumerWidget');
+      expect(classIdx, greaterThanOrEqualTo(0),
+          reason: 'Landmark not found: "class _FogLayer extends ConsumerWidget". Source structure moved.');
+      final ctorIdx = src.indexOf('const _FogLayer({', classIdx);
+      expect(ctorIdx, greaterThan(classIdx),
+          reason: 'Landmark not found: the _FogLayer constructor after the class declaration.');
+      final fieldsBlock = src.substring(classIdx, ctorIdx);
+      expect(fieldsBlock, contains('final LatLng? currentPosition;'),
+          reason: 'the field must be retyped from Geolocator\'s Position? to flutter_map\'s LatLng?, '
+              'since the call site now supplies an already-resolved LatLng from _simOrRealOwnPosition()');
+      expect(fieldsBlock, isNot(contains('final Position? currentPosition;')),
+          reason: 'the old Position?-typed field declaration must be gone');
+    });
+  });
+
+  group('SPEC-0145 item 3/4: the live-GPS reveal branch consumes the resolved LatLng directly (no re-derivation)', () {
+    test('_FogLayer.build() uses currentPosition! directly instead of constructing LatLng(.latitude, .longitude)', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final body = _sliceToNextMember(src, 'Widget build(BuildContext context, WidgetRef ref) {', 'class _FogPainter');
+      expect(body, contains('if (currentPosition != null)'),
+          reason: 'the null-check guard for the live-GPS hole must be unchanged in shape (non-regression: '
+              'a null own-position must still skip the hole with no exception, in both sim and real-GPS modes)');
+      expect(body, contains('point: currentPosition!,'),
+          reason: 'the live-GPS branch must consume the already-resolved LatLng directly, since the caller '
+              'now supplies one via _simOrRealOwnPosition() - it must no longer re-derive a LatLng from '
+              '.latitude/.longitude off a raw Position');
+      expect(body, isNot(contains('LatLng(currentPosition!.latitude, currentPosition!.longitude)')),
+          reason: 'the old Position-to-LatLng construction must be removed now that currentPosition is '
+              'already a LatLng?');
+    });
+  });
+
+  group('SPEC-0145 item 6: the 5 km historical-run reveal is unaffected by this change (non-regression)', () {
+    test('the runPoints loop still adds a 5000 m hole per point, unchanged', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final body = _sliceToNextMember(src, 'Widget build(BuildContext context, WidgetRef ref) {', 'class _FogPainter');
+      expect(body, contains('for (final pt in runPoints)'),
+          reason: 'the historical-run reveal loop must remain fed by runPoints, untouched by this spec');
+      expect(body, contains('centers.add((point: pt, radiusM: 5000));'),
+          reason: 'each historical run point must still produce an unchanged 5000 m reveal hole, proving '
+              'this spec\'s change is isolated to the live-GPS branch only');
+    });
+  });
 }
 
 /// Extracts the balanced-parenthesis substring starting at [openIdx], which
