@@ -2261,20 +2261,24 @@ class _FogLayer extends ConsumerWidget {
     final centers = <({LatLng point, double radiusM})>[];
 
     // Past run tracks → 5 km visibility around each sampled position.
-    for (final pt in runPoints) {
+    // Capped for performance BEFORE the live-position circle is appended, so
+    // a large historical track can never evict the always-present live hole
+    // (see rw_app-T0597: the old single-list-then-cap order silently dropped
+    // the live circle whenever run history alone reached the 200 cap).
+    final historicalPoints =
+        runPoints.length > 200 ? runPoints.sublist(0, 200) : runPoints;
+    for (final pt in historicalPoints) {
       centers.add((point: pt, radiusM: 5000));
     }
 
     // Live GPS → 1 km immediate visibility even before any run is saved.
+    // Always kept, never subject to the historical-track cap above.
     if (currentPosition != null) {
       centers.add((point: currentPosition!, radiusM: 1000));
     }
 
-    // Cap for performance (200 holes is plenty for any realistic run history).
-    final capped = centers.length > 200 ? centers.sublist(0, 200) : centers;
-
     return CustomPaint(
-      painter: _FogPainter(camera: camera, centers: capped),
+      painter: _FogPainter(camera: camera, centers: centers),
       child: const SizedBox.expand(),
     );
   }
