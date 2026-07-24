@@ -6,8 +6,9 @@
 // debug build.
 //
 // Visually and positionally distinct from the real Start/Stop run FAB so it
-// can never be tapped by accident: a small "SIM" chip placed in the top
-// safe area, in the sea-blue accent color rather than the FAB's orange.
+// can never be tapped by accident: a small "SIM" chip placed top-right,
+// below the streak/credits chip row, in the sea-blue accent color rather
+// than the FAB's orange.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -49,32 +50,36 @@ class SimulationLauncherChip extends ConsumerWidget {
     final recState = ref.watch(runRecorderProvider);
     final blocked = recState == RecorderState.recording;
 
-    return SafeArea(
-      child: Align(
-        alignment: Alignment.topRight,
-        child: Padding(
-          padding: const EdgeInsets.only(top: 8, right: 12),
-          child: GestureDetector(
-            onTap: () => blocked ? _showBlockedMessage(context) : _openPicker(context, ref),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: kSurface.withValues(alpha: blocked ? 0.5 : 0.92),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: (blocked ? kFgFaint : kSea).withValues(alpha: 0.6),
-                ),
+    // Positioned below the streak/credits chip row (top: 48, or top: 100
+    // during mission mode - see MapScreen._build) instead of hugging the
+    // safe-area top edge. The old SafeArea + 8px padding placed this chip at
+    // nearly the same on-screen height as that row, so the two overlapped
+    // (2026-07-24). A raw offset (matching the no-SafeArea convention the
+    // rest of the top-right HUD already uses) keeps it clear in both states.
+    return Align(
+      alignment: Alignment.topRight,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 140, right: 16),
+        child: GestureDetector(
+          onTap: () => blocked ? _showBlockedMessage(context) : _openPicker(context, ref),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: kSurface.withValues(alpha: blocked ? 0.5 : 0.92),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: (blocked ? kFgFaint : kSea).withValues(alpha: 0.6),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.science_outlined,
-                      color: blocked ? kFgFaint : kSea, size: 14),
-                  const SizedBox(width: 4),
-                  Text('SIM',
-                      style: monoStyle(size: 10, color: blocked ? kFgFaint : kSea)),
-                ],
-              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.science_outlined,
+                    color: blocked ? kFgFaint : kSea, size: 14),
+                const SizedBox(width: 4),
+                Text('SIM',
+                    style: monoStyle(size: 10, color: blocked ? kFgFaint : kSea)),
+              ],
             ),
           ),
         ),
