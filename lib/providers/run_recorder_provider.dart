@@ -29,11 +29,20 @@ final runRecorderProvider =
 /// without needing to watch a mutable list.
 final runRecorderTrackVersionProvider = StateProvider<int>((ref) => 0);
 
+/// Mirrors [RunRecorderService.lastSimRawPosition] into Riverpod state so
+/// MapScreen can rebuild on every SIM raw tick (rw_app-T0598), not only on
+/// the 50m-gated [runRecorderTrackVersionProvider] ticks that
+/// [runRecorderTrackVersionProvider] carries. Real-GPS position updates
+/// still flow through MapScreen's own setState on _currentPosition - this
+/// provider exists only for the SIM path.
+final runRecorderSimRawPositionProvider = StateProvider<LatLng?>((ref) => null);
+
 class RunRecorderNotifier extends StateNotifier<RecorderState> {
   RunRecorderNotifier(this._ref) : super(RecorderState.idle) {
     final svc = RunRecorderService.instance;
     svc.stateNotifier.addListener(_onServiceState);
     svc.trackVersion.addListener(_onTrackVersion);
+    svc.lastSimRawPosition.addListener(_onSimRawPosition);
     // Register the auto-claim callback.
     svc.onAutoClaim = _handleAutoClaim;
     // Register the gate-rejection callback (R1) — mirrors onAutoClaim's pattern.
@@ -164,6 +173,11 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   void _onTrackVersion() {
     _ref.read(runRecorderTrackVersionProvider.notifier).state =
         RunRecorderService.instance.trackVersion.value;
+  }
+
+  void _onSimRawPosition() {
+    _ref.read(runRecorderSimRawPositionProvider.notifier).state =
+        RunRecorderService.instance.lastSimRawPosition.value;
   }
 
   List<LatLng> get track => RunRecorderService.instance.track;
@@ -365,6 +379,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     RunRecorderService.instance.ownedZoneEdgesProvider = null;
     RunRecorderService.instance.stateNotifier.removeListener(_onServiceState);
     RunRecorderService.instance.trackVersion.removeListener(_onTrackVersion);
+    RunRecorderService.instance.lastSimRawPosition.removeListener(_onSimRawPosition);
     _pendingOwnedZoneEdges.clear();
     _autoClaimOutcomeController.close();
     _gateRejectionController.close();

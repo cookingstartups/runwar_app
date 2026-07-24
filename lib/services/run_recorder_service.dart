@@ -60,6 +60,16 @@ class RunRecorderService {
   // without exposing the mutable list directly.
   final ValueNotifier<int> trackVersion = ValueNotifier(0);
 
+  // Unfiltered "last raw position" signal for SIM playback only, mirroring
+  // the real-GPS path's own unfiltered live source (map_screen.dart's
+  // _currentPosition, updated on every raw fix with no spacing gate). Unlike
+  // _track/trackVersion (which stay behind the 50m spacing filter below for
+  // claim-polygon geometric correctness), this is updated unconditionally at
+  // the very top of _onPosition whenever a simulation is active, so the
+  // on-screen dot advances every simulated tick instead of only once ~50m
+  // has accumulated across several ticks. Real GPS does not use this field.
+  final ValueNotifier<LatLng?> lastSimRawPosition = ValueNotifier(null);
+
   final List<LatLng> _track = <LatLng>[];
   DateTime? _startedAt;
   DateTime? _closedAt;
@@ -507,6 +517,12 @@ class RunRecorderService {
       _lastFixTimestamp = pos.timestamp;
     }
     final newLatLng = LatLng(pos.latitude, pos.longitude);
+    // Unconditional, unfiltered SIM visual-position signal - set before any
+    // gate below (proximity pre-check, 50m spacing filter) so every simulated
+    // tick is visible immediately. See lastSimRawPosition doc comment above.
+    if (_simActive) {
+      lastSimRawPosition.value = newLatLng;
+    }
     // Always update presence so rival comets stay live regardless of spacing
     // filter - except during a simulation, where the position is synthetic
     // and must never be broadcast to other players as if it were a real
@@ -1659,6 +1675,9 @@ class RunRecorderService {
     _deferredCrossings.clear();
     _clockGuardTrips = 0;
     trackVersion.value++;
+    // Reset so a fresh simulation/run never starts by showing a stale
+    // position left over from a previous simulation.
+    lastSimRawPosition.value = null;
   }
 
   // ── Test-only seams ──────────────────────────────────────────────────────────

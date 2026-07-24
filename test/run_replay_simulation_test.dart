@@ -11,6 +11,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 
 import 'package:runwar_app/services/run_recorder_service.dart';
 
@@ -586,6 +587,83 @@ void main() {
               'a boolean isSimulationActive transition');
 
       await svc.abortSimulation();
+    });
+  });
+
+  // ===========================================================================
+  // rw_app-T0598: the on-screen SIM position must advance on every raw
+  // simulated fix, not only once the 50m track-point spacing filter lets a
+  // fix through into _track. lastSimRawPosition is the unfiltered visual
+  // signal added to fix this; _track/trackVersion must stay gated by the 50m
+  // filter exactly as before, since claim-polygon geometry depends on it.
+  // ===========================================================================
+
+  group('rw_app-T0598: lastSimRawPosition updates every raw SIM tick, unfiltered by the 50m spacing gate', () {
+    late RunRecorderService svc;
+
+    setUp(() {
+      svc = RunRecorderService.instanceForTesting();
+      svc.setActiveUser('tester-1');
+      svc.onRunUpdate = (_, __) async {};
+    });
+
+    tearDown(() => svc.reset());
+
+    test('lastSimRawPosition is null before a simulation begins and stays null immediately after beginSimulation', () async {
+      expect(svc.lastSimRawPosition.value, isNull);
+      await svc.beginSimulation();
+      expect(svc.lastSimRawPosition.value, isNull,
+          reason: 'no fix has been injected yet');
+      await svc.abortSimulation();
+    });
+
+    test('lastSimRawPosition advances on every injected fix even when consecutive fixes are well under the 50m spacing gate, while _track/trackVersion stay gated', () async {
+      await svc.beginSimulation();
+
+      // Three fixes a few metres apart - far under kTrackPointSpacingM (50m).
+      svc.injectSimulatedFix(_posAt(34.70000, 33.00000));
+      expect(svc.lastSimRawPosition.value, const LatLng(34.70000, 33.00000),
+          reason: 'the visual signal must reflect the very first raw fix immediately');
+      final trackLenAfterFirst = svc.trackLengthForTesting;
+      expect(trackLenAfterFirst, 1,
+          reason: 'the first fix always enters _track (nothing to compare spacing against yet)');
+
+      svc.injectSimulatedFix(_posAt(34.70001, 33.00001)); // ~1.3m away
+      expect(svc.lastSimRawPosition.value, const LatLng(34.70001, 33.00001),
+          reason: 'lastSimRawPosition must update on every raw tick regardless of spacing');
+      expect(svc.trackLengthForTesting, trackLenAfterFirst,
+          reason: '_track must NOT grow - the 50m spacing filter correctly discards this close fix, '
+              'proving the visual fix does not weaken claim-polygon geometry');
+
+      svc.injectSimulatedFix(_posAt(34.70002, 33.00002)); // another ~1.3m
+      expect(svc.lastSimRawPosition.value, const LatLng(34.70002, 33.00002),
+          reason: 'a third consecutive sub-50m fix must still move the visual signal');
+      expect(svc.trackLengthForTesting, trackLenAfterFirst,
+          reason: '_track must still be gated - three sub-50m fixes accumulate no visible trail point');
+
+      await svc.abortSimulation();
+    });
+
+    test('lastSimRawPosition resets to null when a new simulation begins, discarding the previous replay position', () async {
+      await svc.beginSimulation();
+      svc.injectSimulatedFix(_posAt(34.700, 33.000));
+      expect(svc.lastSimRawPosition.value, isNotNull);
+      await svc.abortSimulation();
+      expect(svc.lastSimRawPosition.value, isNull,
+          reason: 'abortSimulation routes through _clearTrackInternal, which must also clear the stale visual position');
+
+      await svc.beginSimulation();
+      expect(svc.lastSimRawPosition.value, isNull,
+          reason: 'a fresh simulation must never show a position left over from a previous one');
+      await svc.abortSimulation();
+    });
+
+    test('real GPS fixes never touch lastSimRawPosition - it stays null for a real (non-simulated) run', () async {
+      svc.injectState(RecorderState.recording);
+      svc.handlePositionForTesting(_posAt(34.700, 33.000));
+      expect(svc.lastSimRawPosition.value, isNull,
+          reason: 'lastSimRawPosition is a SIM-only signal; real GPS keeps using _currentPosition '
+              'in map_screen.dart, so this field must never be touched outside a simulation');
     });
   });
 }
