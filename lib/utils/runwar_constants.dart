@@ -62,7 +62,7 @@ const double kMinCapturedPathLengthM = 150.0;
 // keeping the fixes in their original relative order and spacing. Named so
 // the multiplier is a single, discoverable knob rather than a magic number
 // scattered across the replay driver.
-const double kSimulationAccelerationMultiplier = 12.0;
+const double kSimulationAccelerationMultiplier = 20.0;
 
 // Hard floor and ceiling on the delay between two simulated fixes, applied
 // after the acceleration multiplier. Keeps degenerate fixture gaps (a fix
