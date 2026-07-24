@@ -1147,7 +1147,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
                     ref.watch(profileGateProvider(userId)).valueOrNull?['color']?.toString()
                       ?? '#FF7A00',
                   ),
-                  strokeWidth: 4,
+                  // Dashed and thinner (T0600) - was a solid 4px line; the
+                  // comet marker above already carries the "live" emphasis,
+                  // so the persisted trail reads as a lighter breadcrumb.
+                  strokeWidth: 2,
+                  isDotted: true,
                 ),
               ]);
             }),
@@ -1163,9 +1167,14 @@ class _MapScreenState extends ConsumerState<MapScreen>
               // persistent polyline above, so the comet never trails behind
               // points from a loop that already claimed and reset.
               final snap = RunRecorderService.instance.currentSegmentTrack;
-              final tail = snap.length <= 6
-                  ? List<LatLng>.from(snap)
-                  : snap.sublist(snap.length - 6);
+              // Pace-dependent tail window (T0600): tail length scales
+              // linearly with current speed between a 5s window at walking
+              // pace and a 15s window at fast-running pace - see
+              // cometTailWindowSecondsForSpeed / cometTailLengthMetersForSpeed
+              // in runner_comet.dart for the exact formula and constants.
+              final speedMps = RunRecorderService.instance.currentSpeedMps;
+              final tailMeters = cometTailLengthMetersForSpeed(speedMps);
+              final tail = selectCometTailForDistance(snap, tailMeters);
               final pos = ownPos;
               final positions = tail.isEmpty || tail.last == pos
                   ? tail.isEmpty ? [pos] : tail

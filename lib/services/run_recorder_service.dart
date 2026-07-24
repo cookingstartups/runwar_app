@@ -423,6 +423,13 @@ class RunRecorderService {
   List<LatLng> get track => List.unmodifiable(_track);
   List<LatLng> get trackSnapshot => List.unmodifiable(_track);
 
+  // Instantaneous speed (m/s) from the most recent accepted GPS fix, real or
+  // simulated (both paths flow through _onPosition - see there). Read-only
+  // visualisation signal for the pace-dependent comet tail (T0600); carries
+  // no game-state side effects. Defaults to 0.0 until the first fix arrives.
+  double _currentSpeedMps = 0.0;
+  double get currentSpeedMps => _currentSpeedMps;
+
   // Index into _track where the CURRENT painted trail segment begins: the
   // most recently claimed loop's own end index, or 0 while no claim has
   // landed yet this session. Derived from the same _maxConsumedEndIdx anchor
@@ -517,6 +524,13 @@ class RunRecorderService {
       _lastFixTimestamp = pos.timestamp;
     }
     final newLatLng = LatLng(pos.latitude, pos.longitude);
+    // Pace signal for the comet tail (T0600) - updated for every accepted
+    // fix, real or simulated, ahead of the proximity/spacing filters below
+    // so the tail window reacts to pace even on fixes that take the
+    // proximity shortcut.
+    if (pos.speed.isFinite && pos.speed >= 0) {
+      _currentSpeedMps = pos.speed;
+    }
     // Unconditional, unfiltered SIM visual-position signal - set before any
     // gate below (proximity pre-check, 50m spacing filter) so every simulated
     // tick is visible immediately. See lastSimRawPosition doc comment above.
