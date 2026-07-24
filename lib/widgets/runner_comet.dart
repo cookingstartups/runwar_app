@@ -17,6 +17,61 @@ import 'package:latlong2/latlong.dart';
 
 // ── Haversine helper ──────────────────────────────────────────────────────────
 
+// ── Pace-dependent tail window (T0600) ────────────────────────────────────────
+//
+// First-pass default (not pinned by any existing spec - see
+// intro-comet-tail/requirements.md for the fixed-window intro comet this
+// adapts): the tail's effective time window scales linearly with the
+// runner's current speed, between a minimum window at walking pace and a
+// maximum window at a fast running pace. This reuses the existing
+// head-to-tail alpha gradient and teleport-cut logic in [_CometPainter]
+// unchanged - only the distance of track fed into it varies.
+//
+// Operator-tunable constants; flagged in the T0600 task file as a
+// documented first-pass default, not a locked design decision.
+const double kCometPaceMinSpeedMps = 1.0; // ~3.6 km/h - walking floor
+const double kCometPaceMaxSpeedMps = 4.0; // ~14.4 km/h - fast running
+const double kCometPaceTailMinSec = 5.0; // tail window at/below min speed
+const double kCometPaceTailMaxSec = 15.0; // tail window at/above max speed
+
+/// Returns the tail time window (seconds) for a given instantaneous speed,
+/// linearly interpolated between [kCometPaceTailMinSec] at
+/// [kCometPaceMinSpeedMps] and [kCometPaceTailMaxSec] at
+/// [kCometPaceMaxSpeedMps], clamped outside that range.
+double cometTailWindowSecondsForSpeed(double speedMps) {
+  final clamped = speedMps.clamp(kCometPaceMinSpeedMps, kCometPaceMaxSpeedMps);
+  final t = (clamped - kCometPaceMinSpeedMps) /
+      (kCometPaceMaxSpeedMps - kCometPaceMinSpeedMps);
+  return lerpDouble(kCometPaceTailMinSec, kCometPaceTailMaxSec, t)!;
+}
+
+/// Returns the tail length in meters for a given instantaneous speed:
+/// `max(speedMps, kCometPaceMinSpeedMps) * cometTailWindowSecondsForSpeed(speedMps)`.
+/// The speed floor keeps the tail from collapsing to near-zero on a single
+/// noisy near-zero GPS speed reading while the runner is still moving.
+double cometTailLengthMetersForSpeed(double speedMps) {
+  final windowSec = cometTailWindowSecondsForSpeed(speedMps);
+  final effectiveSpeed = math.max(speedMps, kCometPaceMinSpeedMps);
+  return effectiveSpeed * windowSec;
+}
+
+/// Selects the trailing sublist of [track] whose cumulative path length is
+/// approximately [meters], walking backward from the newest point. Always
+/// returns at least the last 2 points when the track has >= 2 points, so a
+/// visible tail segment exists even when [meters] is very small.
+List<LatLng> selectCometTailForDistance(List<LatLng> track, double meters) {
+  if (track.length <= 2) return List<LatLng>.from(track);
+  var acc = 0.0;
+  var idx = track.length - 1;
+  while (idx > 0) {
+    final seg = _haversineMeters(track[idx - 1], track[idx]);
+    if (acc > 0 && acc + seg > meters) break;
+    acc += seg;
+    idx--;
+  }
+  return track.sublist(idx);
+}
+
 double _haversineMeters(LatLng a, LatLng b) {
   const r = 6371000.0;
   final lat1 = a.latitude * math.pi / 180;
