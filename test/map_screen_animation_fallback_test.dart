@@ -284,14 +284,76 @@ void main() {
   });
 
   group('SPEC-0145 item 6: the 5 km historical-run reveal is unaffected by this change (non-regression)', () {
-    test('the runPoints loop still adds a 5000 m hole per point, unchanged', () {
+    test('the historical-run loop still adds a 5000 m hole per point, unchanged', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
       final body = _sliceToNextMember(src, 'Widget build(BuildContext context, WidgetRef ref) {', 'class _FogPainter');
-      expect(body, contains('for (final pt in runPoints)'),
-          reason: 'the historical-run reveal loop must remain fed by runPoints, untouched by this spec');
+      expect(body, contains('for (final pt in historicalPoints)'),
+          reason: 'the historical-run reveal loop must remain fed by the (possibly capped) historical '
+              'points list - rw_app-T0597 renamed the iterable from runPoints to historicalPoints but '
+              'did not change the per-point hole it produces');
       expect(body, contains('centers.add((point: pt, radiusM: 5000));'),
           reason: 'each historical run point must still produce an unchanged 5000 m reveal hole, proving '
               'this spec\'s change is isolated to the live-GPS branch only');
+    });
+  });
+
+  // ===========================================================================
+  // rw_app-T0597: the live-position fog-reveal circle must never be evicted by
+  // historical-track volume. The old code appended the live circle LAST into a
+  // single list and then capped that whole list to 200, so once runPoints
+  // alone reached 200 the live circle's index fell outside [0, 200) and the
+  // cap silently dropped it - no fog hole around the current marker at all.
+  // Source-inspection per flutter-test-patterns.md (no widget/render harness
+  // exists for _FogLayer in this suite).
+  // ===========================================================================
+
+  group('rw_app-T0597: historical-track volume can never evict the live-position circle', () {
+    test('the historical points list is capped to 200 BEFORE the live-position circle is appended', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final body = _sliceToNextMember(src, 'Widget build(BuildContext context, WidgetRef ref) {', 'class _FogPainter');
+
+      final capIdx = body.indexOf('runPoints.length > 200');
+      expect(capIdx, greaterThanOrEqualTo(0),
+          reason: 'Landmark not found: the historical-points cap must check runPoints.length > 200. '
+              'map_screen.dart\'s structure moved - update this anchor.');
+
+      final liveIdx = body.indexOf('centers.add((point: currentPosition!, radiusM: 1000));');
+      expect(liveIdx, greaterThan(capIdx),
+          reason: 'the historical-points cap must be applied BEFORE the live-position circle is appended '
+              'to centers, so the live circle is always the last entry and can never be truncated away '
+              'by sublist(0, 200) regardless of how many historical points exist (rw_app-T0597 fix)');
+
+      final oldSingleListCapIdx = body.indexOf('centers.length > 200');
+      expect(oldSingleListCapIdx, equals(-1),
+          reason: 'the old bug capped the combined centers list (including the live circle) via '
+              'centers.length > 200/sublist - this must be gone; only the historical-points list may '
+              'be capped now');
+    });
+
+    test('the live-position circle is unconditionally appended, never subject to any cap', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final body = _sliceToNextMember(src, 'Widget build(BuildContext context, WidgetRef ref) {', 'class _FogPainter');
+
+      final liveBranchIdx = body.indexOf('if (currentPosition != null)');
+      expect(liveBranchIdx, greaterThanOrEqualTo(0),
+          reason: 'Landmark not found: the live-position null-check guard. Source structure moved.');
+      final liveBranchEnd = body.indexOf('}', liveBranchIdx);
+      final liveBranch = body.substring(liveBranchIdx, liveBranchEnd);
+      expect(liveBranch, contains('centers.add((point: currentPosition!, radiusM: 1000));'),
+          reason: 'the live-position circle must be added directly to the final centers list with no '
+              'intervening cap or sublist call, so it always survives regardless of historical-track size');
+    });
+
+    test('centers itself is passed to _FogPainter uncapped - no trailing sublist/cap on the combined list', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final body = _sliceToNextMember(src, 'Widget build(BuildContext context, WidgetRef ref) {', 'class _FogPainter');
+
+      expect(body, isNot(contains('centers.sublist(0, 200)')),
+          reason: 'the fix removes the old "cap the whole combined list" step; the only remaining cap in '
+              'this method must operate on the historical points before the live circle exists (via '
+              'runPoints.sublist), not on centers as a whole');
+      expect(body, contains('_FogPainter(camera: camera, centers: centers)'),
+          reason: 'the painter must receive the centers list built above with the live circle intact');
     });
   });
 }
