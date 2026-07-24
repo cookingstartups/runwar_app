@@ -614,4 +614,31 @@ class DatabaseService {
     );
   }
 
+  /// True if [userId] has ever completed the daily mission identified by
+  /// [slug] (any date), not just today's slate.
+  ///
+  /// Used by FirstThirtyDaysMissionsService to detect completion of
+  /// curriculum entries that reuse an existing daily-mission slug as their
+  /// hook (e.g. `invite_friend`, `use_superpower`, `enter_new_zone`).
+  Future<bool> hasCompletedDailyMissionSlug(String userId, String slug) async {
+    final client = Supabase.instance.client;
+
+    final defRow = await client
+        .from('daily_mission_definitions')
+        .select('id')
+        .eq('slug', slug)
+        .maybeSingle();
+    if (defRow == null) return false;
+    final missionId = defRow['id'] as int;
+
+    final rows = await client
+        .from('daily_mission_progress')
+        .select('completed_at')
+        .eq(kGetDailyMissionsFilterColumn, userId)
+        .eq('mission_id', missionId)
+        .not('completed_at', 'is', null)
+        .limit(1);
+    return (rows as List).isNotEmpty;
+  }
+
 }
