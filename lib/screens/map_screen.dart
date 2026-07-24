@@ -269,17 +269,30 @@ class _MapScreenState extends ConsumerState<MapScreen>
   }
 
   /// Shared own-position derivation (SPEC-0144 section 3.4): the simulated
-  /// track's last point while a simulation is active, otherwise real GPS.
-  /// Used by widgets outside a Consumer(runRecorderTrackVersionProvider) so
-  /// as not to duplicate the own-position ternary inline at every call site.
+  /// replay's last RAW position while a simulation is active, otherwise real
+  /// GPS. Used by widgets outside a Consumer(runRecorderTrackVersionProvider)
+  /// so as not to duplicate the own-position ternary inline at every call site.
+  ///
+  /// SIM mode reads RunRecorderService.lastSimRawPosition - an unfiltered
+  /// signal updated on every raw simulated fix - rather than
+  /// trackSnapshot.last, which only advances once the 50m track-point
+  /// spacing filter lets a fix through. That filter is correct and
+  /// deliberate for _track/claim-polygon geometry, but reusing it as the
+  /// visual live-position source made the on-screen dot lag 2-8+ ticks
+  /// behind the actual simulated position (rw_app-T0598). Falls back to
+  /// trackSnapshot.last only for the brief window before the first raw fix
+  /// of a simulation has arrived.
   LatLng? _simOrRealOwnPosition() {
     final isSimulationActive = RunRecorderService.instance.isSimulationActive;
-    final simSnap = isSimulationActive ? RunRecorderService.instance.trackSnapshot : const <LatLng>[];
-    return isSimulationActive
-        ? (simSnap.isEmpty ? null : simSnap.last)
-        : (_currentPosition == null
-            ? null
-            : LatLng(_currentPosition!.latitude, _currentPosition!.longitude));
+    if (isSimulationActive) {
+      final raw = RunRecorderService.instance.lastSimRawPosition.value;
+      if (raw != null) return raw;
+      final simSnap = RunRecorderService.instance.trackSnapshot;
+      return simSnap.isEmpty ? null : simSnap.last;
+    }
+    return _currentPosition == null
+        ? null
+        : LatLng(_currentPosition!.latitude, _currentPosition!.longitude);
   }
 
   @override
@@ -355,6 +368,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // build(), before any early return, so it registers on every build call
     // (design.md SPEC-0144 section 3.1 risk register entry 1).
     ref.listen<int>(runRecorderTrackVersionProvider, (prev, next) => _onSimTrackTick());
+    // Rebuild on every SIM raw tick (rw_app-T0598) so gpsDotOwnPosition -
+    // computed once per build below, outside any Consumer - and _FogLayer's
+    // currentPosition stay live during a simulation instead of only updating
+    // once every ~50m of accumulated trackVersion ticks. Mirrors the
+    // setState(() => _currentPosition = pos) rebuild trigger the real-GPS
+    // path already gets on every raw fix.
+    ref.watch(runRecorderSimRawPositionProvider);
 
     final auth = ref.watch(authProvider);
     final userId = (auth.user?['id'] as String?) ?? '';
