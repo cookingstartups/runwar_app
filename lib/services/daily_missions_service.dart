@@ -41,6 +41,24 @@ class DailyMissionsService {
 
   // ── Public API ───────────────────────────────────────────────────────────────
 
+  /// Pure, DB-free preview of the deterministic slate that [_deriveSlate]
+  /// would derive for [userId] on [date] (any date — past, today, or
+  /// future), given [streak]. No caching, no upsert, no Supabase call.
+  ///
+  /// Used by `FirstThirtyDaysMissionsService` (rw_app-T0593 §7 daily-cadence
+  /// revision) to resolve which existing daily-mission catalogue entry
+  /// represents a given day's slot in the 30-day curriculum, including days
+  /// that were never actually opened as "today" by the player (the slate is
+  /// a deterministic function of `sha256(userId|date)`, so it's reproducible
+  /// for any date without requiring the player to have been active that day).
+  List<DailyMission> previewSlateForDate(
+    String userId,
+    DateTime date, {
+    int streak = 0,
+  }) {
+    return _deriveSlate(userId: userId, localDate: date, streak: streak);
+  }
+
   /// FR-1/FR-2: derive once per day, cache in Supabase, return slate.
   Future<List<DailyMission>> getTodaysMissions(String userId) async {
     final ds = DatabaseService.instance;

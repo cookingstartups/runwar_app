@@ -1,15 +1,18 @@
 // lib/services/first_thirty_days_missions_service.dart
 //
-// Model/service skeleton for the first-30-days curriculum (rw_app-T0593).
-// This pass ships the 12-mission catalogue, unlock-by-day logic, and
-// completion-hook wiring only — NOT the dot-stepper widget (pending an
-// operator mockup-variant choice at a separate step).
+// Model/service for the first-30-days curriculum (rw_app-T0593).
+// Ships the bespoke catalogue, the daily-cadence fill logic (proposal §7,
+// operator directive 2026-07-24), unlock-by-day logic, and completion-hook
+// wiring — NOT the dot-stepper widget (pending an operator mockup-variant
+// choice at a separate step).
 //
 // Full proposal: ~/AIOS/infra/meta/specs/runwar/first-30-days-missions/proposal.md
 
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/day30_mission.dart';
+import '../models/daily_mission.dart';
+import 'daily_missions_service.dart';
 import 'database_service.dart';
 
 class FirstThirtyDaysMissionsService {
@@ -17,7 +20,17 @@ class FirstThirtyDaysMissionsService {
   static final FirstThirtyDaysMissionsService instance =
       FirstThirtyDaysMissionsService._();
 
-  // ── Curriculum catalogue (proposal §2, ordered, 12 entries) ─────────────────
+  /// The daily-cadence core window (proposal §7): every day in
+  /// `[0, dailyCadenceThroughDay]` must resolve to exactly one curriculum
+  /// slot, bespoke or resolved. Day 30 (the capstone) stays outside this
+  /// window.
+  static const int dailyCadenceThroughDay = 21;
+
+  // ── Bespoke curriculum catalogue (proposal §2, ordered, 12 entries) ────────
+  //
+  // These are the "special" curriculum beats: fixed title/teaching-hook,
+  // reused as-is by the daily-cadence series below. This list is NOT the
+  // full player-facing series any more — see [dailySeries].
 
   static const List<Day30Mission> curriculum = [
     Day30Mission(
@@ -26,6 +39,7 @@ class FirstThirtyDaysMissionsService {
       title: 'Claim Your First Territory',
       teaches: 'Territory claiming (loop-and-close)',
       hook: Day30CompletionHook.firstMissionOnboarding,
+      bespoke: true,
       profileCompletionField: 'first_mission_completed_at',
     ),
     Day30Mission(
@@ -34,6 +48,7 @@ class FirstThirtyDaysMissionsService {
       title: 'Strike Back',
       teaches: 'Attacking a rival zone',
       hook: Day30CompletionHook.firstMissionOnboarding,
+      bespoke: true,
       profileCompletionField: 'first_attack_completed_at',
     ),
     Day30Mission(
@@ -43,6 +58,7 @@ class FirstThirtyDaysMissionsService {
       teaches: 'Zone influence levels (why level 1 is fragile, how '
           're-running raises it)',
       hook: Day30CompletionHook.teachingAcknowledgment,
+      bespoke: true,
     ),
     Day30Mission(
       slot: 4,
@@ -50,6 +66,7 @@ class FirstThirtyDaysMissionsService {
       title: 'Grow Your Turf',
       teaches: 'Zone fusion/merge (adjacent captures auto-merge)',
       hook: Day30CompletionHook.teachingAcknowledgment,
+      bespoke: true,
     ),
     Day30Mission(
       slot: 5,
@@ -58,6 +75,7 @@ class FirstThirtyDaysMissionsService {
       teaches: 'Anti-cheat / fair-play (GPS speed thresholds, run don\'t '
           'drive)',
       hook: Day30CompletionHook.teachingAcknowledgment,
+      bespoke: true,
     ),
     Day30Mission(
       slot: 6,
@@ -65,6 +83,7 @@ class FirstThirtyDaysMissionsService {
       title: 'Streak Starter',
       teaches: 'Daily missions + streak mechanic',
       hook: Day30CompletionHook.dailyMissionSlug,
+      bespoke: true,
       dailyMissionSlug: 'streak_check_in',
     ),
     Day30Mission(
@@ -73,6 +92,7 @@ class FirstThirtyDaysMissionsService {
       title: 'Bring a Rival',
       teaches: 'Referral / invite-a-friend',
       hook: Day30CompletionHook.dailyMissionSlug,
+      bespoke: true,
       dailyMissionSlug: 'invite_friend',
     ),
     Day30Mission(
@@ -81,6 +101,7 @@ class FirstThirtyDaysMissionsService {
       title: 'Milestone: One Week Strong',
       teaches: 'Milestone/streak payoff',
       hook: Day30CompletionHook.milestone,
+      bespoke: true,
       milestoneDay: 7,
     ),
     Day30Mission(
@@ -89,6 +110,7 @@ class FirstThirtyDaysMissionsService {
       title: "Defend What's Yours",
       teaches: 'Defense / dispute mechanic (surviving an attack)',
       hook: Day30CompletionHook.dailyMissionSlug,
+      bespoke: true,
       dailyMissionSlug: 'defend_zone',
     ),
     Day30Mission(
@@ -97,6 +119,7 @@ class FirstThirtyDaysMissionsService {
       title: 'Power Up',
       teaches: 'Superpowers (use one)',
       hook: Day30CompletionHook.dailyMissionSlug,
+      bespoke: true,
       dailyMissionSlug: 'use_superpower',
     ),
     Day30Mission(
@@ -105,6 +128,7 @@ class FirstThirtyDaysMissionsService {
       title: 'Map the City',
       teaches: 'Fog-of-war exploration',
       hook: Day30CompletionHook.dailyMissionSlug,
+      bespoke: true,
       dailyMissionSlug: 'enter_new_zone',
     ),
     Day30Mission(
@@ -113,9 +137,57 @@ class FirstThirtyDaysMissionsService {
       title: 'Milestone: Founding Runner',
       teaches: 'Capstone — retrospective on everything learned',
       hook: Day30CompletionHook.milestone,
+      bespoke: true,
       milestoneDay: 30,
     ),
   ];
+
+  // ── Daily-cadence series (proposal §7, generated) ───────────────────────────
+
+  /// Builds the full ordered series for days `[0, throughDay]`: one bespoke
+  /// entry per bespoke day (two on Day 0, matching the shipped 2-step
+  /// onboarding), and a generated cadence-fill entry (hook
+  /// [Day30CompletionHook.resolvedDaily]) for every other day in the window,
+  /// so no day in `[0, throughDay]` is left without a curriculum slot.
+  ///
+  /// Slots for generated entries continue numbering after the highest
+  /// bespoke slot, in day order.
+  static List<Day30Mission> dailySeries({int throughDay = dailyCadenceThroughDay}) {
+    final bespokeByDay = <int, List<Day30Mission>>{};
+    for (final mission in curriculum) {
+      if (mission.day > throughDay) continue; // e.g. Day 30 capstone
+      bespokeByDay.putIfAbsent(mission.day, () => []).add(mission);
+    }
+
+    var nextFillerSlot =
+        curriculum.map((m) => m.slot).reduce((a, b) => a > b ? a : b) + 1;
+
+    final series = <Day30Mission>[];
+    for (var day = 0; day <= throughDay; day++) {
+      final bespokeForDay = bespokeByDay[day];
+      if (bespokeForDay != null && bespokeForDay.isNotEmpty) {
+        series.addAll(bespokeForDay);
+      } else {
+        series.add(Day30Mission(
+          slot: nextFillerSlot++,
+          day: day,
+          bespoke: false,
+          title: "Today's Challenge",
+          teaches: "Complete one of today's missions",
+          hook: Day30CompletionHook.resolvedDaily,
+        ));
+      }
+    }
+    return series;
+  }
+
+  /// The full player-facing series: the daily-cadence window
+  /// (`[0, dailyCadenceThroughDay]`, one slot per day) plus the Day-30
+  /// capstone milestone from [curriculum], unaffected by the cadence change.
+  static List<Day30Mission> fullSeries() => [
+        ...dailySeries(),
+        ...curriculum.where((m) => m.day > dailyCadenceThroughDay),
+      ];
 
   // ── Unlock logic (pure, unit-testable without Supabase init) ────────────────
 
@@ -142,8 +214,9 @@ class FirstThirtyDaysMissionsService {
 
   // ── Per-player state ─────────────────────────────────────────────────────────
 
-  /// Computes unlocked/completed state for all 12 curriculum entries for
-  /// [userId]. Exposed to widgets via `firstThirtyDaysMissionsProvider`.
+  /// Computes unlocked/current/completed state for the full daily-cadence
+  /// series ([fullSeries]) for [userId]. Exposed to widgets via
+  /// `firstThirtyDaysMissionsProvider`.
   Future<List<Day30MissionState>> getState(String userId) async {
     final ds = DatabaseService.instance;
 
@@ -158,6 +231,7 @@ class FirstThirtyDaysMissionsService {
       } catch (_) {}
     }
     final dayIndex = dayIndexFor(trialStartedAt);
+    final currentStreak = (profile?['streak'] as num?)?.toInt() ?? 0;
 
     final rawMilestones = profile?['milestones_claimed'];
     final milestonesClaimed = rawMilestones is List
@@ -165,10 +239,11 @@ class FirstThirtyDaysMissionsService {
         : <int>{};
 
     final states = <Day30MissionState>[];
-    for (final mission in curriculum) {
+    for (final mission in fullSeries()) {
       final unlocked = isUnlocked(mission, dayIndex);
       bool completed = false;
       DateTime? completedAt;
+      DailyMission? resolvedMission;
 
       switch (mission.hook) {
         case Day30CompletionHook.firstMissionOnboarding:
@@ -195,6 +270,28 @@ class FirstThirtyDaysMissionsService {
         case Day30CompletionHook.teachingAcknowledgment:
           completed = await isTeachingMomentAcknowledged(userId, mission.slot);
           break;
+
+        case Day30CompletionHook.resolvedDaily:
+          // Deterministic rule (proposal §7): the day's slot is filled by
+          // the FIRST mission in that calendar date's deterministically-
+          // derived DailyMissionsService slate (`previewSlateForDate`,
+          // seeded by sha256(userId|date)) — stable and reproducible even
+          // for a day the player never opened as "today".
+          final base = trialStartedAt ?? DateTime.now();
+          final targetDate = base.add(Duration(days: mission.day));
+          final slate = DailyMissionsService.instance.previewSlateForDate(
+            userId,
+            targetDate,
+            streak: currentStreak,
+          );
+          if (slate.isNotEmpty) {
+            resolvedMission = slate.first;
+            completed = await ds.hasCompletedDailyMissionSlug(
+              userId,
+              resolvedMission.slug,
+            );
+          }
+          break;
       }
 
       states.add(Day30MissionState(
@@ -202,6 +299,7 @@ class FirstThirtyDaysMissionsService {
         unlocked: unlocked,
         completed: completed,
         completedAt: completedAt,
+        resolvedMission: resolvedMission,
       ));
     }
     return states;
