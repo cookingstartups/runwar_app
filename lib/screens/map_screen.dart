@@ -900,6 +900,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         }
       }
     } catch (e) {
+      debugPrint('[MapScreen] complete_first_mission failed: $e');
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Mission save failed - please try again')),
