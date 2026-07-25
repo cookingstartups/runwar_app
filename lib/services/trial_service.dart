@@ -1,23 +1,46 @@
+import '../utils/runwar_constants.dart';
 import 'database_service.dart';
+import 'first_thirty_days_missions_service.dart';
 
 class TrialStatus {
   final bool started;
   final int daysRemaining;
   final int streak;
+
+  /// The user's original `trial_started_at`, parsed. Null when the trial has
+  /// not started yet or the stored value failed to parse (treated as day 0,
+  /// matching [FirstThirtyDaysMissionsService.dayIndexFor]'s own contract).
+  final DateTime? trialStartedAt;
+
   const TrialStatus({
     required this.started,
     required this.daysRemaining,
     required this.streak,
+    this.trialStartedAt,
   });
-  bool get isExpired => started && daysRemaining <= 0;
+
+  /// Day-21 paywall revision: the hard-paywall gate is a pure function of
+  /// calendar day (the same clock the first-30-days curriculum uses), never
+  /// of [daysRemaining] (the activity-burn countdown, which keeps computing
+  /// and writing state via [TrialService.processDailyTick] but no longer
+  /// gates anything).
+  bool get isExpired =>
+      started &&
+      FirstThirtyDaysMissionsService.dayIndexFor(trialStartedAt) >=
+          kFirstThirtyDaysCapstoneDay;
+
   bool get isDownsellEligible => streak >= 7;
 }
 
-/// Manages the 14-day activity-based trial.
+/// Manages the calendar-based (day-21) trial paywall gate and the
+/// activity-based freeze/streak-burn credit mechanic.
 ///
 /// Trial starts on first FAB tap (call [initTrial]).
 /// Each app-foreground fires [processDailyTick] — idempotent same-day.
 /// Missing days burn 2 credits (penalty) unless freeze tokens absorb the gap.
+/// [processDailyTick]'s burn/penalty/freeze-token math is unchanged by the
+/// day-21 revision (paywall-day21-revision R1-AC2) — only [TrialStatus.
+/// isExpired] (the hard-paywall gate) stopped reading its output.
 class TrialService {
   TrialService._();
   static final TrialService instance = TrialService._();
@@ -93,10 +116,18 @@ class TrialService {
     if (row == null) {
       return const TrialStatus(started: false, daysRemaining: 14, streak: 0);
     }
+    DateTime? trialStartedAt;
+    final rawStart = row['trial_started_at'] as String?;
+    if (rawStart != null) {
+      try {
+        trialStartedAt = DateTime.parse(rawStart);
+      } catch (_) {}
+    }
     return TrialStatus(
       started: row['trial_started_at'] != null,
       daysRemaining: (row['trial_days_remaining'] as int?) ?? 14,
       streak: (row['streak'] as int?) ?? 0,
+      trialStartedAt: trialStartedAt,
     );
   }
 

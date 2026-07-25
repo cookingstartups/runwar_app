@@ -34,7 +34,7 @@ class PaywallScreen extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               Text(
-                'Your 14 activity credits are used up.\nUnlock RunWar to keep your territory.',
+                'Your 21-day trial has ended.\nUnlock RunWar to keep your territory.',
                 style: GoogleFonts.inter(
                   fontSize: 15,
                   height: 1.55,

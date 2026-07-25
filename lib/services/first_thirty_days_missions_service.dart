@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/day30_mission.dart';
 import '../models/daily_mission.dart';
+import '../utils/runwar_constants.dart';
 import 'daily_missions_service.dart';
 import 'database_service.dart';
 
@@ -22,9 +23,14 @@ class FirstThirtyDaysMissionsService {
 
   /// The daily-cadence core window (proposal §7): every day in
   /// `[0, dailyCadenceThroughDay]` must resolve to exactly one curriculum
-  /// slot, bespoke or resolved. Day 30 (the capstone) stays outside this
+  /// slot, bespoke or resolved. Sourced from [kFirstThirtyDaysCapstoneDay]
+  /// (paywall-day21-revision R8) rather than an independent literal, so
+  /// this window and the hard-paywall gate's threshold can never drift
+  /// apart again. The capstone is now `curriculum`'s day-21 entry, included
+  /// via [dailySeries]'s ordinary bespoke-day lookup — see [fullSeries] for
+  /// why no loop logic needed to change when the capstone moved inside this
   /// window.
-  static const int dailyCadenceThroughDay = 21;
+  static const int dailyCadenceThroughDay = kFirstThirtyDaysCapstoneDay;
 
   // ── Bespoke curriculum catalogue (proposal §2, ordered, 12 entries) ────────
   //
@@ -124,7 +130,7 @@ class FirstThirtyDaysMissionsService {
     ),
     Day30Mission(
       slot: 11,
-      day: 21,
+      day: 17,
       title: 'Map the City',
       teaches: 'Fog-of-war exploration',
       hook: Day30CompletionHook.dailyMissionSlug,
@@ -133,12 +139,37 @@ class FirstThirtyDaysMissionsService {
     ),
     Day30Mission(
       slot: 12,
-      day: 30,
+      day: kFirstThirtyDaysCapstoneDay,
       title: 'Milestone: Founding Runner',
       teaches: 'Capstone — retrospective on everything learned',
-      hook: Day30CompletionHook.milestone,
+      hook: Day30CompletionHook.teachingAcknowledgment,
       bespoke: true,
-      milestoneDay: 30,
+    ),
+    Day30Mission(
+      slot: 13,
+      day: 8,
+      title: 'Bring Another Rival',
+      teaches: 'Referral / invite-a-friend, again',
+      hook: Day30CompletionHook.dailyMissionSlug,
+      bespoke: true,
+      dailyMissionSlug: 'invite_friend',
+      slugCompletionSinceUnlockDay: true,
+    ),
+    Day30Mission(
+      slot: 14,
+      day: 19,
+      title: 'Rivals Are Circling',
+      teaches: 'Defending against an active PvE bot attack',
+      hook: Day30CompletionHook.pveZoneDefense,
+      bespoke: true,
+    ),
+    Day30Mission(
+      slot: 15,
+      day: 20,
+      title: 'Unite Your Empire',
+      teaches: 'Fusion/merge showcase — bringing zones together',
+      hook: Day30CompletionHook.teachingAcknowledgment,
+      bespoke: true,
     ),
   ];
 
@@ -182,8 +213,11 @@ class FirstThirtyDaysMissionsService {
   }
 
   /// The full player-facing series: the daily-cadence window
-  /// (`[0, dailyCadenceThroughDay]`, one slot per day) plus the Day-30
-  /// capstone milestone from [curriculum], unaffected by the cadence change.
+  /// (`[0, dailyCadenceThroughDay]`, one slot per day). The capstone is now
+  /// day 21 (== `dailyCadenceThroughDay`), so it is emitted by [dailySeries]
+  /// itself via the ordinary bespoke-day lookup; the append clause below
+  /// contributes nothing for it (`21 > 21` is false) — see design.md §6 for
+  /// why this needed no loop-logic change, only the data/constant change.
   static List<Day30Mission> fullSeries() => [
         ...dailySeries(),
         ...curriculum.where((m) => m.day > dailyCadenceThroughDay),
@@ -257,10 +291,36 @@ class FirstThirtyDaysMissionsService {
           break;
 
         case Day30CompletionHook.dailyMissionSlug:
-          completed = await ds.hasCompletedDailyMissionSlug(
-            userId,
-            mission.dailyMissionSlug!,
-          );
+          if (mission.slugCompletionSinceUnlockDay) {
+            // paywall-day21-revision R2: only a completion recorded on/after
+            // this entry's own unlock day satisfies it (e.g. Day-8 "Bring
+            // Another Rival" must not auto-complete off a pre-day-8
+            // invite_friend completion that already satisfied Day-5). The
+            // cutoff is computed from trialStartedAt's UTC calendar
+            // midnight, matching dayIndexFor's own truncation, so "unlock
+            // day" means the same thing in both places.
+            final unlockDate = _utcMidnight(trialStartedAt ?? DateTime.now())
+                .add(Duration(days: mission.day));
+            completed = await ds.hasCompletedDailyMissionSlugSince(
+              userId,
+              mission.dailyMissionSlug!,
+              unlockDate,
+            );
+          } else {
+            completed = await ds.hasCompletedDailyMissionSlug(
+              userId,
+              mission.dailyMissionSlug!,
+            );
+          }
+          break;
+
+        case Day30CompletionHook.pveZoneDefense:
+          // Reserved stub (paywall-day21-revision, design.md §4.2): the
+          // real Day-19 PvE bot-attack completion condition ships in a
+          // follow-up SDD track. Always incomplete until then — same
+          // "day is unlock, not deadline" convention as every other entry;
+          // no auto-complete, no false-positive completion.
+          completed = false;
           break;
 
         case Day30CompletionHook.milestone:
@@ -323,4 +383,13 @@ class FirstThirtyDaysMissionsService {
 
   String _ackKey(String userId, int slot) =>
       'first30_ack_${userId}_slot$slot';
+
+  /// UTC calendar-midnight truncation, matching [dayIndexFor]'s own
+  /// truncation exactly (paywall-day21-revision R2 correctness detail) —
+  /// used so "on or after this entry's unlock day" means the same instant
+  /// [dayIndexFor] itself considers that day to begin.
+  static DateTime _utcMidnight(DateTime d) {
+    final utc = d.toUtc();
+    return DateTime.utc(utc.year, utc.month, utc.day);
+  }
 }

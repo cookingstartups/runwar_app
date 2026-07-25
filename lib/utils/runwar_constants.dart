@@ -56,15 +56,23 @@ const double kMinCapturedAreaCompactness = 0.15;
 // 150 m in player terms is well under a single lap of a real city block.
 const double kMinCapturedPathLengthM = 150.0;
 
-// Beta-tester emails exempt from the 14-day trial paywall gate (main.dart
-// Gate 4). Lowercase, exact match against the signed-in user's email. This
-// only bypasses the paywall screen itself — trial state (streak,
-// processDailyTick, days remaining) keeps running normally for these
-// accounts so the underlying data stays consistent if support ever inspects
-// it.
+// Beta-tester emails exempt from the calendar-based trial paywall gate
+// (main.dart Gate 4, kFirstThirtyDaysCapstoneDay). Lowercase, exact match
+// against the signed-in user's email. This only bypasses the paywall screen
+// itself — trial state (streak, processDailyTick, days remaining) keeps
+// running normally for these accounts so the underlying data stays
+// consistent if support ever inspects it.
 const Set<String> kBetaTesterEmails = {
   'cookingstartupscom@gmail.com',
 };
+
+// Day-21 paywall + curriculum revision (paywall-day21-revision): the single
+// source of truth for the first-30-days curriculum's daily-cadence window
+// AND the hard-paywall gate's calendar threshold. Consumed by both
+// FirstThirtyDaysMissionsService (dailyCadenceThroughDay) and TrialService
+// (TrialStatus.isExpired), so the two clocks cannot silently drift apart
+// again the way they did before this revision.
+const int kFirstThirtyDaysCapstoneDay = 21;
 
 // Tester-only run replay simulation. Divides every real inter-fix delay by
 // this factor when the operator picks accelerated timing, so a run recorded

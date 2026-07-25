@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../services/telemetry_service.dart';
 import '../theme.dart';
 
-/// Standalone downsell screen shown when a player dismisses the day-14
+/// Standalone downsell screen shown when a player dismisses the day-21
 /// milestone paywall section. Presents the €1/30-day trial offer.
 /// UI only — no payment SDK wired.
 class PaywallDownsellScreen extends StatelessWidget {
