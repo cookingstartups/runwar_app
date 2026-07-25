@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../screens/paywall_downsell_screen.dart';
 import '../services/telemetry_service.dart';
 import '../theme.dart';
+import '../utils/runwar_constants.dart';
 
 /// Full-screen celebration modal shown when the player reaches a streak
 /// milestone (day 7, 14, 21, or 30).
@@ -123,9 +124,10 @@ class _MilestoneRewardModalState extends State<MilestoneRewardModal>
                     onPressed: () => Navigator.of(context).pop(),
                     child: const Text('CLAIM REWARD'),
                   ),
-                  if (widget.day == 14 && widget.subscriptionTier == 'free') ...[
+                  if (widget.day == kFirstThirtyDaysCapstoneDay &&
+                      widget.subscriptionTier == 'free') ...[
                     const SizedBox(height: 16),
-                    _Day14PaywallSection(onDismiss: () {
+                    _Day21PaywallSection(onDismiss: () {
                       Navigator.of(context).pop();
                       Navigator.of(context).push(PaywallDownsellScreen.route());
                     }),
@@ -141,9 +143,9 @@ class _MilestoneRewardModalState extends State<MilestoneRewardModal>
   }
 }
 
-/// Paywall upsell section shown on day-14 milestone for free-tier players.
-class _Day14PaywallSection extends StatelessWidget {
-  const _Day14PaywallSection({required this.onDismiss});
+/// Paywall upsell section shown on day-21 milestone for free-tier players.
+class _Day21PaywallSection extends StatelessWidget {
+  const _Day21PaywallSection({required this.onDismiss});
   final VoidCallback onDismiss;
 
   @override

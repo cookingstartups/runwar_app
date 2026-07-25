@@ -20,8 +20,15 @@
 // gaps. The 12 original entries stay as "bespoke" curriculum beats (fixed
 // title/teaching-hook); every other day in [0, 21] is filled by a
 // "resolved" entry whose content is determined dynamically at unlock time
-// from that day's `DailyMissionsService` slate. Day 30 (the capstone
-// milestone) is unaffected — it stays outside the 21-day core window.
+// from that day's `DailyMissionsService` slate.
+//
+// Day-21 paywall + curriculum revision (paywall-day21-revision,
+// 2026-07-25): the capstone milestone now unlocks at day
+// `kFirstThirtyDaysCapstoneDay` (21), inside the daily-cadence window
+// (previously day 30, outside it). It is completed via
+// `teachingAcknowledgment` (see design.md §2 for the rationale — a local,
+// per-device tap-through decoupled from the streak-milestone system),
+// rather than the old `milestone` hook.
 
 import 'daily_mission.dart';
 
@@ -51,6 +58,18 @@ enum Day30CompletionHook {
   /// surfacing one mission from that day's `DailyMissionsService` slate.
   /// See [Day30MissionState.resolvedMission].
   resolvedDaily,
+
+  /// Reserved for the Day-19 PvE bot-attack mechanic (follow-up SDD track,
+  /// paywall-day21-revision design.md §4 — the mechanic itself, a
+  /// server-side bot-owned zone that actively raises influence against a
+  /// player-owned zone, is out of scope for this ship because the existing
+  /// dispute/attack state-machine's creation/resolution code is not present
+  /// in this repo and cannot be safely designed against blind). Until the
+  /// follow-up wires a real completion condition, `getState()` treats this
+  /// hook as always incomplete — same "day is unlock, not deadline"
+  /// convention every other entry follows; no auto-complete, no
+  /// false-positive completion.
+  pveZoneDefense,
 }
 
 /// A single entry in the ordered, daily-cadence first-30-days curriculum.
@@ -65,6 +84,7 @@ class Day30Mission {
     this.profileCompletionField,
     this.dailyMissionSlug,
     this.milestoneDay,
+    this.slugCompletionSinceUnlockDay = false,
   }) : assert(
           (hook != Day30CompletionHook.firstMissionOnboarding) ||
               profileCompletionField != null,
@@ -122,6 +142,16 @@ class Day30Mission {
   /// Set when [hook] == [Day30CompletionHook.milestone]: the streak day (7
   /// or 30) whose `MilestoneRewardModal` unlock satisfies this entry.
   final int? milestoneDay;
+
+  /// Opt-in qualifier for [hook] == [Day30CompletionHook.dailyMissionSlug]
+  /// (paywall-day21-revision R2). When `true`, completion is satisfied only
+  /// by a [dailyMissionSlug] completion recorded on or after this entry's
+  /// own [day] (unlock day) — not "ever" (the default, unqualified
+  /// semantics every pre-existing `dailyMissionSlug` entry keeps). Built as
+  /// a general hook capability rather than a one-off special case, so any
+  /// future entry sharing a slug with an earlier entry can opt in the same
+  /// way Day 8 ("Bring Another Rival") does for `invite_friend`.
+  final bool slugCompletionSinceUnlockDay;
 }
 
 /// Per-player computed state for one [Day30Mission] — unlocked/current/

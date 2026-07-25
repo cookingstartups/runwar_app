@@ -11,32 +11,31 @@
 // daily no-gap cadence fill) and
 // [DailyMissionsService.previewSlateForDate] (the pure, DB-free resolution
 // path used to fill non-bespoke days).
+//
+// Day-21 paywall + curriculum revision: capstone moves to day 21 (was 30),
+// "Map the City" moves to day 17 (was 21), three new bespoke entries land
+// at day 8/19/20. Day 19 ships as a reserved, honestly-incomplete stub
+// (pveZoneDefense) -- the real PvE attack mechanic is a separate follow-up
+// track, out of scope here.
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:runwar_app/models/day30_mission.dart';
 import 'package:runwar_app/services/daily_missions_service.dart';
 import 'package:runwar_app/services/first_thirty_days_missions_service.dart';
+import 'package:runwar_app/utils/runwar_constants.dart';
 
 void main() {
   group('curriculum catalogue', () {
-    test('has exactly 12 ordered entries', () {
-      expect(FirstThirtyDaysMissionsService.curriculum.length, equals(12));
+    test('has exactly 15 ordered entries after the day-21 revision', () {
+      expect(FirstThirtyDaysMissionsService.curriculum.length, equals(15));
     });
 
-    test('slots are 1..12 in order', () {
+    test('slots stay unique across the whole curriculum', () {
       final slots =
           FirstThirtyDaysMissionsService.curriculum.map((m) => m.slot).toList();
-      expect(slots, equals(List.generate(12, (i) => i + 1)));
-    });
-
-    test('unlock days are non-decreasing across the curriculum', () {
-      final days =
-          FirstThirtyDaysMissionsService.curriculum.map((m) => m.day).toList();
-      for (var i = 1; i < days.length; i++) {
-        expect(days[i], greaterThanOrEqualTo(days[i - 1]),
-            reason: 'curriculum must unlock in non-decreasing day order');
-      }
+      expect(slots.toSet().length, equals(slots.length),
+          reason: 'no two curriculum entries may share a slot number');
     });
 
     test('slots 1-2 reuse first-mission-onboarding, not new logic', () {
@@ -79,16 +78,140 @@ void main() {
       }
     });
 
-    test('slots 8 and 12 reuse the existing milestone system at day 7/30', () {
+    test('slot 8 still reuses the existing Day-7 milestone system', () {
       final bySlot = {
         for (final m in FirstThirtyDaysMissionsService.curriculum) m.slot: m
       };
       expect(bySlot[8]!.hook, equals(Day30CompletionHook.milestone));
       expect(bySlot[8]!.milestoneDay, equals(7));
       expect(bySlot[8]!.day, equals(7));
-      expect(bySlot[12]!.hook, equals(Day30CompletionHook.milestone));
-      expect(bySlot[12]!.milestoneDay, equals(30));
-      expect(bySlot[12]!.day, equals(30));
+    });
+  });
+
+  group('R6-AC1: capstone day moves from 30 to 21', () {
+    test('capstone entry (slot 12) day equals kFirstThirtyDaysCapstoneDay, '
+        'not 30', () {
+      final capstone = FirstThirtyDaysMissionsService.curriculum
+          .firstWhere((m) => m.slot == 12);
+      expect(capstone.day, equals(kFirstThirtyDaysCapstoneDay));
+      expect(capstone.day, equals(21));
+    });
+  });
+
+  group('R5-AC1: capstone completion decoupled from the streak-milestone '
+      'system', () {
+    test('capstone entry uses teachingAcknowledgment, not milestone', () {
+      final capstone = FirstThirtyDaysMissionsService.curriculum
+          .firstWhere((m) => m.slot == 12);
+      expect(capstone.hook, equals(Day30CompletionHook.teachingAcknowledgment),
+          reason: 'capstone completion must not read milestonesClaimed / '
+              'Clock C');
+      expect(capstone.milestoneDay, isNull,
+          reason: 'milestoneDay is no longer relevant once the hook stops '
+              'being milestone');
+    });
+  });
+
+  group('R6-AC2: "Map the City" day moves from 21 to 17', () {
+    test('slot 11 day equals 17, dailyMissionSlug unchanged', () {
+      final mapTheCity = FirstThirtyDaysMissionsService.curriculum
+          .firstWhere((m) => m.slot == 11);
+      expect(mapTheCity.day, equals(17));
+      expect(mapTheCity.hook, equals(Day30CompletionHook.dailyMissionSlug));
+      expect(mapTheCity.dailyMissionSlug, equals('enter_new_zone'));
+    });
+  });
+
+  group('R6-AC3: new bespoke entries at Day 8, Day 19, Day 20', () {
+    test('exactly one entry exists at each of day 8, 19, and 20', () {
+      final curriculum = FirstThirtyDaysMissionsService.curriculum;
+      expect(curriculum.where((m) => m.day == 8).length, equals(1));
+      expect(curriculum.where((m) => m.day == 19).length, equals(1));
+      expect(curriculum.where((m) => m.day == 20).length, equals(1));
+    });
+
+    test('the three new entries use slots that do not collide with slots '
+        '1-12', () {
+      final newSlots = FirstThirtyDaysMissionsService.curriculum
+          .where((m) => m.day == 8 || m.day == 19 || m.day == 20)
+          .map((m) => m.slot)
+          .toSet();
+      expect(newSlots.length, equals(3));
+      for (final slot in newSlots) {
+        expect(slot, greaterThan(12),
+            reason: 'new entries must not renumber any existing slot 1-12');
+      }
+    });
+  });
+
+  group('R2-AC1/AC2: Day-8 "since unlock day" qualifier', () {
+    test('Day-8 entry reuses invite_friend with the qualifier set', () {
+      final day8 = FirstThirtyDaysMissionsService.curriculum
+          .firstWhere((m) => m.day == 8);
+      expect(day8.hook, equals(Day30CompletionHook.dailyMissionSlug));
+      expect(day8.dailyMissionSlug, equals('invite_friend'));
+      expect(day8.slugCompletionSinceUnlockDay, isTrue,
+          reason: 'Day-8 must only count a referral completed on/after '
+              'calendar day 8, not any historical invite_friend completion');
+    });
+
+    test('pre-existing dailyMissionSlug entries keep the unqualified '
+        '"any historical completion" default', () {
+      final curriculum = FirstThirtyDaysMissionsService.curriculum;
+      final unqualifiedSlugs = {
+        'streak_check_in',
+        'defend_zone',
+        'use_superpower',
+        'enter_new_zone',
+      };
+      // Day-5 "Bring a Rival" also reuses invite_friend but must stay
+      // unqualified -- distinguished from Day-8 by day, not slug alone.
+      final day5 = curriculum.firstWhere((m) => m.day == 5);
+      expect(day5.dailyMissionSlug, equals('invite_friend'));
+      expect(day5.slugCompletionSinceUnlockDay, isFalse,
+          reason: 'Day-5\'s own completion must remain unaffected by the '
+              'Day-8 qualifier');
+
+      for (final slug in unqualifiedSlugs) {
+        final entry =
+            curriculum.firstWhere((m) => m.dailyMissionSlug == slug);
+        expect(entry.slugCompletionSinceUnlockDay, isFalse,
+            reason: '$slug\'s entry must keep today\'s unqualified '
+                '"any historical completion" semantics (regression lock)');
+      }
+    });
+  });
+
+  group('R4-AC1: Day-20 "Unite Your Empire" uses teachingAcknowledgment', () {
+    test('Day-20 entry matches Day-4\'s completion pattern', () {
+      final day20 = FirstThirtyDaysMissionsService.curriculum
+          .firstWhere((m) => m.day == 20);
+      expect(day20.hook, equals(Day30CompletionHook.teachingAcknowledgment));
+    });
+  });
+
+  group('Day-19 stub: unlocks on schedule, no completion hook wired yet '
+      '(R3 out of scope, R6-AC3 in scope)', () {
+    test('Day-19 entry uses the reserved pveZoneDefense hook', () {
+      final day19 = FirstThirtyDaysMissionsService.curriculum
+          .firstWhere((m) => m.day == 19);
+      expect(day19.hook, equals(Day30CompletionHook.pveZoneDefense));
+    });
+
+    test('Day-19 unlocks at dayIndex 19 like any other curriculum entry', () {
+      final day19 = FirstThirtyDaysMissionsService.curriculum
+          .firstWhere((m) => m.day == 19);
+      expect(FirstThirtyDaysMissionsService.isUnlocked(day19, 19), isTrue);
+      expect(FirstThirtyDaysMissionsService.isUnlocked(day19, 18), isFalse);
+    });
+  });
+
+  group('R8-AC1: shared kFirstThirtyDaysCapstoneDay constant', () {
+    test('dailyCadenceThroughDay resolves to the shared constant, not an '
+        'independent literal', () {
+      expect(FirstThirtyDaysMissionsService.dailyCadenceThroughDay,
+          equals(kFirstThirtyDaysCapstoneDay));
+      expect(kFirstThirtyDaysCapstoneDay, equals(21));
     });
   });
 
@@ -252,13 +375,26 @@ void main() {
     });
   });
 
-  group('fullSeries', () {
-    test('includes the Day-30 capstone outside the 21-day core window', () {
+  group('fullSeries (R6-AC4: capstone at day == 21, exactly once)', () {
+    test('includes the capstone exactly once at day 21, not duplicated or '
+        'dropped by the append clause\'s strict ">" filter', () {
       final series = FirstThirtyDaysMissionsService.fullSeries();
-      final day30 = series.where((m) => m.day == 30).toList();
-      expect(day30.length, equals(1));
-      expect(day30.first.hook, equals(Day30CompletionHook.milestone));
-      expect(day30.first.milestoneDay, equals(30));
+      final day21Entries = series.where((m) => m.day == 21).toList();
+      expect(day21Entries.length, equals(1),
+          reason: 'day 21 must resolve to exactly one entry: the capstone, '
+              'not also a resolvedDaily filler');
+      expect(day21Entries.first.bespoke, isTrue);
+      expect(day21Entries.first.hook,
+          equals(Day30CompletionHook.teachingAcknowledgment));
+    });
+
+    test('no longer produces a day-30 entry at all (capstone moved inside '
+        'the window)', () {
+      final series = FirstThirtyDaysMissionsService.fullSeries();
+      expect(series.where((m) => m.day == 30), isEmpty,
+          reason: 'the append clause (day > dailyCadenceThroughDay) must '
+              'contribute zero entries once no curriculum entry has a day '
+              'greater than 21');
     });
 
     test('still covers every day 0..21 with no gaps', () {

@@ -641,4 +641,38 @@ class DatabaseService {
     return (rows as List).isNotEmpty;
   }
 
+  /// True if [userId] has completed the daily mission identified by [slug]
+  /// on or after [since] (inclusive), not just "ever".
+  ///
+  /// Additive alongside [hasCompletedDailyMissionSlug] (paywall-day21-revision
+  /// R2) — used only by curriculum entries that opt into
+  /// `Day30Mission.slugCompletionSinceUnlockDay`, so a slug shared by two
+  /// curriculum entries (e.g. `invite_friend` on both Day 5 and Day 8) does
+  /// not let an earlier completion auto-satisfy a later, since-unlock-day
+  /// qualified entry.
+  Future<bool> hasCompletedDailyMissionSlugSince(
+    String userId,
+    String slug,
+    DateTime since,
+  ) async {
+    final client = Supabase.instance.client;
+
+    final defRow = await client
+        .from('daily_mission_definitions')
+        .select('id')
+        .eq('slug', slug)
+        .maybeSingle();
+    if (defRow == null) return false;
+    final missionId = defRow['id'] as int;
+
+    final rows = await client
+        .from('daily_mission_progress')
+        .select('completed_at')
+        .eq(kGetDailyMissionsFilterColumn, userId)
+        .eq('mission_id', missionId)
+        .not('completed_at', 'is', null)
+        .gte('completed_at', since.toUtc().toIso8601String())
+        .limit(1);
+    return (rows as List).isNotEmpty;
+  }
 }
