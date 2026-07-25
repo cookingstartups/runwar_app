@@ -1,93 +1,67 @@
 // test/providers/dispute_countdown_provider_test.dart
 //
-// RED phase: imports resolve to files that do not yet exist.
-// Each test maps to one GIVEN/WHEN/THEN from design.md §5 + phase spec §8.
+// RED phase: disputeCountdownProvider is re-pointed at the zone's own
+// status/dispute_at fields (sourced from ZonesRepository), not the dead
+// disputes table via DisputesRepository. The family key and the
+// Duration-computation/streaming contract (emit immediately, tick every
+// second, close at Duration.zero) are unchanged - only the data source.
 //
-// Design contract (design.md §5):
-//   disputeCountdownProvider = StreamProvider.family.autoDispose<Duration, String>
-//   - Fetches open dispute via fetchOpenForZone(zoneId) once at init
-//   - Ticks with 1-second resolution: yields remaining duration each second
-//   - When remaining <= Duration.zero: yields Duration.zero and stream terminates
-//   - If no open dispute found (Ok(null) or Err): yields Duration.zero immediately
+// This file intentionally imports Zone.disputeAt, a field that does not
+// exist yet, and mocks ZonesRepository instead of DisputesRepository - both
+// fail to compile/resolve until the zone-sourced countdown is implemented.
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mocktail/mocktail.dart';
 
 import 'package:runwar_app/providers/dispute_countdown_provider.dart';
-import 'package:runwar_app/providers/disputes_repository_provider.dart';
+import 'package:runwar_app/providers/zones_repository_provider.dart';
 import 'package:runwar_app/services/database/repository.dart';
-import 'package:runwar_app/services/database/disputes_repository.dart';
-import 'package:runwar_app/services/database/models/dispute.dart';
+import 'package:runwar_app/services/database/zones_repository.dart';
+import 'package:runwar_app/services/database/models/zone.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-// ── Mock ──────────────────────────────────────────────────────────────────────
+class MockZonesRepository extends Mock implements ZonesRepository {}
 
-class MockDisputesRepository extends Mock implements DisputesRepository {}
+/// Builds a Zone whose dispute expires [secsFromNow] seconds in the future
+/// (or in the past, for a negative value). Uses the not-yet-existing
+/// Zone.disputeAt field.
+Zone _disputedZone(int secsFromNow, {String zoneId = 'zone-001'}) => Zone(
+      id: zoneId,
+      ownerId: 'defender-xyz',
+      city: 'Valencia',
+      influenceLevel: 3,
+      status: ZoneStatus.disputed,
+      points: const [],
+      disputeAt: DateTime.now().toUtc().add(Duration(seconds: secsFromNow)),
+    );
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// Creates a Dispute with expiresAt set [secsFromNow] seconds in the future.
-Dispute _disputeExpiringIn(int secsFromNow, {String zoneId = 'zone-001'}) =>
-    Dispute.fromRow({
-      'id': 'dispute-001',
-      'zone_id': zoneId,
-      'attacker_id': 'attacker-abc',
-      'defender_id': 'defender-xyz',
-      'expires_at': DateTime.now()
-          .toUtc()
-          .add(Duration(seconds: secsFromNow))
-          .toIso8601String(),
-      'resolved_at': null,
-      'winner_id': null,
-      'created_at': '2026-05-31T10:00:00.000Z',
-    });
-
-/// Creates a Dispute that expired [secsAgo] seconds ago.
-Dispute _disputeExpiredAgo(int secsAgo, {String zoneId = 'zone-001'}) =>
-    Dispute.fromRow({
-      'id': 'dispute-expired',
-      'zone_id': zoneId,
-      'attacker_id': 'attacker-abc',
-      'defender_id': 'defender-xyz',
-      'expires_at': DateTime.now()
-          .toUtc()
-          .subtract(Duration(seconds: secsAgo))
-          .toIso8601String(),
-      'resolved_at': null,
-      'winner_id': null,
-      'created_at': '2026-05-31T09:00:00.000Z',
-    });
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
+Zone _undisputedZone({String zoneId = 'zone-none'}) => Zone(
+      id: zoneId,
+      ownerId: 'defender-xyz',
+      city: 'Valencia',
+      influenceLevel: 3,
+      status: ZoneStatus.owned,
+      points: const [],
+      disputeAt: null,
+    );
 
 void main() {
-  setUpAll(() {
-    // No custom fallback types needed for Dispute in Phase 1.
-  });
-
-  group('disputeCountdownProvider', () {
-    // GIVEN a zone with an open dispute expiring in 5 seconds
-    // WHEN the provider is watched
-    // THEN emits decreasing Duration values each second
-    test('emits decreasing Duration values each second', () async {
-      final mockRepo = MockDisputesRepository();
-      when(() => mockRepo.fetchOpenForZone('zone-001')).thenAnswer(
-        (_) async => RepoResult.ok(_disputeExpiringIn(5)),
+  group('disputeCountdownProvider: zone-sourced dispute state', () {
+    test('emits decreasing Duration values sourced from the zone\'s own dispute_at', () async {
+      final mockRepo = MockZonesRepository();
+      when(() => mockRepo.fetchById('zone-001')).thenAnswer(
+        (_) async => RepoResult.ok(_disputedZone(5)),
       );
 
       final container = ProviderContainer(overrides: [
-        disputesRepositoryProvider.overrideWithValue(mockRepo),
+        zonesRepositoryProvider.overrideWithValue(mockRepo),
       ]);
       addTearDown(container.dispose);
 
       final emissions = <Duration>[];
-      final sub = container
-          .read(disputeCountdownProvider('zone-001'))
-          .listen(null);
-
-      // Collect emissions over ~3 seconds.
       final completer = Completer<void>();
       container
           .read(disputeCountdownProvider('zone-001'))
@@ -100,83 +74,66 @@ void main() {
 
       await completer.future.timeout(const Duration(seconds: 5));
 
-      expect(emissions.length, equals(3),
-          reason: 'Provider should emit once per second');
-      // Each emission should be shorter than the previous.
+      expect(emissions.length, equals(3));
       for (var i = 1; i < emissions.length; i++) {
-        expect(emissions[i], lessThan(emissions[i - 1]),
-            reason:
-                'Countdown should decrease: ${emissions[i]} should be < ${emissions[i - 1]}');
+        expect(emissions[i], lessThan(emissions[i - 1]));
       }
-
-      await sub.cancel();
     });
 
-    // GIVEN the countdown reaches zero
-    // WHEN Duration.zero is yielded
-    // THEN the stream terminates (no further emissions)
-    test('stream terminates at Duration.zero', () async {
-      final mockRepo = MockDisputesRepository();
-      // Expiring in 2 seconds so the stream closes quickly in the test.
-      when(() => mockRepo.fetchOpenForZone('zone-term')).thenAnswer(
-        (_) async => RepoResult.ok(_disputeExpiringIn(2)),
+    test('stream terminates at Duration.zero when the zone dispute expires', () async {
+      final mockRepo = MockZonesRepository();
+      when(() => mockRepo.fetchById('zone-term')).thenAnswer(
+        (_) async => RepoResult.ok(_disputedZone(2, zoneId: 'zone-term')),
       );
 
       final container = ProviderContainer(overrides: [
-        disputesRepositoryProvider.overrideWithValue(mockRepo),
+        zonesRepositoryProvider.overrideWithValue(mockRepo),
       ]);
       addTearDown(container.dispose);
 
       final allEmissions = <Duration>[];
-      bool streamDone = false;
-
-      // Use a Completer so that the onDone callback fires correctly.
-      // StreamSubscription.asFuture() replaces the onDone handler set in
-      // listen(), so the two cannot be combined — the Completer pattern
-      // keeps them independent.
       final doneCompleter = Completer<void>();
 
-      container
-          .read(disputeCountdownProvider('zone-term'))
-          .listen(
+      container.read(disputeCountdownProvider('zone-term')).listen(
             allEmissions.add,
-            onDone: () {
-              streamDone = true;
-              doneCompleter.complete();
-            },
+            onDone: () => doneCompleter.complete(),
           );
 
       await doneCompleter.future.timeout(const Duration(seconds: 5));
 
-      // The final emission must be Duration.zero.
-      expect(allEmissions.last, equals(Duration.zero),
-          reason: 'Stream must emit Duration.zero as its final value');
-      expect(streamDone, isTrue,
-          reason: 'Stream must complete (close) after emitting Duration.zero');
+      expect(allEmissions.last, equals(Duration.zero));
     });
 
-    // GIVEN a zone whose dispute expires_at is already in the past
-    // WHEN the provider is watched
-    // THEN emits Duration.zero immediately (no countdown needed)
-    test('emits Duration.zero immediately when expires_at is in the past', () async {
-      final mockRepo = MockDisputesRepository();
-      when(() => mockRepo.fetchOpenForZone('zone-past')).thenAnswer(
-        (_) async => RepoResult.ok(_disputeExpiredAgo(30)),
+    test('emits Duration.zero immediately when the zone is not disputed', () async {
+      final mockRepo = MockZonesRepository();
+      when(() => mockRepo.fetchById('zone-none')).thenAnswer(
+        (_) async => RepoResult.ok(_undisputedZone()),
       );
 
       final container = ProviderContainer(overrides: [
-        disputesRepositoryProvider.overrideWithValue(mockRepo),
+        zonesRepositoryProvider.overrideWithValue(mockRepo),
       ]);
       addTearDown(container.dispose);
 
       final firstEmission = await container
-          .read(disputeCountdownProvider('zone-past'))
+          .read(disputeCountdownProvider('zone-none'))
           .first
           .timeout(const Duration(seconds: 2));
 
-      expect(firstEmission, equals(Duration.zero),
-          reason:
-              'When expires_at is in the past, Duration.zero must be emitted immediately');
+      expect(firstEmission, equals(Duration.zero));
+    });
+
+    test('never queries the disputes table or DisputesRepository', () {
+      // Source-level guard: the retired disputes/DisputesRepository symbols
+      // must not appear in the provider implementation once it is
+      // re-pointed at zones. Fails today because the provider still imports
+      // disputes_repository_provider.dart.
+      final src = File('lib/providers/dispute_countdown_provider.dart')
+          .readAsStringSync();
+      expect(src.contains('DisputesRepository'), isFalse,
+          reason: 'disputeCountdownProvider must not reference DisputesRepository once re-pointed at zones');
+      expect(src.contains('disputes_repository_provider'), isFalse,
+          reason: 'disputeCountdownProvider must not import the retired disputes repository provider');
     });
   });
 }
