@@ -1,14 +1,15 @@
 // test/integration/dispute_flow_test.dart
 //
-// RED phase: imports resolve to files that do not yet exist.
-// Integration smoke test — phase spec §8 lines 987-1000, design.md §4 + §5.
+// Rewritten per requirements.md R11-AC2: the countdown/dispute state read
+// throughout this integration test is now sourced from the zone's own
+// status/dispute_at fields (ZonesRepository), never from the retired
+// disputes table / DisputesRepository. This file must not import Dispute,
+// DisputesRepository, or disputesRepositoryProvider - RED today because
+// DisputeCountdownLabel/disputeCountdownProvider still read the disputes
+// table, so the zone-only dispute_at fixtures below never surface a
+// countdown label the old implementation understands.
 //
-// This test is intentionally coarse-grained: it verifies the end-to-end
-// GIVEN/WHEN/THEN flow at a UI level using faked repos and a mocked
-// TerritoryService edge function call. Detailed per-unit assertions live in
-// the unit-test files above.
-//
-// Flow (verbatim from phase spec §8 lines 995-1000):
+// Flow (unchanged end-to-end shape):
 //   1. Pump MaterialApp(home: MapScreen()) with provider overrides
 //   2. Push GPS fix in Valencia → map renders centered on (39.4699, -0.3763)
 //   3. Tap the rival zone → AttackSheet is shown
@@ -19,8 +20,8 @@
 //
 // Mocks:
 //   - GeolocatorPlatform: returns fixed Valencia positions
-//   - ZonesRepository: initially returns one seeded rival zone 'z1'
-//   - DisputesRepository: no open disputes initially; after claim 1, one open
+//   - ZonesRepository: initially returns one seeded rival zone 'z1'; the
+//     zone row itself carries status/dispute_at once disputed
 //   - TerritoryService.claimViaEdgeFunction:
 //       call 1 → {result:'disputed', zone_id:'z1', credits_awarded:0}
 //       call 2 → {result:'conquered', zone_id:'z1', dispute_resolved:true, credits_awarded:250}
@@ -35,9 +36,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:runwar_app/screens/map_screen.dart';
 import 'package:runwar_app/services/database/repository.dart';
 import 'package:runwar_app/services/database/zones_repository.dart';
-import 'package:runwar_app/services/database/disputes_repository.dart';
 import 'package:runwar_app/services/database/models/zone.dart';
-import 'package:runwar_app/services/database/models/dispute.dart';
 import 'package:runwar_app/widgets/attack_sheet.dart';
 import 'package:runwar_app/widgets/zone_level_badge.dart';
 import 'package:runwar_app/widgets/dispute_countdown_label.dart';
@@ -46,7 +45,6 @@ import 'package:runwar_app/providers/auth_provider.dart';
 import 'package:runwar_app/providers/cities_provider.dart';
 import 'package:runwar_app/providers/profile_provider.dart';
 import 'package:runwar_app/providers/run_recorder_provider.dart';
-import 'package:runwar_app/providers/disputes_repository_provider.dart';
 import 'package:runwar_app/services/auth_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide AuthState;
 
@@ -98,8 +96,6 @@ class _StubRunRecorderNotifier extends RunRecorderNotifier {
 
 class MockZonesRepository extends Mock implements ZonesRepository {}
 
-class MockDisputesRepository extends Mock implements DisputesRepository {}
-
 // ── Test data ─────────────────────────────────────────────────────────────────
 
 const _kRivalZoneId = 'z1';
@@ -107,9 +103,14 @@ const _kRivalOwnerId = 'demo-owner';
 const _kCurrentUserId = 'current-player';
 
 /// Seeded rival zone in Valencia bounding box, owned by demo-owner.
+///
+/// [disputeAt] carries the zone's own dispute deadline once disputed (spec
+/// R2-AC1) - the countdown/dispute state now lives entirely on the zone
+/// row, never on a separate disputes table.
 Map<String, dynamic> _rivalZoneRow({
   String status = 'owned',
   int influenceLevel = 3,
+  DateTime? disputeAt,
 }) =>
     {
       'id': _kRivalZoneId,
@@ -117,23 +118,10 @@ Map<String, dynamic> _rivalZoneRow({
       'city': 'Valencia',
       'influence_level': influenceLevel,
       'status': status,
+      'dispute_at': disputeAt?.toIso8601String(),
       'geom_json': '{"type":"Polygon","coordinates":[[[-0.378,39.469],[-0.374,39.469],[-0.374,39.471],[-0.378,39.471],[-0.378,39.469]]]}',
       'created_at': '2026-05-31T10:00:00.000Z',
       'updated_at': '2026-05-31T10:00:00.000Z',
-    };
-
-Map<String, dynamic> _openDisputeRow() => {
-      'id': 'dispute-001',
-      'zone_id': _kRivalZoneId,
-      'attacker_id': _kCurrentUserId,
-      'defender_id': _kRivalOwnerId,
-      'expires_at': DateTime.now()
-          .toUtc()
-          .add(const Duration(minutes: 20))
-          .toIso8601String(),
-      'resolved_at': null,
-      'winner_id': null,
-      'created_at': '2026-05-31T10:00:00.000Z',
     };
 
 // ── Test ──────────────────────────────────────────────────────────────────────
@@ -191,28 +179,25 @@ void main() {
 
   group('Dispute flow — integration smoke', () {
     late MockZonesRepository mockZonesRepo;
-    late MockDisputesRepository mockDisputesRepo;
     late StreamController<List<Zone>> zonesController;
 
     setUp(() {
       mockZonesRepo = MockZonesRepository();
-      mockDisputesRepo = MockDisputesRepository();
       zonesController = StreamController<List<Zone>>.broadcast();
 
-      // Initial state: one rival zone, no open disputes.
+      // Initial state: one rival zone, not disputed. fetchById backs
+      // disputeCountdownProvider once it is re-pointed at zones (spec
+      // R11-AC1) - stub it alongside fetchByCity/watchByCity.
       when(() => mockZonesRepo.watchByCity('Valencia')).thenAnswer(
         (_) => zonesController.stream,
       );
       when(() => mockZonesRepo.fetchByCity('Valencia')).thenAnswer(
         (_) async => RepoResult.ok([Zone.fromGeoJsonRow(_rivalZoneRow())]),
       );
+      when(() => mockZonesRepo.fetchById(_kRivalZoneId)).thenAnswer(
+        (_) async => RepoResult.ok(Zone.fromGeoJsonRow(_rivalZoneRow())),
+      );
       when(() => mockZonesRepo.dispose()).thenAnswer((_) async {});
-
-      when(() => mockDisputesRepo.fetchOpenForZone(_kRivalZoneId))
-          .thenAnswer((_) async => RepoResult.ok(null));
-      when(() => mockDisputesRepo.watchOpenForZone(_kRivalZoneId))
-          .thenAnswer((_) => Stream.value(null));
-      when(() => mockDisputesRepo.dispose()).thenAnswer((_) async {});
     });
 
     tearDown(() async {
@@ -226,7 +211,6 @@ void main() {
     testWidgets('full dispute → conquest flow', (tester) async {
       final container = makeTestContainer(
         zonesRepo: mockZonesRepo,
-        disputesRepo: mockDisputesRepo,
         overrides: [
           authProvider.overrideWith((_) => _FakeAuthNotifier()),
           profileGateProvider.overrideWith(
@@ -279,14 +263,20 @@ void main() {
           reason: 'Tapping a rival zone must open AttackSheet');
 
       // Step 4: Simulate first claim → result:'disputed'.
-      // The test triggers a dispute by updating mocked state and pushing
-      // the updated zone (status='disputed') to the zones stream.
-      when(() => mockDisputesRepo.fetchOpenForZone(_kRivalZoneId))
-          .thenAnswer((_) async => RepoResult.ok(Dispute.fromRow(_openDisputeRow())));
-      when(() => mockDisputesRepo.watchOpenForZone(_kRivalZoneId))
-          .thenAnswer((_) => Stream.value(Dispute.fromRow(_openDisputeRow())));
+      // The test triggers a dispute purely by updating the zone row itself
+      // (status='disputed', dispute_at set 15 minutes out) and re-stubbing
+      // fetchById so disputeCountdownProvider observes the new deadline -
+      // no separate disputes-table fixture exists anymore.
+      final disputeAt = DateTime.now().toUtc().add(const Duration(minutes: 20));
+      when(() => mockZonesRepo.fetchById(_kRivalZoneId)).thenAnswer(
+        (_) async => RepoResult.ok(
+          Zone.fromGeoJsonRow(_rivalZoneRow(status: 'disputed', disputeAt: disputeAt)),
+        ),
+      );
 
-      zonesController.add([Zone.fromGeoJsonRow(_rivalZoneRow(status: 'disputed'))]);
+      zonesController.add([
+        Zone.fromGeoJsonRow(_rivalZoneRow(status: 'disputed', disputeAt: disputeAt)),
+      ]);
       await _settle(tester);
 
       // DisputeCountdownLabel must now be visible on the map polygon marker.
@@ -294,6 +284,15 @@ void main() {
       // by unit tests. Here we verify the countdown label renders on the map.)
       expect(find.byType(DisputeCountdownLabel), findsAtLeastNWidgets(1),
           reason: 'DisputeCountdownLabel must render on the disputed zone');
+
+      // The mounted widget's TYPE being present is not enough proof by
+      // itself (it mounts purely from zone.status=='disputed', unrelated to
+      // where the countdown value comes from) - assert the actual rendered
+      // ~20 minute countdown text is present, which only appears once the
+      // provider reads dispute_at from THIS zone row instead of the
+      // (unstubbed, now-erroring) disputes table.
+      expect(find.textContaining(RegExp(r'^(19|20):\d\d$')), findsWidgets,
+          reason: 'countdown text must reflect the zone\'s own dispute_at (~20 minutes out), sourced from ZonesRepository, not the disputes table (spec R11-AC1)');
 
       // Step 5: Simulate second claim → result:'conquered'; zone resets to level 1.
       final conqueredRow = _rivalZoneRow(status: 'owned', influenceLevel: 1);
@@ -324,7 +323,6 @@ void main() {
     testWidgets('defender-wins on expiry: countdown reaches zero → level increments', (tester) async {
       final container = makeTestContainer(
         zonesRepo: mockZonesRepo,
-        disputesRepo: mockDisputesRepo,
         overrides: [
           authProvider.overrideWith((_) => _FakeAuthNotifier()),
           profileGateProvider.overrideWith(
@@ -338,35 +336,22 @@ void main() {
           // any zone markers.
           joinedCitySlugsProvider(_kCurrentUserId)
               .overrideWith((ref) async => ['valencia']),
-          // disputesRepositoryProvider must be overridden so that
-          // DisputeCountdownLabel (via disputeCountdownProvider) sees the
-          // stubbed dispute when the zone emits 'disputed' status.
-          disputesRepositoryProvider.overrideWithValue(mockDisputesRepo),
         ],
       );
       addTearDown(container.dispose);
 
-      // Dispute expires in 2 seconds (very short, so the test runs fast).
-      final shortExpiryDispute = {
-        'id': 'dispute-short',
-        'zone_id': _kRivalZoneId,
-        'attacker_id': _kCurrentUserId,
-        'defender_id': _kRivalOwnerId,
-        'expires_at': DateTime.now()
-            .toUtc()
-            .add(const Duration(seconds: 2))
-            .toIso8601String(),
-        'resolved_at': null,
-        'winner_id': null,
-        'created_at': '2026-05-31T10:00:00.000Z',
-      };
-
-      when(() => mockDisputesRepo.fetchOpenForZone(_kRivalZoneId))
-          .thenAnswer((_) async =>
-              RepoResult.ok(Dispute.fromRow(shortExpiryDispute)));
-      when(() => mockDisputesRepo.watchOpenForZone(_kRivalZoneId))
-          .thenAnswer((_) =>
-              Stream.value(Dispute.fromRow(shortExpiryDispute)));
+      // Dispute expires in 2 seconds (very short, so the test runs fast) -
+      // sourced entirely from the zone row's own dispute_at, per spec R11-AC1.
+      final shortDisputeAt = DateTime.now().toUtc().add(const Duration(seconds: 2));
+      when(() => mockZonesRepo.fetchById(_kRivalZoneId)).thenAnswer(
+        (_) async => RepoResult.ok(
+          Zone.fromGeoJsonRow(_rivalZoneRow(
+            status: 'disputed',
+            influenceLevel: 3,
+            disputeAt: shortDisputeAt,
+          )),
+        ),
+      );
 
       await tester.pumpWidget(
         UncontrolledProviderScope(
@@ -378,22 +363,33 @@ void main() {
       // Settle first so profileGateProvider resolves and zonesProvider subscribes
       // to zonesController. Broadcast streams drop events with no active listeners.
       await _settle(tester);
-      // Emit disputed zone at level 3.
-      zonesController.add([Zone.fromGeoJsonRow(_rivalZoneRow(status: 'disputed', influenceLevel: 3))]);
+      // Emit disputed zone at level 3, dispute_at 2s out.
+      zonesController.add([
+        Zone.fromGeoJsonRow(_rivalZoneRow(
+          status: 'disputed',
+          influenceLevel: 3,
+          disputeAt: shortDisputeAt,
+        )),
+      ]);
       await _settle(tester);
 
-      // DisputeCountdownLabel should be visible initially.
+      // DisputeCountdownLabel should be visible initially, with a rendered
+      // countdown text sourced from the zone's own dispute_at (~2s out) -
+      // not merely mounted (mounting alone is unrelated to data source).
       expect(find.byType(DisputeCountdownLabel), findsAtLeastNWidgets(1),
           reason: 'DisputeCountdownLabel must render while dispute is active');
+      expect(find.textContaining(RegExp(r'^00:0[0-2]$')), findsWidgets,
+          reason: 'countdown text must reflect the zone\'s own ~2-second dispute_at, sourced from ZonesRepository (spec R11-AC1)');
 
-      // Advance time past expiry: resolve_dispute edge fn fires → trigger bumps
-      // influence_level by 1. Simulate by pushing updated zone from stream.
+      // Advance time past expiry: the pg_cron resolver fires and decrements
+      // influence_level by 1 (spec R6-AC1). Simulate by pushing the
+      // resolved zone row from the stream - status returns to owned, no
+      // dispute_at, no ownership change.
       final resolvedRow = _rivalZoneRow(status: 'owned', influenceLevel: 4);
       // Owner stays as _kRivalOwnerId (defender wins — no ownership change).
-      when(() => mockDisputesRepo.fetchOpenForZone(_kRivalZoneId))
-          .thenAnswer((_) async => RepoResult.ok(null));
-      when(() => mockDisputesRepo.watchOpenForZone(_kRivalZoneId))
-          .thenAnswer((_) => Stream.value(null));
+      when(() => mockZonesRepo.fetchById(_kRivalZoneId)).thenAnswer(
+        (_) async => RepoResult.ok(Zone.fromGeoJsonRow(resolvedRow)),
+      );
 
       zonesController.add([Zone.fromGeoJsonRow(resolvedRow)]);
       await _settle(tester);

@@ -25,6 +25,7 @@
 // MergeGroup's geometry field.
 
 import { union } from 'https://esm.sh/@turf/union@7';
+import { intersect } from 'https://esm.sh/@turf/intersect@7';
 import { buffer } from 'https://esm.sh/@turf/buffer@7';
 import { area as turfArea } from 'https://esm.sh/@turf/area@7';
 import { booleanIntersects } from 'https://esm.sh/@turf/boolean-intersects@7';
@@ -481,4 +482,41 @@ const kInfluenceAreaNormSqm = 1500;
 export function computeClaimInfluence(areaM2: number): number {
   const raw = Math.sqrt(Math.max(0, areaM2) / kInfluenceAreaNormSqm);
   return Math.min(15, Math.max(1, raw));
+}
+
+// ---------------------------------------------------------------------------
+// computeDisputeOverlapAreaSqm - the real, once-snapshotted intersection area
+// between an attacker's newly-captured ring and the contested zone's current
+// geometry (spec R2-AC2). Pure, no I/O: uses @turf/intersect (the same
+// esm.sh turf@7 family already vendored above for union/buffer/area/etc, so
+// this introduces no new geometry dependency).
+//
+// zoneOutlines is one entry per member outline of the contested zone - a
+// Polygon zone supplies exactly one, a legacy/fallback MultiPolygon zone
+// supplies one per member outline (the same outlinesOf() shape handler.ts
+// already produces at its own rival-scan call site). Every outline's own
+// intersection with the attacker ring is computed independently and the
+// areas are summed (OR-summed): the member outlines of a MultiPolygon zone
+// are, by construction, disjoint from one another, so summing their
+// individual intersection areas never double-counts anything the attacker
+// ring overlaps only once.
+//
+// Returns 0 (not null) when the attacker ring does not overlap any outline -
+// turf's intersect() itself returns null for a non-intersecting pair, which
+// this function absorbs rather than propagates, since "no overlap" is a
+// perfectly normal, zero-area outcome here, not an error.
+export function computeDisputeOverlapAreaSqm(
+  attackerRing: number[][],
+  zoneOutlines: number[][][],
+): number {
+  const attackerPoly = toTurfPolygon(attackerRing);
+  let totalM2 = 0;
+  for (const outline of zoneOutlines) {
+    if (outline.length < 3) continue;
+    const zonePoly = toTurfPolygon(outline);
+    const overlap = intersect(featureCollection([attackerPoly, zonePoly]));
+    if (!overlap) continue;
+    totalM2 += turfArea(overlap);
+  }
+  return totalM2;
 }

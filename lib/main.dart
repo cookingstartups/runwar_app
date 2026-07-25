@@ -73,6 +73,10 @@ Future<void> main() async {
     // Daily decay only makes sense once a real user session exists.
     if (sessionUserId != null) {
       await TerritoryService.instance.runDailyDecayIfDue('Valencia', sessionUserId);
+      // Best-effort merge-fold retry for any zone whose dispute resolved
+      // server-side (pg_cron) since this player's last session - mirrors the
+      // decay tick's own _resolveDecayMerge call immediately above.
+      await TerritoryService.instance.reconcileDisputeResolutions('Valencia', sessionUserId);
     }
   } catch (e) {
     runApp(_InitErrorApp(error: e.toString()));

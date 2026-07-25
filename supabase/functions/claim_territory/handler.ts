@@ -12,7 +12,7 @@ import type { ZoneSplitResult } from './merge_geometry.ts';
 // still obtained via the lazy dynamic import inside the request handler,
 // strictly within the `if (!disputedId)` guard, and passed in from there).
 import type { computeNextInfluenceLevel, computeZoneMerges, computeZoneSplit } from './merge_geometry.ts';
-import { computeClaimInfluence } from './merge_geometry.ts';
+import { computeClaimInfluence, computeDisputeOverlapAreaSqm } from './merge_geometry.ts';
 // Area of the merged geometry is always recomputed from the merge result,
 // never summed from source zones (overlapping/adjacent source zones would
 // double-count their shared area if simply added together).
@@ -425,24 +425,39 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
         if (anyRivalPointInside) {
           // Full or partial conquest
           conqueredId = zone.id;
+          // Sublinear, area-scaled award (computeClaimInfluence) - see that
+          // function's doc comment in merge_geometry.ts. dispute_at/
+          // dispute_overlap_m2 are ALSO cleared here (not just
+          // contested_by_id): a third player's full conquest of a zone that
+          // is mid-dispute with a DIFFERENT attacker must wipe that
+          // dispute's state, or the pg_cron resolver later misfires against
+          // geometry that no longer has anything to do with the original
+          // dispute (spec R9).
           await supabase.from('zones').update({
             owner_id: playerId,
-            // Sublinear, area-scaled award (computeClaimInfluence) replacing
-            // a flat 1 - see that function's doc comment in
-            // merge_geometry.ts for why a flat per-claim award is
-            // exploitable and why a claim exactly at the area floor still
-            // keeps the old baseline of 1.
             influence: computeClaimInfluence(capturedGates.areaSqm),
             status: 'owned',
             contested_by_id: null,
+            dispute_at: null,
+            dispute_overlap_m2: null,
             updated_at: new Date().toISOString(),
           }).eq('id', zone.id);
         } else if (anyNewPointInside) {
-          // Partial overlap → dispute
+          // Partial overlap → dispute. dispute_at is an ABSOLUTE resolution
+          // deadline (now + 15 minutes), not an "opened at" timestamp - the
+          // pg_cron resolver (spec R3/R4) and the client countdown (spec
+          // R11) both just compare it against now(). dispute_overlap_m2 is
+          // snapshotted ONCE here, at dispute-open, as the true intersection
+          // area between the attacker's new ring and the zone's current
+          // geometry (spec R2-AC2) - never recomputed later.
           disputedId = zone.id;
+          const disputeOverlapM2 = computeDisputeOverlapAreaSqm(newRing, outlines);
+          const disputeAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
           await supabase.from('zones').update({
             status: 'disputed',
             contested_by_id: playerId,
+            dispute_at: disputeAt,
+            dispute_overlap_m2: disputeOverlapM2,
             updated_at: new Date().toISOString(),
           }).eq('id', zone.id);
         }

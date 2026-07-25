@@ -509,6 +509,110 @@ class TerritoryService {
     }
   }
 
+  // ── Dispute-resolution merge reconciliation ───────────────────────────────
+
+  /// Pure comparison deciding which of the current player's zones need a
+  /// merge-fold retry (`_resolveDecayMerge`) because their dispute state
+  /// changed server-side (via the pg_cron resolver) since the last time this
+  /// tick observed them. Mirrors the existing decay precedent exactly:
+  /// `_applyDecay` only fires `_resolveDecayMerge` on a `levelCrossed` tick;
+  /// this fires it only on zones whose dispute just resolved - status
+  /// flipped `disputed` → not-disputed since [priorZones], on a zone that
+  /// belongs to [currentPlayerId] on EITHER side (the pre-resolution
+  /// defender, or the post-resolution owner after an attacker win).
+  ///
+  /// A zone still disputed, one that was never disputed, or a resolved
+  /// dispute belonging to neither side of the current player is never a
+  /// target. `priorZones`/`currentZones` rows are plain maps with `id`,
+  /// `status`, `owner_id`, `influence_level` keys (the same shape
+  /// `DatabaseService.getZonesByCity` rows already carry) - no Zone model
+  /// dependency, so this stays as trivially testable as
+  /// [computeDecayStep].
+  static List<String> computeDisputeReconciliationTargets({
+    required String currentPlayerId,
+    required List<Map<String, dynamic>> priorZones,
+    required List<Map<String, dynamic>> currentZones,
+  }) {
+    final priorById = <String, Map<String, dynamic>>{
+      for (final z in priorZones) z['id'] as String: z,
+    };
+
+    final targets = <String>[];
+    for (final current in currentZones) {
+      final id = current['id'] as String;
+      final prior = priorById[id];
+      if (prior == null) continue;
+
+      final wasDisputed = prior['status'] == 'disputed';
+      final stillDisputed = current['status'] == 'disputed';
+      if (!wasDisputed || stillDisputed) continue; // never disputed, or not yet resolved
+
+      final priorOwnerId = prior['owner_id'] as String?;
+      final currentOwnerId = current['owner_id'] as String?;
+      final belongsToCurrentPlayer =
+          currentOwnerId == currentPlayerId || priorOwnerId == currentPlayerId;
+      if (!belongsToCurrentPlayer) continue;
+
+      targets.add(id);
+    }
+    return targets;
+  }
+
+  /// Call once on app open, alongside [runDailyDecayIfDue] - the same
+  /// existing app-foreground tick. Best-effort, mirroring
+  /// [_resolveDecayMerge]'s own contract: a failure here must never
+  /// interrupt anything else the tick does, it just leaves a merge
+  /// opportunity for the next tick. Persists a lightweight per-city snapshot
+  /// of the player's own zones (id/status/owner_id/influence_level only) in
+  /// `prefs` so the NEXT tick can diff against it via
+  /// [computeDisputeReconciliationTargets].
+  Future<void> reconcileDisputeResolutions(String city, String userId) async {
+    try {
+      final ds = DatabaseService.instance;
+      final snapshotKey = 'dispute_reconciliation_snapshot_$city';
+
+      final rows = await ds.getZonesByCity(city);
+      final currentZones = rows
+          .map((r) => <String, dynamic>{
+                'id': r['id'],
+                'status': r['status'],
+                'owner_id': r['owner_id'],
+                'influence_level': r['influence_level'],
+              })
+          .toList();
+
+      final priorJson = await ds.getPref(userId, snapshotKey);
+      final priorZones = priorJson != null
+          ? (jsonDecode(priorJson) as List)
+              .cast<Map<String, dynamic>>()
+          : const <Map<String, dynamic>>[];
+
+      final targets = computeDisputeReconciliationTargets(
+        currentPlayerId: userId,
+        priorZones: priorZones,
+        currentZones: currentZones,
+      );
+
+      for (final zoneId in targets) {
+        final ownerId = currentZones.firstWhere(
+              (z) => z['id'] == zoneId,
+              orElse: () => const {},
+            )['owner_id'] as String? ??
+            userId;
+        await _resolveDecayMerge(ownerId: ownerId, city: city, zoneId: zoneId);
+      }
+
+      await ds.setPref(userId, snapshotKey, jsonEncode(currentZones));
+    } catch (e, st) {
+      ErrorLogService.logClientError(
+        provider: 'reconcileDisputeResolutions',
+        error: '$e',
+        stackTrace: st,
+        retryCount: 0,
+      );
+    }
+  }
+
   // ── Passive income ────────────────────────────────────────────────────────
 
   /// Accumulate credits for owned zones. Call periodically (e.g. every 60

@@ -2,18 +2,24 @@
 //
 // disputeCountdownProvider — ticking countdown stream for an open dispute.
 //
+// Re-pointed at the zone's own status/dispute_at fields (via ZonesRepository)
+// instead of the retired disputes table and its repository (spec R11-AC1).
+// The Duration-computation/streaming contract is UNCHANGED - only the data
+// source moved.
+//
 // Declared as Provider.family<Stream<Duration>, String> (NOT StreamProvider)
 // so that container.read(disputeCountdownProvider('id')) returns Stream<Duration>.
 // This matches the test assertions: .listen, .take, .first on the raw stream.
 //
 // Uses a broadcast StreamController with onListen callback so that:
 //   1. Multiple concurrent listeners are supported.
-//   2. onDone propagates correctly to every listener (test 2 requirement).
+//   2. onDone propagates correctly to every listener.
 //   3. The async* driver starts only when the first listener subscribes.
 //
 // Behaviour:
-//   - Fetches the open dispute ONCE at first subscription (onListen callback).
-//   - Yields Duration.zero immediately if no open dispute or already expired.
+//   - Fetches the zone ONCE at first subscription (onListen callback).
+//   - Yields Duration.zero immediately if the zone is not disputed (or has
+//     no dispute_at) or is already past its deadline.
 //   - Ticks every 1 second while active.
 //   - Closes the StreamController (and fires onDone) after yielding Duration.zero.
 //
@@ -25,9 +31,9 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/database/repository.dart';
-import '../services/database/disputes_repository.dart';
-import '../services/database/models/dispute.dart';
-import 'disputes_repository_provider.dart';
+import '../services/database/zones_repository.dart';
+import '../services/database/models/zone.dart';
+import 'zones_repository_provider.dart';
 
 /// Returns a broadcast [Stream<Duration>] that emits the remaining countdown
 /// once per second, terminating at (and including) [Duration.zero].
@@ -38,7 +44,7 @@ import 'disputes_repository_provider.dart';
 final disputeCountdownProvider =
     Provider.family<Stream<Duration>, String>(
   (ref, zoneId) {
-    final repo = ref.watch(disputesRepositoryProvider);
+    final repo = ref.watch(zonesRepositoryProvider);
 
     // ticker is set by _driveCountdown after the fetch completes.
     // ref.onDispose cancels it directly so no pending timer is left
@@ -73,24 +79,26 @@ final disputeCountdownProvider =
 );
 
 Future<void> _driveCountdown(
-  DisputesRepository repo,
+  ZonesRepository repo,
   String zoneId,
   StreamController<Duration> controller,
   void Function(Timer?) onTickerCreated,
 ) async {
   if (controller.isClosed) return;
 
-  final res = await repo.fetchOpenForZone(zoneId);
+  final res = await repo.fetchById(zoneId);
 
   if (controller.isClosed) return;
 
-  if (res is! Ok<Dispute?> || res.value == null) {
+  if (res is! Ok<Zone> ||
+      res.value.status != ZoneStatus.disputed ||
+      res.value.disputeAt == null) {
     controller.add(Duration.zero);
     if (!controller.isClosed) controller.close();
     return;
   }
 
-  final expires = res.value!.expiresAt;
+  final expires = res.value.disputeAt!;
   Timer? ticker;
 
   void tick() {
@@ -99,7 +107,7 @@ Future<void> _driveCountdown(
       onTickerCreated(null);
       return;
     }
-    final left = expires.difference(DateTime.now());
+    final left = expires.difference(DateTime.now().toUtc());
     if (left <= Duration.zero) {
       controller.add(Duration.zero);
       ticker?.cancel();
