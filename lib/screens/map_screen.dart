@@ -44,6 +44,7 @@ import '../widgets/dispute_countdown_label.dart';
 import '../widgets/drop_marker.dart';
 import '../widgets/credits_chip.dart';
 import '../widgets/streak_chip.dart';
+import '../widgets/first_30_days_stepper.dart';
 import '../widgets/superpower_inventory_strip.dart';
 import '../widgets/mission_mode_overlay.dart';
 import '../widgets/first_zone_celebration_overlay.dart';
@@ -1441,6 +1442,22 @@ class _MapScreenState extends ConsumerState<MapScreen>
                   CreditsChip(playerId: userId),
                 ],
               ),
+            ),
+          ),
+        ),
+        // First-30-days curriculum stepper (rw_app-T0593) — sits directly
+        // below the streak/credits chip row; swaps its dot row for a
+        // segmented progress bar while its mission-list bottom sheet is
+        // open (Option E hybrid design).
+        Positioned(
+          top: (widget.missionStep != null ? 100 : 48) + 36,
+          left: 16,
+          right: 16,
+          child: Opacity(
+            opacity: widget.missionStep != null && !isRecording ? 0.35 : 1.0,
+            child: IgnorePointer(
+              ignoring: widget.missionStep != null && !isRecording,
+              child: First30DaysStepper(userId: userId),
             ),
           ),
         ),
