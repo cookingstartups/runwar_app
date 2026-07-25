@@ -19,6 +19,7 @@ class Zone {
     required this.influenceLevel,
     required this.status,
     required this.points,
+    this.disputeAt,
     List<List<LatLng>>? outlines,
   }) : _outlines = outlines;
 
@@ -29,6 +30,14 @@ class Zone {
   /// Clamped 1..15 at construction time (design.md §1).
   final int influenceLevel;
   final ZoneStatus status;
+
+  /// Absolute resolution deadline for an open dispute (spec R2-AC1) -
+  /// `now() + 15 minutes` at the moment claim_territory opened it, cleared
+  /// (null) once the dispute resolves. Null whenever [status] is
+  /// [ZoneStatus.owned]. Sourced directly from the zone row's own
+  /// `dispute_at` column (spec R11) - never from the retired `disputes`
+  /// table.
+  final DateTime? disputeAt;
 
   /// Primary outer ring in lat/lng order - for a `Polygon` zone (the only
   /// shape the single-rule adjacent-zone merge contract produces, design.md
@@ -87,6 +96,17 @@ class Zone {
     final status =
         statusStr == 'disputed' ? ZoneStatus.disputed : ZoneStatus.owned;
 
+    // Parse dispute_at — sourced from the zone row's own column (spec R11),
+    // not a separate disputes-table row. May arrive as a String (ISO 8601)
+    // or already as a DateTime (some in-memory test fixtures); anything else
+    // (including null/absent) yields no open dispute.
+    final disputeAtRaw = row['dispute_at'];
+    final DateTime? disputeAt = switch (disputeAtRaw) {
+      String s => DateTime.tryParse(s)?.toUtc(),
+      DateTime d => d.toUtc(),
+      _ => null,
+    };
+
     return Zone(
       id: row['id'] as String,
       ownerId: row['owner_id'] as String? ?? '',
@@ -94,6 +114,7 @@ class Zone {
       influenceLevel: influenceLevel,
       status: status,
       points: points,
+      disputeAt: disputeAt,
       outlines: outlines,
     );
   }
