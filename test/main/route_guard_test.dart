@@ -840,8 +840,16 @@ void main() {
             ),
           ),
           trialStatusProvider(userId).overrideWith(
-            (ref) async =>
-                const TrialStatus(started: true, daysRemaining: 0, streak: 3),
+            (ref) async => TrialStatus(
+              started: true,
+              daysRemaining: 0,
+              streak: 3,
+              // Day-21 revision: the gate is calendar-based, not
+              // daysRemaining-based -- trialStartedAt must itself be 21+
+              // days ago for trial.isExpired to read true.
+              trialStartedAt:
+                  DateTime.now().toUtc().subtract(const Duration(days: 25)),
+            ),
           ),
         ];
 
