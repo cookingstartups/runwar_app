@@ -164,6 +164,28 @@ const int kMinNewLoopTrailSegments = 4;
 const int kZoneRenderSmoothingIterations = 2;
 
 // ---------------------------------------------------------------------------
+// Day-21 paywall downsell offer (see PaywallScreen, PaywallDownsellScreen,
+// MilestoneRewardModal).
+// ---------------------------------------------------------------------------
+
+/// Minimum consecutive-day streak required to unlock the post-paywall
+/// downsell offer. Checked independently in TrialStatus.isDownsellEligible
+/// and PaywallScreen.build - single source of truth so the two checks
+/// cannot drift apart the way the trial-length constant once did.
+const int kDownsellEligibleStreakDays = 7;
+
+/// Length (days) of the extended trial granted by the downsell offer.
+/// Referenced in PaywallScreen, PaywallDownsellScreen, and
+/// MilestoneRewardModal's day-21 paywall section copy.
+const int kDownsellExtensionDays = 30;
+
+/// Flat price of the downsell offer, in the player's local currency (symbol
+/// resolved separately by the caller). Referenced in PaywallScreen,
+/// PaywallDownsellScreen, and MilestoneRewardModal's day-21 paywall section
+/// copy.
+const int kDownsellPriceAmount = 1;
+
+// ---------------------------------------------------------------------------
 // Hex-grid geometry quantisation (see lib/geo/hex_quantize.dart).
 // ---------------------------------------------------------------------------
 

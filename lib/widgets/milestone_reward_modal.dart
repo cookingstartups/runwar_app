@@ -160,7 +160,8 @@ class _Day21PaywallSection extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         const Text(
-          '30-day streak earns you a €1 extended trial.',
+          '$kDownsellExtensionDays-day streak earns you a '
+          '€$kDownsellPriceAmount extended trial.',
           style: TextStyle(color: kFgMuted, fontSize: 13),
           textAlign: TextAlign.center,
         ),
@@ -170,7 +171,10 @@ class _Day21PaywallSection extends StatelessWidget {
           child: ElevatedButton(
             onPressed: onDismiss,
             style: ElevatedButton.styleFrom(backgroundColor: kAccent2),
-            child: const Text('SUBSCRIBE — €1 / 30 DAYS', style: TextStyle(color: kBg)),
+            child: const Text(
+              'SUBSCRIBE — €$kDownsellPriceAmount / $kDownsellExtensionDays DAYS',
+              style: TextStyle(color: kBg),
+            ),
           ),
         ),
       ],
