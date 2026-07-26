@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme.dart';
+import '../utils/runwar_constants.dart';
 import '../widgets/valencia_button.dart';
 
 class PaywallScreen extends StatelessWidget {
@@ -11,7 +12,7 @@ class PaywallScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final currency = _localCurrencySymbol(context);
-    final isDownsellEligible = streak >= 7;
+    final isDownsellEligible = streak >= kDownsellEligibleStreakDays;
 
     return Scaffold(
       backgroundColor: kBg,
@@ -91,7 +92,7 @@ class PaywallScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              // Downsell — only if streak >= 7
+              // Downsell — only if streak >= kDownsellEligibleStreakDays
               if (isDownsellEligible) ...[
                 const SizedBox(height: 32),
                 Container(
@@ -132,7 +133,8 @@ class PaywallScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 16),
                       ValenciaButton(
-                        label: 'EXTEND 30 DAYS FOR ${currency}1',
+                        label:
+                            'EXTEND $kDownsellExtensionDays DAYS FOR $currency$kDownsellPriceAmount',
                         variant: ValenciaButtonVariant.ghost,
                         onPressed: () =>
                             _navigateToDownsell(context, currency),
@@ -214,8 +216,8 @@ class _DownsellScreen extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               Text(
-                '${streak} consecutive days earned you a 30-day '
-                'extension for just ${currency}1.\n\n'
+                '${streak} consecutive days earned you a $kDownsellExtensionDays-day '
+                'extension for just $currency$kDownsellPriceAmount.\n\n'
                 'Keep claiming territory every day to stay in — '
                 'the offer stays active as long as your streak holds.',
                 style: GoogleFonts.inter(
@@ -235,7 +237,7 @@ class _DownsellScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(100),
                   ),
                   child: Text(
-                    '${currency}1 · 30 days',
+                    '$currency$kDownsellPriceAmount · $kDownsellExtensionDays days',
                     style: GoogleFonts.spaceGrotesk(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
@@ -247,7 +249,7 @@ class _DownsellScreen extends StatelessWidget {
               ),
               const SizedBox(height: 32),
               ValenciaButton(
-                label: 'CLAIM ${currency}1 OFFER',
+                label: 'CLAIM $currency$kDownsellPriceAmount OFFER',
                 onPressed: () => _onPay(context),
               ),
               const SizedBox(height: 12),

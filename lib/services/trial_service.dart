@@ -29,7 +29,7 @@ class TrialStatus {
       FirstThirtyDaysMissionsService.dayIndexFor(trialStartedAt) >=
           kFirstThirtyDaysCapstoneDay;
 
-  bool get isDownsellEligible => streak >= 7;
+  bool get isDownsellEligible => streak >= kDownsellEligibleStreakDays;
 }
 
 /// Manages the calendar-based (day-21) trial paywall gate and the

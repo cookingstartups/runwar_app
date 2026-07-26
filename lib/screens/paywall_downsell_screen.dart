@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../services/telemetry_service.dart';
 import '../theme.dart';
+import '../utils/runwar_constants.dart';
 
 /// Standalone downsell screen shown when a player dismisses the day-21
 /// milestone paywall section. Presents the €1/30-day trial offer.
@@ -47,8 +48,9 @@ class PaywallDownsellScreen extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               Text(
-                'Reach a 30-day streak and earn a full 30-day '
-                'extended trial for just €1.\n\n'
+                'Reach a $kDownsellExtensionDays-day streak and earn a full '
+                '$kDownsellExtensionDays-day extended trial for just '
+                '€$kDownsellPriceAmount.\n\n'
                 'Keep claiming territory every day — '
                 'the offer stays active as long as your streak holds.',
                 style: GoogleFonts.inter(
@@ -68,7 +70,7 @@ class PaywallDownsellScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(100),
                   ),
                   child: Text(
-                    '€1 · 30 days',
+                    '€$kDownsellPriceAmount · $kDownsellExtensionDays days',
                     style: GoogleFonts.spaceGrotesk(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
@@ -83,7 +85,7 @@ class PaywallDownsellScreen extends StatelessWidget {
                 onPressed: () => _onSubscribe(context),
                 style: ElevatedButton.styleFrom(backgroundColor: kAccent),
                 child: const Text(
-                  'SUBSCRIBE — €1 / 30 DAYS',
+                  'SUBSCRIBE — €$kDownsellPriceAmount / $kDownsellExtensionDays DAYS',
                   style: TextStyle(color: kBg),
                 ),
               ),
