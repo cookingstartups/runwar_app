@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'error_log_service.dart';
 import 'realtime_presence_service.dart';
@@ -758,6 +760,88 @@ class RunRecorderService {
     });
   }
 
+  // ── Terminal-write durability (rw_app-T0606) ─────────────────────────────
+  //
+  // The runs-row completion write used to be dispatched via
+  // `onRunUpdate(...).catchError((_) {})` and never awaited by stopRun() -
+  // a process death (hot-restart, app kill, crash) in the narrow window
+  // between "user tapped Stop" and that write actually landing left the row
+  // stuck at status:'active' forever, with no record anywhere that a Stop
+  // had even been requested. Two changes close that gap:
+  //
+  // 1. [_persistClosingIntent] durably records the exact terminal fields to
+  //    SharedPreferences BEFORE the write is attempted, so a death mid-write
+  //    still leaves proof-of-intent on disk. [RunRecoveryService] reads this
+  //    back on next launch (see detectPendingClosingIntent) and finishes the
+  //    write silently - no Resume/Discard prompt, because the user's intent
+  //    (stop, not resume) is already known.
+  // 2. [_writeTerminalStatusWithRetry] awaits the write with a bounded retry
+  //    instead of firing it and moving on, and logs (never silently
+  //    swallows) a failure that survives every attempt.
+  static const String kClosingIntentPrefsKey = 'run_recorder_closing_intent';
+
+  Future<void> _persistClosingIntent(
+      String sessionId, Map<String, dynamic> fields) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        kClosingIntentPrefsKey,
+        jsonEncode({'session_id': sessionId, ...fields}),
+      );
+    } catch (e) {
+      // Best-effort: if persistence itself fails, the write below still
+      // runs - this only narrows the crash window, it does not gate it.
+      debugPrint('[RunRecorderService] failed to persist closing intent: $e');
+    }
+  }
+
+  /// Clears the closing-intent flag. Public (not test-only) because
+  /// [RunRecoveryService] calls it once it has finished replaying a pending
+  /// intent on app launch.
+  Future<void> clearPersistedClosingIntent() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(kClosingIntentPrefsKey);
+    } catch (e) {
+      debugPrint('[RunRecorderService] failed to clear closing intent: $e');
+    }
+  }
+
+  /// Awaits the terminal run-status write with a bounded retry so it is
+  /// durable against process death instead of fire-and-forget. Every failed
+  /// attempt is logged. Returns true once an attempt succeeds, false if
+  /// every attempt fails - the caller uses this to decide whether the
+  /// closing-intent flag set by [_persistClosingIntent] can be cleared
+  /// (only on success) or must be left in place for [RunRecoveryService] to
+  /// finish the write on next launch.
+  Future<bool> _writeTerminalStatusWithRetry(
+    Future<void> Function(String sessionId, Map<String, dynamic> fields) runCb,
+    String sessionId,
+    Map<String, dynamic> fields, {
+    int maxAttempts = 3,
+  }) async {
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await runCb(sessionId, fields);
+        return true;
+      } catch (e, st) {
+        debugPrint('[RunRecorderService] terminal status write failed '
+            '(attempt $attempt/$maxAttempts): $e');
+        if (attempt == maxAttempts) {
+          ErrorLogService.logClientError(
+            provider: 'run_recorder_service.stopRun.terminalWrite',
+            error: e,
+            stackTrace: st,
+            retryCount: attempt,
+          );
+          return false;
+        }
+        await Future.delayed(Duration(milliseconds: 300 * attempt));
+      }
+    }
+    return false;
+  }
+
   /// Ends the recording session without evaluating any loop validity gates.
   /// The recorder transitions directly to idle. Any in-flight onAutoClaim
   /// futures continue to completion independently.
@@ -792,14 +876,23 @@ class RunRecorderService {
     final runCb = onRunUpdate;
     final uid = _activeUserId;
     if (runCb != null && sid != null && uid != null) {
-      runCb(sid, {
+      final fields = {
         'status': 'completed',
         'closed_at': _closedAt!.toIso8601String(),
         'ended_at': _closedAt!.toIso8601String(),
         'distance_m': distanceM,
         'finalized_at': _closedAt!.toIso8601String(),
         'user_id': uid,
-      }).catchError((_) {});
+      };
+      // Record intent BEFORE attempting the write, then await the write
+      // itself (bounded retry, logged on failure) instead of the previous
+      // fire-and-forget `.catchError((_) {})` - see the durability note
+      // above stopRun() (rw_app-T0606).
+      await _persistClosingIntent(sid, fields);
+      final wroteOk = await _writeTerminalStatusWithRetry(runCb, sid, fields);
+      if (wroteOk) {
+        await clearPersistedClosingIntent();
+      }
     }
     _currentSessionId = null;
     // Track is retained in memory in case an in-flight onAutoClaim future
@@ -1361,7 +1454,12 @@ class RunRecorderService {
   /// cancelling one can never be confused with cancelling the other.
   ///
   /// The returned future completes once the fixture is exhausted or the
-  /// simulation ends early (stop/cancel/abort from any caller).
+  /// simulation ends early (stop/cancel/abort from any caller). On a
+  /// `user_stop_pressed` fixture ending, completion now waits for
+  /// [_applySimulationEvent]'s `await stopRun()` to fully resolve - including
+  /// its now-awaited terminal-status write (rw_app-T0606) - instead of
+  /// racing ahead of it, so a caller that awaits this future can rely on the
+  /// completion write having actually been attempted.
   ///
   /// Pre: beginSimulation() has already been called and completed.
   Future<void> runSimulationSequence(
@@ -1379,12 +1477,12 @@ class RunRecorderService {
       final delayMs = index == 0
           ? 0
           : _simDelayMs(events[index - 1].t, events[index].t, multiplier);
-      _simTimer = Timer(Duration(milliseconds: delayMs), () {
+      _simTimer = Timer(Duration(milliseconds: delayMs), () async {
         if (!_simActive) {
           if (!completer.isCompleted) completer.complete();
           return;
         }
-        _applySimulationEvent(events[index]);
+        await _applySimulationEvent(events[index]);
         index++;
         step();
       });
@@ -1394,7 +1492,7 @@ class RunRecorderService {
     return completer.future;
   }
 
-  void _applySimulationEvent(SimulationFixEvent event) {
+  Future<void> _applySimulationEvent(SimulationFixEvent event) async {
     switch (event.type) {
       case 'gps_fix':
         final data = event.data;
@@ -1415,12 +1513,14 @@ class RunRecorderService {
         ));
         break;
       case 'user_stop_pressed':
-        // Fire-and-forget: this exercises the full stop/finalize path
+        // Awaited (rw_app-T0606): this exercises the full stop/finalize path
         // exactly as a real Stop tap would, including the runs-row
-        // completion write. stopRun() sets _simActive = false
-        // synchronously before its first await, so the sequence loop
-        // observes the end on the very next step.
-        unawaited(stopRun());
+        // completion write. stopRun() sets _simActive = false synchronously
+        // before its first await, so the caller in runSimulationSequence's
+        // step() still observes the end on the very next step - but it now
+        // also waits for the write itself (bounded retry) to resolve before
+        // moving on, instead of racing ahead of it.
+        await stopRun();
         break;
       default:
         // run_start and claim_rejected are historical record only.

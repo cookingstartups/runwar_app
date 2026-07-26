@@ -18,6 +18,12 @@ import '../theme.dart';
 /// AC-12: blocks normal app flow until user makes a resume/discard choice.
 /// AC-13: Resume → rehydrates _track and restarts foreground service.
 /// AC-14: Discard → clears run_scratch and proceeds to idle map.
+///
+/// rw_app-T0606: before checking for an ambiguous orphan, this also checks
+/// for a pending "closing intent" - proof the user already tapped Stop but
+/// the process died before the completion write landed. That case is
+/// finished silently (no Resume/Discard prompt), because the user's intent
+/// is already known.
 class RecoveryGate extends ConsumerStatefulWidget {
   const RecoveryGate({super.key, required this.userId, required this.child});
 
@@ -40,6 +46,19 @@ class _RecoveryGateState extends ConsumerState<RecoveryGate> {
   }
 
   Future<void> _check() async {
+    final pendingClose = await RunRecoveryService.instance
+        .detectPendingClosingIntent(widget.userId);
+    if (pendingClose != null) {
+      await _finishPendingClose(pendingClose);
+      if (mounted) {
+        setState(() {
+          _orphan = null;
+          _checking = false;
+          _decisionMade = true;
+        });
+      }
+      return;
+    }
     final orphan =
         await RunRecoveryService.instance.detectOrphan(widget.userId);
     if (mounted) {
@@ -48,6 +67,27 @@ class _RecoveryGateState extends ConsumerState<RecoveryGate> {
         _checking = false;
       });
     }
+  }
+
+  /// Finishes a run whose Stop was already decided but whose completion
+  /// write may not have landed before the process died. Reuses the same
+  /// write shape [RunRecorderService.stopRun] persisted, so the server-side
+  /// row gets exactly the status/metrics it would have gotten had the write
+  /// completed normally. No user prompt - this is not an ambiguous orphan.
+  Future<void> _finishPendingClose(Map<String, dynamic> intent) async {
+    final sessionId = intent['session_id'] as String?;
+    if (sessionId != null) {
+      final networkUp =
+          ref.read(connectivityProvider).whenData((v) => v).valueOrNull ?? false;
+      final fields = Map<String, dynamic>.from(intent)..remove('session_id');
+      await OutboxAwareWriter.instance.writeRunUpdate(
+        sessionId,
+        fields,
+        networkUp: networkUp,
+      );
+    }
+    await RunRecorderService.instance.clearScratch(widget.userId);
+    await RunRecorderService.instance.clearPersistedClosingIntent();
   }
 
   Future<void> _onResume() async {
