@@ -25,7 +25,12 @@
 -- joins against it would break the view outright.
 -- =============================================================================
 
-CREATE OR REPLACE VIEW zones_geojson AS
+-- CREATE OR REPLACE VIEW cannot rename an existing view column
+-- (dispute_expires_at -> dispute_at, attacker_id -> contested_by_id) -
+-- Postgres error 42P16. DROP + CREATE is required for this column rename.
+DROP VIEW IF EXISTS zones_geojson;
+
+CREATE VIEW zones_geojson AS
 SELECT
   z.id,
   z.owner_id,
