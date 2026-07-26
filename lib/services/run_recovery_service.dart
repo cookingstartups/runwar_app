@@ -1,3 +1,8 @@
+import 'dart:convert';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'run_recorder_service.dart';
 import 'run_scratch_store.dart';
 
 /// Metadata about an orphaned (unfinished) run found in run_scratch.
@@ -36,6 +41,30 @@ class RunRecoveryService {
       // In-memory scratch is lost on process kill — no sweep needed on cold boot.
       // This is a no-op for the Supabase migration; kept for API compatibility.
     } catch (_) {}
+  }
+
+  /// Returns the terminal-write fields [RunRecorderService.stopRun]
+  /// persisted for [userId] just before attempting the completion write, if
+  /// a matching flag is still present. A non-null result means a Stop was
+  /// already decided by the user but the durable write may not have landed
+  /// before the process died - [RecoveryGate] should finish it silently
+  /// (no Resume/Discard prompt) instead of treating it as an ambiguous
+  /// orphan, since the user's intent is already known (rw_app-T0606).
+  ///
+  /// Checked BEFORE [detectOrphan] by [RecoveryGate] so a pending closing
+  /// intent always takes priority over the ambiguous orphan-scratch path.
+  Future<Map<String, dynamic>?> detectPendingClosingIntent(
+      String userId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(RunRecorderService.kClosingIntentPrefsKey);
+      if (raw == null) return null;
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      if (data['user_id'] != userId) return null;
+      return data;
+    } catch (_) {
+      return null; // fail-closed - falls through to the normal orphan check
+    }
   }
 
   /// Returns an [OrphanedRun] summary if [userId] has run_scratch rows within
