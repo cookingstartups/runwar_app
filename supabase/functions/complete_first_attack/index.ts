@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
     const { data: row, error: fetchErr } = await supabase
       .from('player_progress')
       .select('first_attack_completed_at')
-      .eq('player_id', playerId)
+      .eq('user_id', playerId)
       .single()
 
     if (fetchErr || !row) return json({ error: 'player_progress row not found' }, 500)
@@ -74,7 +74,7 @@ Deno.serve(async (req) => {
         first_attack_completed_at: now,
         updated_at: now,
       })
-      .eq('player_id', playerId)
+      .eq('user_id', playerId)
       .is('first_attack_completed_at', null) // optimistic-lock
 
     if (updateErr) return json({ error: 'Failed to stamp attack completion' }, 500)

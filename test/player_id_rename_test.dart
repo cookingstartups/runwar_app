@@ -227,4 +227,54 @@ void main() {
       });
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // apply_referral_kickback and complete_first_attack query player_economy /
+  // player_progress with user_id, and apply_credit_delta with p_user_id.
+  //
+  // These two functions were deployed once from the retired runwar_database
+  // repo (2026-06-04/05) and missed the bulk redeploy that fixed every other
+  // function after migration 0050/0051 renamed player_id -> user_id. Their
+  // request body field names (e.g. apply_referral_kickback's `player_id`
+  // payload key) are an external API contract, not a DB column, and are
+  // intentionally out of scope here — this group only guards the exact
+  // schema-shaped references that broke in production (rw_app-T0534).
+  // ---------------------------------------------------------------------------
+  group('apply_referral_kickback and complete_first_attack use user_id column refs', () {
+    test('apply_referral_kickback/index.ts does not call apply_credit_delta with p_player_id', () {
+      const path = 'supabase/functions/apply_referral_kickback/index.ts';
+      final src = File(path).readAsStringSync();
+      expect(
+        src,
+        isNot(contains('p_player_id')),
+        reason:
+            '$path must call apply_credit_delta with p_user_id — '
+            'the live function signature has no p_player_id parameter (PGRST202).',
+      );
+    });
+
+    test('apply_referral_kickback/index.ts queries player_economy with user_id', () {
+      const path = 'supabase/functions/apply_referral_kickback/index.ts';
+      final src = File(path).readAsStringSync();
+      expect(
+        src,
+        isNot(contains(".eq('player_id', inviter_id)")),
+        reason:
+            '$path must query player_economy with .eq(\'user_id\', inviter_id) — '
+            'player_economy has no player_id column (42703).',
+      );
+    });
+
+    test('complete_first_attack/index.ts queries player_progress with user_id', () {
+      const path = 'supabase/functions/complete_first_attack/index.ts';
+      final src = File(path).readAsStringSync();
+      expect(
+        src,
+        isNot(contains(".eq('player_id', playerId)")),
+        reason:
+            '$path must query player_progress with .eq(\'user_id\', playerId) — '
+            'player_progress has no player_id column (42703).',
+      );
+    });
+  });
 }

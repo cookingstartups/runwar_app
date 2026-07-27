@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
 
     // 3. Credit inviter
     const { error: creditErr } = await svcSb.rpc('apply_credit_delta', {
-      p_player_id:         inviter_id,
+      p_user_id:           inviter_id,
       p_delta:             kickback,
       p_reason:            'referral_kickback',
       p_related_entity_id: body.source_id ?? null,
@@ -50,13 +50,13 @@ Deno.serve(async (req) => {
 
     // 4. Increment lifetime kickback counter
     const { data: row } = await svcSb
-      .from('player_economy').select('total_kickback_earned').eq('player_id', inviter_id).single()
+      .from('player_economy').select('total_kickback_earned').eq('user_id', inviter_id).single()
     await svcSb.from('player_economy')
       .update({
         total_kickback_earned: ((row?.total_kickback_earned as number) ?? 0) + kickback,
         updated_at: new Date().toISOString(),
       })
-      .eq('player_id', inviter_id)
+      .eq('user_id', inviter_id)
 
     return json({ kickback_applied: kickback })
   } catch (err) {
