@@ -2,6 +2,39 @@
 
 A new Flutter project.
 
+## Build and run
+
+Install dependencies:
+
+```bash
+flutter pub get
+```
+
+Run on a connected device or emulator:
+
+```bash
+flutter run
+```
+
+Build a debug APK:
+
+```bash
+flutter build apk --debug
+```
+
+The APK lands at `build/app/outputs/flutter-apk/app-debug.apk`. Install it on a
+connected device with:
+
+```bash
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```
+
+Run static analysis and the test suite together:
+
+```bash
+scripts/check.sh
+```
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.
