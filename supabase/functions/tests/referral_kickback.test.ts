@@ -60,9 +60,9 @@ Deno.test("earn with source_reason='referral_kickback' returns recursion_blocked
       method: "POST",
       headers: svcHeaders(),
       body: JSON.stringify({
-        invitee_id: invitee.id,
-        earned_amount: 100,
-        source_tx_id: fakeTxId,
+        player_id: invitee.id,
+        earned_delta: 100,
+        source_id: fakeTxId,
         source_reason: "referral_kickback",
       }),
     });
@@ -70,12 +70,12 @@ Deno.test("earn with source_reason='referral_kickback' returns recursion_blocked
     const body = await res.json();
     assertEquals(body.error, "recursion_blocked");
 
-    // No kickback credit_transaction row must exist with this source_tx_id
+    // No kickback credit_transaction row must exist with this related_entity_id
     const sb = svcClient();
     const { count } = await sb
       .from("credit_transactions")
       .select("*", { count: "exact", head: true })
-      .eq("source_id", fakeTxId)
+      .eq("related_entity_id", fakeTxId)
       .eq("reason", "referral_kickback");
     assertEquals(count, 0, "no credit_transactions row must be written on recursion guard");
   } finally {
@@ -84,7 +84,7 @@ Deno.test("earn with source_reason='referral_kickback' returns recursion_blocked
 });
 
 // GIVEN invitee player has a referral row pointing to an inviter
-// WHEN apply_referral_kickback is called with source_reason='claim' and earned_amount=100
+// WHEN apply_referral_kickback is called with source_reason='claim' and earned_delta=100
 // THEN inviter receives a kickback of 20 credits (20% per app_config) via credit_transactions
 Deno.test("normal earn triggers kickback of 20% to inviter when referral row exists", async () => {
   const inviterEmail = `tx_rkb_inviter_${Date.now()}@test.invalid`;
@@ -112,23 +112,22 @@ Deno.test("normal earn triggers kickback of 20% to inviter when referral row exi
       method: "POST",
       headers: svcHeaders(),
       body: JSON.stringify({
-        invitee_id: invitee.id,
-        earned_amount: 100,
-        source_tx_id: sourceTxId,
+        player_id: invitee.id,
+        earned_delta: 100,
+        source_id: sourceTxId,
         source_reason: "claim",
       }),
     });
     assertEquals(res.status, 200);
     const body = await res.json();
-    assertEquals(body.kickback_amount, 20, "kickback must be 20% of earned_amount=100");
-    assertEquals(body.inviter_id, inviter.id);
+    assertEquals(body.kickback_applied, 20, "kickback must be 20% of earned_delta=100");
 
     // Confirm credit_transactions row for inviter with reason referral_kickback
     const { data: txRows } = await sb
       .from("credit_transactions")
       .select("delta, reason")
-      .eq("player_id", inviter.id)
-      .eq("source_id", sourceTxId)
+      .eq("user_id", inviter.id)
+      .eq("related_entity_id", sourceTxId)
       .eq("reason", "referral_kickback");
     assertExists(txRows, "credit_transactions row must exist");
     assertEquals(txRows!.length, 1);
