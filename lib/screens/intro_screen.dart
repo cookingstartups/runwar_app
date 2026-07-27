@@ -12,7 +12,6 @@ import '../widgets/intro/intro_loot_drop_map.dart';
 import '../widgets/intro/intro_purge_leaderboard.dart';
 import '../widgets/intro_map_animations.dart';
 import '../widgets/tag_chip.dart';
-import '../widgets/valencia_button.dart';
 
 // ---------------------------------------------------------------------------
 // Animation type per slide
@@ -318,7 +317,6 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
                     )),
                     child: _SlidePage(
                       slide: _slides[_prevPage],
-                      onDone: _done,
                       key: ValueKey(_prevPage),
                     ),
                   ),
@@ -335,7 +333,6 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
                     )),
                     child: _SlidePage(
                       slide: _slides[_page],
-                      onDone: _done,
                       key: ValueKey(_page),
                     ),
                   ),
@@ -430,8 +427,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
 // ---------------------------------------------------------------------------
 class _SlidePage extends StatelessWidget {
   final _Slide slide;
-  final VoidCallback onDone;
-  const _SlidePage({required this.slide, required this.onDone, super.key});
+  const _SlidePage({required this.slide, super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -443,7 +439,7 @@ class _SlidePage extends StatelessWidget {
       case _Layout.visualTopTextBottom:
         return _SplitBleedSlide(slide: slide, visualOnTop: true);
       case _Layout.centeredClose:
-        return _CitiesPreviewSlide(slide: slide, onDone: onDone);
+        return _CitiesPreviewSlide(slide: slide);
     }
   }
 }
@@ -608,15 +604,15 @@ class _SplitBleedSlide extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout C - Cities preview (slide 10: choose your ground / final CTA)
-// Honest preview of real city selection - Valencia OPEN, five cities locked
-// behind an invite-to-unlock affordance - closing with the final signup CTA.
+// Layout C - Cities preview (slide 10: choose your ground)
+// Ambient, non-interactive 3D card carousel previewing the real city roster
+// (kCitiesCatalog). No bottom CTA here -- the deck's own swipe-to-advance
+// gesture (see _navigate in _IntroScreenState) already calls _done() when
+// the user swipes past this, the last slide.
 // ---------------------------------------------------------------------------
 class _CitiesPreviewSlide extends StatelessWidget {
   final _Slide slide;
-  final VoidCallback _done;
-  const _CitiesPreviewSlide({required this.slide, required VoidCallback onDone})
-      : _done = onDone;
+  const _CitiesPreviewSlide({required this.slide});
 
   @override
   Widget build(BuildContext context) {
@@ -653,13 +649,7 @@ class _CitiesPreviewSlide extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         const Expanded(child: IntroCitiesPreview()),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(28, 12, 28, 96),
-          child: ValenciaButton(
-            label: "I'M IN · CREATE MY ACCOUNT",
-            onPressed: _done,
-          ),
-        ),
+        SizedBox(height: MediaQuery.of(context).padding.bottom + 32),
       ],
     );
   }
