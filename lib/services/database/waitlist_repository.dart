@@ -32,6 +32,21 @@ class WaitlistRepository {
     }
   }
 
+  /// Replaces the user's current city with [newSlug] - settings-screen city
+  /// change flow (design.md section 3.5). Unlike [joinCities], this is a
+  /// replace, not an add: every other city the user is currently joined to
+  /// is left via [DatabaseService.leaveCityWaitlist] before/while the new
+  /// one is joined. This is a locked product decision - changing city
+  /// silently drops multi-city access, no opt-out.
+  Future<void> changeCity(String userId, String newSlug) async {
+    final current = await joinedCitySlugs(userId);
+    for (final slug in current) {
+      if (slug == newSlug) continue;
+      await DatabaseService.instance.leaveCityWaitlist(userId, slug);
+    }
+    await joinCities(userId, [newSlug]);
+  }
+
   Future<List<String>> joinedCitySlugs(String userId) async {
     // Read from Supabase (always available when connected).
     final remote = await DatabaseService.instance.getJoinedCities(userId);

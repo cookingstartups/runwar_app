@@ -13,8 +13,24 @@ import '../../widgets/milestone_progress_bar.dart';
 import '../../widgets/grain_overlay.dart';
 import '../../widgets/valencia_button.dart';
 
+/// Distinguishes the original onboarding multi-select-and-join flow from the
+/// settings-screen single-select-and-replace city change flow.
+enum CitiesSelectionMode { onboarding, change }
+
 class CitiesSelectionScreen extends ConsumerStatefulWidget {
-  const CitiesSelectionScreen({super.key});
+  const CitiesSelectionScreen({
+    super.key,
+    this.mode = CitiesSelectionMode.onboarding,
+    this.currentCitySlug,
+  });
+
+  /// Which flow this screen instance runs: onboarding (cap at 3, join) or
+  /// change (cap at 1, replace via WaitlistRepository.changeCity).
+  final CitiesSelectionMode mode;
+
+  /// In change mode, pre-seeds the currently-selected city so the user sees
+  /// their existing choice highlighted.
+  final String? currentCitySlug;
 
   @override
   ConsumerState<CitiesSelectionScreen> createState() =>
@@ -47,14 +63,21 @@ class _CitiesSelectionScreenState
     Future.delayed(const Duration(milliseconds: 80), () {
       if (mounted) _fadeCtrl.forward();
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final userId = ref.read(authProvider).user?['id'] as String?;
-      if (userId == null) return;
-      final cached = ref.read(joinedCitySlugsProvider(userId)).valueOrNull;
-      if (cached != null && cached.isNotEmpty && mounted) {
-        setState(() => _selected.addAll(cached));
+    if (widget.mode == CitiesSelectionMode.change) {
+      final current = widget.currentCitySlug;
+      if (current != null && current.isNotEmpty) {
+        _selected.add(current);
       }
-    });
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final userId = ref.read(authProvider).user?['id'] as String?;
+        if (userId == null) return;
+        final cached = ref.read(joinedCitySlugsProvider(userId)).valueOrNull;
+        if (cached != null && cached.isNotEmpty && mounted) {
+          setState(() => _selected.addAll(cached));
+        }
+      });
+    }
   }
 
   @override
@@ -147,6 +170,27 @@ class _CitiesSelectionScreenState
       ref.invalidate(joinedCitySlugsProvider(userId));
       ref.invalidate(citiesProvider);
       ref.invalidate(profileGateProvider(userId));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: kDanger),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _changeCity(String userId) async {
+    if (_selected.isEmpty) return;
+    setState(() => _submitting = true);
+    try {
+      final newSlug = _selected.first;
+      await WaitlistRepository.instance.changeCity(userId, newSlug);
+      ref.invalidate(joinedCitySlugsProvider(userId));
+      ref.invalidate(citiesProvider);
+      ref.invalidate(profileGateProvider(userId));
+      if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -291,11 +335,16 @@ class _CitiesSelectionScreenState
                       border: Border(top: BorderSide(color: kBorder)),
                     ),
                     child: ValenciaButton(
-                      label: _canProceed
-                          ? 'JOIN THE WAR · ${_totalSelected} ${_totalSelected == 1 ? "CITY" : "CITIES"}'
-                          : 'SELECT A CITY',
-                      onPressed:
-                          _canProceed ? () => _joinWar(userId) : null,
+                      label: widget.mode == CitiesSelectionMode.change
+                          ? 'CONFIRM CITY CHANGE'
+                          : (_canProceed
+                              ? 'JOIN THE WAR · ${_totalSelected} ${_totalSelected == 1 ? "CITY" : "CITIES"}'
+                              : 'SELECT A CITY'),
+                      onPressed: _canProceed
+                          ? () => widget.mode == CitiesSelectionMode.change
+                              ? _changeCity(userId)
+                              : _joinWar(userId)
+                          : null,
                       enabled: _canProceed,
                       loading: _submitting,
                     ),
@@ -312,6 +361,10 @@ class _CitiesSelectionScreenState
 
   Widget _buildGrid(List<CityEntry> all) {
     final filtered = _applyFilters(all);
+    // OTHER CITY / _showOtherCityDialog is onboarding-only - a city change
+    // never proposes a new unlisted city, only picks among existing catalog
+    // entries, so that slot is dropped entirely in change mode.
+    final showOtherCitySlot = widget.mode == CitiesSelectionMode.onboarding;
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -321,10 +374,10 @@ class _CitiesSelectionScreenState
         mainAxisSpacing: 14,
       ),
       // Always include the OTHER CITY card even when the filtered list is empty.
-      itemCount: filtered.length + 1,
+      itemCount: filtered.length + (showOtherCitySlot ? 1 : 0),
       itemBuilder: (_, i) {
         // Last slot — "other city" card
-        if (i == filtered.length) {
+        if (showOtherCitySlot && i == filtered.length) {
           final hasOther = _otherCity != null && _otherCity!.isNotEmpty;
           return GestureDetector(
             onTap: _showOtherCityDialog,
@@ -385,6 +438,16 @@ class _CitiesSelectionScreenState
           city: city,
           selected: _selected.contains(city.slug),
           onTap: () {
+            if (widget.mode == CitiesSelectionMode.change) {
+              // Change mode caps at ONE city - replace-on-second-tap, not
+              // add-to-selection (no cap-3 dialog here).
+              setState(() {
+                _selected
+                  ..clear()
+                  ..add(city.slug);
+              });
+              return;
+            }
             if (_selected.contains(city.slug)) {
               setState(() => _selected.remove(city.slug));
             } else if (_selected.length >= 3) {

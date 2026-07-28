@@ -43,6 +43,7 @@ import 'providers/permission_priming_provider.dart';
 import 'screens/permission_priming_screen.dart';
 import 'services/permission_service.dart' show PermKind;
 import 'utils/runwar_constants.dart';
+import 'screens/account_deactivated_screen.dart';
 
 /// Runs the daily trial tick then returns current trial status.
 /// Re-evaluated on app foreground via _RouteGuard's WidgetsBindingObserver.
@@ -50,6 +51,23 @@ final trialStatusProvider =
     FutureProvider.family<TrialStatus, String>((ref, userId) async {
   await TrialService.instance.processDailyTick(userId);
   return TrialService.instance.getStatus(userId);
+});
+
+/// Deactivation gate (settings-screen initiative): watches the current
+/// user's account_deletion_requests row, if any is still pending.
+/// Re-evaluated on app foreground via _RouteGuard's WidgetsBindingObserver,
+/// same as trialStatusProvider, and invalidated immediately after a
+/// successful reactivate_account call (see the deactivated-account screen).
+final accountDeactivationProvider =
+    FutureProvider.family<Map<String, dynamic>?, String>((ref, userId) async {
+  if (!SupabaseService.instance.isConnected) return null;
+  final rows = await SupabaseService.instance.supabase
+      .from('account_deletion_requests')
+      .select('id, scheduled_deletion_at')
+      .eq('user_id', userId)
+      .eq('status', 'pending')
+      .limit(1);
+  return (rows as List).isEmpty ? null : rows.first as Map<String, dynamic>;
 });
 
 Future<void> main() async {
@@ -203,6 +221,9 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
         ref.invalidate(missionStatusProvider(userId));
         ref.invalidate(todaysMissionsProvider(userId));
         ref.invalidate(dailyStreakProvider(userId));
+        // A deactivated-mid-session user must be re-checked on foreground
+        // resume, same as the existing trial gate.
+        ref.invalidate(accountDeactivationProvider(userId));
       }
       final streak = ref.read(dailyStreakProvider(userId ?? '')).valueOrNull;
       if (streak != null) {
@@ -377,6 +398,18 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
     }
 
     final uid = authState.user!['id'] as String;
+
+    // Gate 0.5: pending account deletion request (deactivated account)?
+    // Must sit right after the auth gate above and before the next gate
+    // below - a deactivated account must never progress through phone-link,
+    // permission-priming, cities, or mission onboarding gates.
+    final deactivation = ref.watch(accountDeactivationProvider(uid));
+    if (deactivation.value != null) {
+      return AccountDeactivatedScreen(
+        scheduledDeletionAt: DateTime.parse(
+            deactivation.value!['scheduled_deletion_at'] as String),
+      );
+    }
 
     // Gate 1: phone linked?
     if (!(hasPhoneAsync?.value ?? true)) return const PhoneLinkScreen();
