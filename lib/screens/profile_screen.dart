@@ -12,6 +12,7 @@ import '../theme.dart';
 import '../widgets/reputation_badge.dart';
 import '../widgets/valencia_button.dart';
 import 'profile_edit_screen.dart';
+import 'settings_screen.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -42,6 +43,16 @@ class ProfileScreen extends ConsumerWidget {
               ),
             ),
             child: Text('Edit', style: bodyStyle(size: 14, color: kAccent)),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const SettingsScreen(),
+              ),
+            ),
           ),
         ],
       ),
