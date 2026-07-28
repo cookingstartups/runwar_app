@@ -24,6 +24,36 @@ final runRecorderProvider =
   (ref) => RunRecorderNotifier(ref),
 );
 
+/// Which of ClosureIndicator's four possible display states is current.
+enum ClosureUiKind { gateRejected, sessionElapsedWait, claiming, settled }
+
+/// One immutable snapshot of what ClosureIndicator should show right now.
+/// The provider's own value is nullable - null means no active closure
+/// event, so ClosureIndicator is not constructed at all by the HUD that
+/// mounts it.
+class ClosureUiState {
+  const ClosureUiState._(this.kind, {this.gateReason, this.waitElapsedSec, this.outcome});
+
+  const ClosureUiState.gateRejected(GateRejectionReason reason)
+      : this._(ClosureUiKind.gateRejected, gateReason: reason);
+  const ClosureUiState.wait(int elapsedSec)
+      : this._(ClosureUiKind.sessionElapsedWait, waitElapsedSec: elapsedSec);
+  const ClosureUiState.claiming() : this._(ClosureUiKind.claiming);
+  const ClosureUiState.settled(TerritoryResult outcome)
+      : this._(ClosureUiKind.settled, outcome: outcome);
+
+  final ClosureUiKind kind;
+  final GateRejectionReason? gateReason;
+  final int? waitElapsedSec;
+  final TerritoryResult? outcome;
+}
+
+/// Null while recording with no active closure candidate. Set at claim
+/// dispatch/settle and at gate-rejection time; cleared at the start of each
+/// new recording session. HUD wiring that mounts/unmounts ClosureIndicator
+/// from this value lives at the screen level, out of scope here.
+final closureUiStateProvider = StateProvider<ClosureUiState?>((ref) => null);
+
 /// A monotonic counter that increments on every GPS point append.
 /// MapScreen watches this so the PolylineLayer rebuilds on each new point
 /// without needing to watch a mutable list.

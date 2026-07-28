@@ -21,13 +21,17 @@ import '../services/error_log_service.dart';
 import '../services/run_recorder_service.dart';
 import '../services/battery_optimization_service.dart';
 import '../services/permission_service.dart';
+import '../models/run_summary.dart';
 import '../widgets/battery_warning_banner.dart';
+import '../widgets/cancel_run_sheet.dart';
+import '../widgets/closure_indicator.dart';
+import '../widgets/live_run_stats_strip.dart';
 import '../widgets/location_denied_gate.dart';
 import '../widgets/territory_overlay_painter.dart';
 import '../widgets/zone_level_badge.dart';
 import '../widgets/intro/intro_helpers.dart'
     show sharedEdgePolylines, formatSqm, IntroContinuity;
-import '../geo/lasso.dart' show polygonArea, pointInPolygon;
+import '../geo/lasso.dart' show polygonArea, pointInPolygon, trackDistanceM;
 import '../geo/polygon_smoothing.dart' show chaikinSmoothClosed;
 import '../services/ctf_service.dart';
 import '../services/realtime_presence_service.dart';
@@ -63,6 +67,7 @@ import '../models/mission_step.dart';
 import '../providers/mission_provider.dart';
 import '../theme.dart';
 import 'main_shell.dart';
+import 'run_summary_screen.dart';
 import '../main.dart' show trialStatusProvider;
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -147,6 +152,19 @@ class _MapScreenState extends ConsumerState<MapScreen>
   double _euTailLengthPx = 0.0;
   int _euCapturedSqm = 0;
   ClaimOutcome? _lastClaimOutcome;
+
+  // ── Session-scoped claim history for the post-run summary screen ───────────
+  // Accumulated across the whole recording session (every auto-claim outcome,
+  // including failed ones - RunSummary itself excludes failed/disputed from
+  // the hero total via ClaimLineItem.countsTowardHero). Cleared at the start
+  // of each new recording session so a stale prior run's claims never leak
+  // into the next summary.
+  final List<ClaimLineItem> _sessionClaims = [];
+
+  // Wall-clock moment the current recording session started, used to build
+  // RunSummary.duration at stopRun time. Cleared whenever a new recording
+  // session starts, alongside _sessionClaims.
+  DateTime? _sessionRecordingStart;
 
   // ── Capture flash overlay state ───────────────────────────────────────────
   // One-shot fill flare + ping ring on a successful claim, layered above the
@@ -523,9 +541,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
         const SizedBox(height: 12),
         // ── Run recording FAB ──────────────────────────────────────
         GestureDetector(
-          onLongPress: isRecording
-              ? () => ref.read(runRecorderProvider.notifier).cancel()
-              : null,
+          onLongPress: isRecording ? () => _confirmCancelRun(context) : null,
           child: FloatingActionButton(
             heroTag: 'run_rec',
             backgroundColor: (hasGps || isRecording) ? kAccent : kSurface,
@@ -546,8 +562,39 @@ class _MapScreenState extends ConsumerState<MapScreen>
     } else if (s == RecorderState.recording) {
       // Tap always ends the session unconditionally. No validity gates.
       HapticFeedback.lightImpact();
+      final distanceM = trackDistanceM(RunRecorderService.instance.trackSnapshot);
+      final duration = _sessionRecordingStart == null
+          ? Duration.zero
+          : DateTime.now().difference(_sessionRecordingStart!);
+      final summary = RunSummary(
+        distanceM: distanceM,
+        duration: duration,
+        claims: List.unmodifiable(_sessionClaims),
+      );
       await notifier.stop();
+      if (!context.mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => RunSummaryScreen(summary: summary),
+        ),
+      );
     }
+  }
+
+  /// Confirmation gate ahead of a mid-run cancel (R6, Option C, locked).
+  /// Shows [CancelRunSheet]; only its "Cancel Run" action invokes the real
+  /// cancelRun() logic via the recorder notifier. A cancelled run never
+  /// pushes RunSummaryScreen - the run is discarded, not summarized.
+  void _confirmCancelRun(BuildContext context) {
+    final currentDistanceM = trackDistanceM(RunRecorderService.instance.trackSnapshot);
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (_) => CancelRunSheet(
+        currentDistanceM: currentDistanceM,
+        onCancelConfirmed: () =>
+            ref.read(runRecorderProvider.notifier).cancel(),
+      ),
+    );
   }
 
   /// Guarded run-start path: permission check, GPS-fix check, trial init,
@@ -595,6 +642,8 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // Request battery optimization exemption exactly once (AC-15).
     await BatteryOptimizationService.requestOnce();
     HapticFeedback.lightImpact();
+    _sessionClaims.clear();
+    _sessionRecordingStart = DateTime.now();
     await notifier.start();
     // Fire-and-forget tile pre-download. Run starts regardless.
     TileCacheService.instance.prewarmRunArea(
@@ -790,6 +839,15 @@ class _MapScreenState extends ConsumerState<MapScreen>
     final auth = ref.read(authProvider);
     final userId = (auth.user?['id'] as String?) ?? '';
     final city = _currentCity ?? '';
+
+    // Record this outcome for the post-run summary screen (RunSummary is
+    // built from this list at stopRun time, never from a live re-query).
+    _sessionClaims.add(ClaimLineItem(
+      label: 'Zone ${_sessionClaims.length + 1}',
+      areaM2: polygonArea(polygon),
+      outcome: ClaimLineOutcome.values.byName(outcome.result.name),
+      polygon: polygon,
+    ));
 
     if (outcome.result == TerritoryResult.failed) {
       ErrorLogService.logClientError(
@@ -1445,6 +1503,27 @@ class _MapScreenState extends ConsumerState<MapScreen>
             ),
           ),
         ),
+        // Closure lifecycle HUD -- ClosureIndicator mounts only while an
+        // active closure event exists (Locked Design Value 19: no idle-state
+        // chip, never shown just because recording is true); LiveRunStatsStrip
+        // always sits directly beneath it, never above.
+        if (isRecording)
+          Positioned(
+            top: 140,
+            left: 16,
+            child: Consumer(builder: (context, watchRef, _) {
+              final closureState = watchRef.watch(closureUiStateProvider);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (closureState != null) ClosureIndicator(state: closureState),
+                  if (closureState != null) const SizedBox(height: 8),
+                  const LiveRunStatsStrip(),
+                ],
+              );
+            }),
+          ),
         // First-30-days curriculum stepper (rw_app-T0593) — sits directly
         // below the streak/credits chip row; swaps its dot row for a
         // segmented progress bar while its mission-list bottom sheet is
