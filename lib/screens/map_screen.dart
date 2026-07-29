@@ -446,11 +446,8 @@ class _MapScreenState extends ConsumerState<MapScreen>
         .valueOrNull ?? const [];
     final fogCenters = <({LatLng point, double radiusM})>[
       for (final pt in runPoints) (point: pt, radiusM: 5000),
-      if (_currentPosition != null)
-        (
-          point: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-          radiusM: 1000,
-        ),
+      if (_simOrRealOwnPosition() case final livePos?)
+        (point: livePos, radiusM: 1000),
     ];
 
     final recState = ref.watch(runRecorderProvider);
