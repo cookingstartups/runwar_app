@@ -26,8 +26,11 @@ class SupabaseZonesRepository implements ZonesRepository {
   SupabaseZonesRepository();
 
   final _controllers = <String, StreamController<List<Zone>>>{};
+  final _pendingClose = <String, Timer>{};
   RealtimeChannel? _channel;
   bool _disposed = false;
+
+  static const _kTeardownGrace = Duration(milliseconds: 300);
 
   SupabaseClient get _client => SupabaseService.instance.supabase;
 
@@ -57,6 +60,12 @@ class SupabaseZonesRepository implements ZonesRepository {
       return const Stream.empty();
     }
 
+    // A resubscribe within the grace window cancels the pending close and
+    // reuses the existing controller instead of tearing down and
+    // recreating it. Placed before the containsKey check below so it also
+    // covers a resubscribe that lands on that branch (not just onListen).
+    _pendingClose.remove(city)?.cancel();
+
     if (_controllers.containsKey(city)) {
       // Re-emit current data immediately for a new subscriber.
       _fetchAndEmit(city);
@@ -70,10 +79,15 @@ class SupabaseZonesRepository implements ZonesRepository {
         _fetchAndEmit(city);
       },
       onCancel: () {
-        // When the last listener cancels, clean up this city's controller.
-        // Do NOT unsubscribe the channel — other cities might share it.
-        // Full teardown happens in dispose().
-        _controllers.remove(city)?.close();
+        // Defer teardown by 300ms instead of closing synchronously. If a
+        // new subscriber arrives first, the watchByCity guard above cancels
+        // this timer and reuses the controller. Do NOT unsubscribe the
+        // channel here — other cities might share it. Full teardown also
+        // happens in dispose().
+        _pendingClose[city] = Timer(_kTeardownGrace, () {
+          _pendingClose.remove(city);
+          _controllers.remove(city)?.close();
+        });
       },
     );
     _controllers[city] = controller;
@@ -104,6 +118,10 @@ class SupabaseZonesRepository implements ZonesRepository {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    for (final t in _pendingClose.values) {
+      t.cancel();
+    }
+    _pendingClose.clear();
     await _channel?.unsubscribe();
     _channel = null;
     for (final c in _controllers.values) {
@@ -140,13 +158,22 @@ class SupabaseZonesRepository implements ZonesRepository {
         });
   }
 
-  Future<void> _fetchAndEmit(String city) async {
+  Future<void> _fetchAndEmit(String city, [bool isRetry = false]) async {
     if (_disposed) return;
     final result = await fetchByCity(city);
     switch (result) {
       case Ok<List<Zone>>(value: final zones):
         _controllers[city]?.add(zones);
       case Err<List<Zone>>(error: final error, detail: final detail):
+        if (!isRetry) {
+          // A single bounded retry absorbs transient failures before ever
+          // surfacing an error banner to the player.
+          Timer(const Duration(seconds: 2), () {
+            if (_disposed) return;
+            _fetchAndEmit(city, true);
+          });
+          return;
+        }
         debugPrint(
             '[SupabaseZonesRepository] _fetchAndEmit error: $error $detail');
         _controllers[city]?.addError(

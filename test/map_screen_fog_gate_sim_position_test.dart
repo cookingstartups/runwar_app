@@ -96,7 +96,7 @@ void main() {
       // exact list-literal form.
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
       final body = _sliceToNextMember(
-          src, 'final visibleZones = fogCenters.isEmpty', '_buildPolygons(visibleZones, pulse)');
+          src, 'final visibleZones = zones.where', '_buildPolygons(visibleZones, pulse)');
       expect(body, isNot(contains('_currentPosition')),
           reason: 'the visibleZones fog-gating region (which decides which zones and CTF pins render '
               'after a claim) must never read the raw real-device GPS field _currentPosition - every '
