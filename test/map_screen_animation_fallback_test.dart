@@ -137,16 +137,16 @@ void main() {
   group('SPEC-0144 AC-4: manual-pan-suspend flag exists and gates continuous follow', () {
     test('_simAutoFollowSuspended is set on a non-mapController map event and checked before a follow move', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
-      expect(src, contains('_simAutoFollowSuspended'),
-          reason: 'a local manual-pan-suspend flag must exist (design.md names it _simAutoFollowSuspended)');
+      expect(src, contains('_followSuspended'),
+          reason: 'a local manual-pan-suspend flag must exist (design.md names it _followSuspended)');
       expect(src, contains('MapEventSource.mapController'),
           reason: 'the pan-detection handler must filter out our own programmatic move() calls, which the '
               'flutter_map package always tags with MapEventSource.mapController - this is the primary '
               'false-positive failure mode the design explicitly guards against');
       final handlerIdx = src.indexOf('MapEventSource.mapController');
-      final followIdx = src.indexOf('_simAutoFollowSuspended', handlerIdx);
+      final followIdx = src.indexOf('_followSuspended', handlerIdx);
       expect(followIdx, greaterThanOrEqualTo(0),
-          reason: '_simAutoFollowSuspended must be referenced after the mapController-source guard, not before it');
+          reason: '_followSuspended must be referenced after the mapController-source guard, not before it');
     });
   });
 
