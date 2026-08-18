@@ -272,6 +272,8 @@ class _MapScreenState extends ConsumerState<MapScreen>
       // A new simulation has begun since this screen last reset, regardless
       // of how the previous one ended. Re-arm for it.
       _followSuspended = false;
+      _followSuspendedAt = null;
+      _followSuspendedFromPosition = null;
       _simSnapDone = false;
       _lastSimulationGeneration = currentGeneration;
     }
