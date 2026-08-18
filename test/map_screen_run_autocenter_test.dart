@@ -185,6 +185,59 @@ void main() {
               'before the loading early return, unchanged by this feature');
     });
   });
+
+  group('a session-start listener resets follow-suspend state on the rising edge into a new recording session', () {
+    test('ref.listen<RecorderState> on runRecorderProvider exists, is placed after the track-version listener, '
+        'and clears the suspend fields only on the rising edge into recording', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final buildIdx = src.indexOf('Widget build(BuildContext context) {');
+      expect(buildIdx, greaterThanOrEqualTo(0));
+      final trackVersionListenIdx = src.indexOf('ref.listen<int>(runRecorderTrackVersionProvider', buildIdx);
+      expect(trackVersionListenIdx, greaterThan(buildIdx));
+      final recorderListenIdx = src.indexOf('ref.listen<RecorderState>(runRecorderProvider', buildIdx);
+      expect(recorderListenIdx, greaterThanOrEqualTo(0),
+          reason: 'a ref.listen<RecorderState>(runRecorderProvider, ...) block must exist in build() to reset '
+              'follow-suspend state on the rising edge into a new recording session');
+      expect(recorderListenIdx, greaterThan(trackVersionListenIdx),
+          reason: 'the session-start listener must be registered after the existing track-version listener');
+
+      final body = _sliceToNextMember(src, 'ref.listen<RecorderState>(runRecorderProvider', '\n    });');
+      expect(body, contains('RecorderState.recording'),
+          reason: 'the listener must check the new state against RecorderState.recording');
+      expect(body, contains('prev != RecorderState.recording'),
+          reason: 'the reset must fire only on the rising edge (previous state was not already recording), '
+              'not on every rebuild while already recording');
+      expect(body, contains('_followSuspended = false'),
+          reason: 'a new recording session must begin with follow engaged');
+      expect(body, contains('_followSuspendedAt = null'),
+          reason: 'the stale suspend reference time from a prior session must be cleared');
+      expect(body, contains('_followSuspendedFromPosition = null'),
+          reason: 'the stale suspend reference position from a prior session must be cleared');
+    });
+  });
+
+  group('the simulation generation boundary resets follow-suspend identically to the other reset sites', () {
+    test('_onSimTrackTick clears all three follow-suspend fields when the simulation generation changes', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final body = _sliceToNextMember(src, 'void _onSimTrackTick() {', '\n  }');
+      final generationIdx = body.indexOf('currentGeneration != _lastSimulationGeneration');
+      expect(generationIdx, greaterThanOrEqualTo(0),
+          reason: 'Landmark not found: the simulation generation-change guard. map_screen.dart\'s structure moved.');
+      final blockEndIdx = body.indexOf('_lastSimulationGeneration = currentGeneration;', generationIdx);
+      expect(blockEndIdx, greaterThan(generationIdx));
+      final resetBlock = body.substring(generationIdx, blockEndIdx);
+      expect(resetBlock, contains('_followSuspended = false'),
+          reason: 'the follow-suspend flag must be among the fields cleared at the generation boundary, so a '
+              'stale suspend from a previous simulation never blocks reset for the next one');
+      expect(resetBlock, contains('_followSuspendedAt = null'),
+          reason: 'the suspend reference time must be nulled here too, consistent with every other reset site '
+              '(the Locate control re-arm and the session-start listener), not left stale from the previous '
+              'generation');
+      expect(resetBlock, contains('_followSuspendedFromPosition = null'),
+          reason: 'the suspend reference position must be nulled here too, consistent with every other reset '
+              'site, not left stale from the previous generation');
+    });
+  });
 }
 
 /// Extracts the balanced-parenthesis substring starting at [openIdx], which
