@@ -287,10 +287,11 @@ void main() {
     test('the historical-run loop still adds a 5000 m hole per point, unchanged', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
       final body = _sliceToNextMember(src, 'Widget build(BuildContext context, WidgetRef ref) {', 'class _FogPainter');
-      expect(body, contains('for (final pt in historicalPoints)'),
-          reason: 'the historical-run reveal loop must remain fed by the (possibly capped) historical '
-              'points list - rw_app-T0597 renamed the iterable from runPoints to historicalPoints but '
-              'did not change the per-point hole it produces');
+      expect(body, contains('for (final pt in runPoints)'),
+          reason: 'the historical-run reveal loop must remain fed by the (already decimated/capped '
+              'upstream by userRunPointsProvider) historical points list - the cap now lives in the '
+              'shared provider (AC-E4/D4) rather than a local historicalPoints variable, but the '
+              'per-point hole it produces is unchanged');
       expect(body, contains('centers.add((point: pt, radiusM: 5000));'),
           reason: 'each historical run point must still produce an unchanged 5000 m reveal hole, proving '
               'this spec\'s change is isolated to the live-GPS branch only');
@@ -308,26 +309,33 @@ void main() {
   // ===========================================================================
 
   group('rw_app-T0597: historical-track volume can never evict the live-position circle', () {
-    test('the historical points list is capped to 200 BEFORE the live-position circle is appended', () {
+    test('the historical points loop runs BEFORE the live-position circle is appended, and no local cap exists', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
       final body = _sliceToNextMember(src, 'Widget build(BuildContext context, WidgetRef ref) {', 'class _FogPainter');
 
-      final capIdx = body.indexOf('runPoints.length > 200');
-      expect(capIdx, greaterThanOrEqualTo(0),
-          reason: 'Landmark not found: the historical-points cap must check runPoints.length > 200. '
+      // The 200-point cap no longer lives in _FogLayer at all - it now lives
+      // exactly once, upstream, in userRunPointsProvider's
+      // decimateAndCapFogPoints (AC-E4/D4). runPoints arriving here is
+      // already bounded, so _FogLayer has nothing left to cap locally.
+      final loopIdx = body.indexOf('for (final pt in runPoints)');
+      expect(loopIdx, greaterThanOrEqualTo(0),
+          reason: 'Landmark not found: the historical-points loop must iterate runPoints directly. '
               'map_screen.dart\'s structure moved - update this anchor.');
 
       final liveIdx = body.indexOf('centers.add((point: currentPosition!, radiusM: 1000));');
-      expect(liveIdx, greaterThan(capIdx),
-          reason: 'the historical-points cap must be applied BEFORE the live-position circle is appended '
-              'to centers, so the live circle is always the last entry and can never be truncated away '
-              'by sublist(0, 200) regardless of how many historical points exist (rw_app-T0597 fix)');
+      expect(liveIdx, greaterThan(loopIdx),
+          reason: 'the historical-points loop must run BEFORE the live-position circle is appended to '
+              'centers, so the live circle is always the last entry (rw_app-T0597 ordering, preserved '
+              'even though the cap itself moved upstream)');
 
       final oldSingleListCapIdx = body.indexOf('centers.length > 200');
       expect(oldSingleListCapIdx, equals(-1),
           reason: 'the old bug capped the combined centers list (including the live circle) via '
-              'centers.length > 200/sublist - this must be gone; only the historical-points list may '
-              'be capped now');
+              'centers.length > 200/sublist - this must be gone');
+
+      expect(body, isNot(contains('runPoints.length > 200')),
+          reason: 'no independent per-layer cap on runPoints may exist here - the cap is applied '
+              'exactly once, upstream, in the shared provider (AC-E4/D4)');
     });
 
     test('the live-position circle is unconditionally appended, never subject to any cap', () {

@@ -425,16 +425,42 @@ class DatabaseService {
     await client.from('runs').insert(run);
   }
 
-  Future<List<Map<String, dynamic>>> getUserRuns(
+  /// Returns the distinct session_ids for [userId]'s runs in [cityLower]
+  /// (already lowercase - see runs_provider.dart's normalizeCityForRunsQuery),
+  /// regardless of is_simulated, plus each run's track_json (for the legacy
+  /// fog-reveal union) and is_simulated (kept available for other consumers
+  /// even though this method does not filter on it).
+  Future<List<Map<String, dynamic>>> getUserRunSessions(
     String userId,
-    String city,
+    String cityLower,
   ) async {
     final client = Supabase.instance.client;
     final rows = await client
         .from('runs')
-        .select('track_json')
+        .select('session_id, track_json, is_simulated')
         .eq('user_id', userId)
-        .eq('city', city);
+        .eq('city', cityLower);
+    return (rows as List<dynamic>)
+        .map((r) => Map<String, dynamic>.from(r as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Returns raw gps_samples rows (lat, lng only) for the given session_ids,
+  /// scoped to userId. RLS ("players select own samples" / gps_self, both
+  /// user_id = auth.uid()) already enforces own-row scoping server-side; the
+  /// explicit .eq('user_id', ...) here is defense-in-depth matching the
+  /// existing house style, not a substitute for RLS.
+  Future<List<Map<String, dynamic>>> getGpsSamplesForSessions(
+    String userId,
+    List<String> sessionIds,
+  ) async {
+    if (sessionIds.isEmpty) return const [];
+    final client = Supabase.instance.client;
+    final rows = await client
+        .from('gps_samples')
+        .select('lat, lng')
+        .eq('user_id', userId)
+        .inFilter('session_id', sessionIds);
     return (rows as List<dynamic>)
         .map((r) => Map<String, dynamic>.from(r as Map<String, dynamic>))
         .toList();

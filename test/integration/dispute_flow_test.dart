@@ -31,6 +31,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:mocktail/mocktail.dart';
 
 import 'package:runwar_app/screens/map_screen.dart';
@@ -45,6 +46,7 @@ import 'package:runwar_app/providers/auth_provider.dart';
 import 'package:runwar_app/providers/cities_provider.dart';
 import 'package:runwar_app/providers/profile_provider.dart';
 import 'package:runwar_app/providers/run_recorder_provider.dart';
+import 'package:runwar_app/providers/runs_provider.dart';
 import 'package:runwar_app/services/auth_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide AuthState;
 
@@ -224,6 +226,14 @@ void main() {
           // any zone markers.
           joinedCitySlugsProvider(_kCurrentUserId)
               .overrideWith((ref) async => ['valencia']),
+          // The rival zone under test is not owned by the current player, so
+          // it now depends on fog-reveal gating (AC-E5's owner-always-visible
+          // guard only covers own zones). Seed a fog-reveal point at the
+          // Valencia city center - well within the zone's 5000 m reveal
+          // radius - so this dispute-flow smoke test stays independent of
+          // whether the real gps_samples-backed provider resolves.
+          userRunPointsProvider((userId: _kCurrentUserId, city: 'Valencia'))
+              .overrideWith((ref) async => const [LatLng(39.4699, -0.3763)]),
         ],
       );
       addTearDown(container.dispose);
@@ -336,6 +346,14 @@ void main() {
           // any zone markers.
           joinedCitySlugsProvider(_kCurrentUserId)
               .overrideWith((ref) async => ['valencia']),
+          // The rival zone under test is not owned by the current player, so
+          // it now depends on fog-reveal gating (AC-E5's owner-always-visible
+          // guard only covers own zones). Seed a fog-reveal point at the
+          // Valencia city center - well within the zone's 5000 m reveal
+          // radius - so this dispute-flow smoke test stays independent of
+          // whether the real gps_samples-backed provider resolves.
+          userRunPointsProvider((userId: _kCurrentUserId, city: 'Valencia'))
+              .overrideWith((ref) async => const [LatLng(39.4699, -0.3763)]),
         ],
       );
       addTearDown(container.dispose);

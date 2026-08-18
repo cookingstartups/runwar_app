@@ -454,9 +454,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
     final isRecording = recState == RecorderState.recording;
 
     final mapBody = zonesAsync.when(
-      loading: () => _buildMap(context, center, const [],
+      loading: () => _buildMap(context, center, zonesAsync.valueOrNull ?? const [],
           showError: false, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
-      error: (e, _) => _buildMap(context, center, const [],
+      error: (e, _) => _buildMap(context, center, zonesAsync.valueOrNull ?? const [],
           showError: true, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
       data: (zones) => _buildMap(context, center, zones,
           showError: false, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
@@ -1085,10 +1085,15 @@ class _MapScreenState extends ConsumerState<MapScreen>
     List<({LatLng point, double radiusM})> fogCenters = const [],
     bool isRecording = false,
   }) {
-    // Only render zones whose centroid is inside a revealed fog circle.
-    final visibleZones = fogCenters.isEmpty
-        ? zones
-        : zones.where((z) => _isRevealedByFog(_centroid(z.points), fogCenters)).toList();
+    // Zones owned by the current player are always rendered, regardless of
+    // fog state - a fresh account or an imperfect fog source must never
+    // hide a player's own territory. All other zones still require their
+    // centroid to fall inside a revealed fog circle (fail-closed: an empty
+    // fogCenters list reveals nothing for non-owned zones).
+    final visibleZones = zones.where((z) =>
+        z.ownerId == userId ||
+        (fogCenters.isNotEmpty &&
+            _isRevealedByFog(_centroid(z.points), fogCenters))).toList();
     // Computed once per build instead of once per marker (null guard and
     // point: previously each called _simOrRealOwnPosition() separately).
     final LatLng? gpsDotOwnPosition = _simOrRealOwnPosition();
@@ -2383,13 +2388,11 @@ class _FogLayer extends ConsumerWidget {
     final centers = <({LatLng point, double radiusM})>[];
 
     // Past run tracks → 5 km visibility around each sampled position.
-    // Capped for performance BEFORE the live-position circle is appended, so
-    // a large historical track can never evict the always-present live hole
-    // (see rw_app-T0597: the old single-list-then-cap order silently dropped
-    // the live circle whenever run history alone reached the 200 cap).
-    final historicalPoints =
-        runPoints.length > 200 ? runPoints.sublist(0, 200) : runPoints;
-    for (final pt in historicalPoints) {
+    // runPoints is already decimated and capped by userRunPointsProvider
+    // (the single shared cap - see rw_app-T0597: the old single-list-then-cap
+    // order silently dropped the live circle whenever run history alone
+    // reached the 200 cap), so no local re-cap is applied here.
+    for (final pt in runPoints) {
       centers.add((point: pt, radiusM: 5000));
     }
 
