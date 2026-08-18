@@ -18,6 +18,7 @@ import '../providers/zones_repository_provider.dart';
 import '../providers/run_recorder_provider.dart';
 import '../providers/app_config_provider.dart';
 import '../services/error_log_service.dart';
+import '../services/follow_reengage_policy.dart';
 import '../services/run_recorder_service.dart';
 import '../services/battery_optimization_service.dart';
 import '../services/permission_service.dart';
@@ -109,12 +110,18 @@ class _MapScreenState extends ConsumerState<MapScreen>
   StreamSubscription<Position>? _posSub;
   Position? _currentPosition;
   bool _centeredOnGps = false;
-  // Simulation-aware camera-follow state (SPEC-0144). Mirrors the shape of
-  // _centeredOnGps but scoped to the simulated position source; reset on every
-  // new simulation (detected via RunRecorderService.simulationGeneration),
-  // never persisted.
+  // Session-wide camera-follow state, covering both real-GPS and simulated
+  // run sessions identically, gated on RecorderState.recording rather than
+  // isSimulationActive (rw_app-T0629). _simSnapDone stays simulation-only -
+  // it is a one-shot "jump to the replay's start" concern, orthogonal to
+  // session follow suspend/re-arm.
   bool _simSnapDone = false;
-  bool _simAutoFollowSuspended = false;
+  bool _followSuspended = false;
+  // Wall-clock time and position captured at the moment a real user gesture
+  // suspended follow - the reference point the re-engage predicate evaluates
+  // against on every subsequent position tick.
+  DateTime? _followSuspendedAt;
+  LatLng? _followSuspendedFromPosition;
   // Last simulation generation this screen has reset its camera flags for.
   // Compared against RunRecorderService.instance.simulationGeneration on
   // every tick instead of diffing isSimulationActive, because a simulation
@@ -246,6 +253,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
           _kInitialZoom,
         );
       }
+      if (!RunRecorderService.instance.isSimulationActive) {
+        _driveFollow(LatLng(pos.latitude, pos.longitude));
+      }
       CtfService.instance.checkCaptureProximity(pos.latitude, pos.longitude);
     });
   }
@@ -261,7 +271,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
     if (currentGeneration != _lastSimulationGeneration) {
       // A new simulation has begun since this screen last reset, regardless
       // of how the previous one ended. Re-arm for it.
-      _simAutoFollowSuspended = false;
+      _followSuspended = false;
       _simSnapDone = false;
       _lastSimulationGeneration = currentGeneration;
     }
@@ -272,19 +282,52 @@ class _MapScreenState extends ConsumerState<MapScreen>
     if (!_simSnapDone) {
       _simSnapDone = true;
       _mapController.move(last, _kInitialZoom); // one-shot snap-to-start
-    } else if (!_simAutoFollowSuspended) {
-      _mapController.move(last, _mapController.camera.zoom); // continuous follow
+    } else {
+      _driveFollow(last);
     }
   }
 
-  /// Detects a manual pan/zoom gesture during an active simulation and
+  /// Detects a manual pan/zoom gesture during a recording run session and
   /// suspends auto-follow. Filters out our own programmatic move() calls,
   /// which flutter_map always tags with MapEventSource.mapController - the
-  /// package invariant this guard relies on (design.md SPEC-0144 section 2).
+  /// package invariant this guard relies on. Fling and double-tap-zoom
+  /// gesture animations are distinct MapEventSource members from
+  /// mapController, so they fall through to the suspend branch like any
+  /// other real gesture with no extra case needed.
   void _handleMapEvent(MapEvent event) {
-    if (!RunRecorderService.instance.isSimulationActive) return;
+    if (ref.read(runRecorderProvider) != RecorderState.recording) return;
     if (event.source == MapEventSource.mapController) return; // our own move() call, not a gesture
-    _simAutoFollowSuspended = true;
+    final pos = _simOrRealOwnPosition();
+    setState(() {
+      _followSuspended = true;
+      _followSuspendedAt = DateTime.now();
+      _followSuspendedFromPosition = pos ?? _followSuspendedFromPosition;
+    });
+  }
+
+  /// Shared follow-drive step invoked from both the simulation tick path and
+  /// the real-GPS position listener (rw_app-T0629). Session-gated on
+  /// RecorderState.recording; while suspended, lazily evaluates the
+  /// re-engage predicate on this tick instead of running a periodic timer -
+  /// the position-tick cadence is already the correct cadence for a
+  /// 5-minute threshold and avoids a second clock racing the tick-based one.
+  void _driveFollow(LatLng position) {
+    if (!mounted) return;
+    if (ref.read(runRecorderProvider) != RecorderState.recording) return;
+    if (_followSuspended) {
+      final at = _followSuspendedAt;
+      final from = _followSuspendedFromPosition;
+      if (at == null || from == null) return; // defensive; suspend always sets both together
+      final elapsed = DateTime.now().difference(at);
+      final distanceMeters = const Distance().as(LengthUnit.Meter, from, position);
+      if (!shouldReengageFollow(elapsed: elapsed, distanceMeters: distanceMeters)) return;
+      setState(() {
+        _followSuspended = false;
+        _followSuspendedAt = null;
+        _followSuspendedFromPosition = null;
+      });
+    }
+    _mapController.move(position, _mapController.camera.zoom); // preserve current zoom
   }
 
   /// Shared own-position derivation (SPEC-0144 section 3.4): the simulated
@@ -387,6 +430,18 @@ class _MapScreenState extends ConsumerState<MapScreen>
     // build(), before any early return, so it registers on every build call
     // (design.md SPEC-0144 section 3.1 risk register entry 1).
     ref.listen<int>(runRecorderTrackVersionProvider, (prev, next) => _onSimTrackTick());
+    // Resets session-wide follow-suspend state at the rising edge into a new
+    // recording session (rw_app-T0629) - follow begins engaged for every new
+    // run regardless of how the previous one ended.
+    ref.listen<RecorderState>(runRecorderProvider, (prev, next) {
+      if (next == RecorderState.recording && prev != RecorderState.recording) {
+        setState(() {
+          _followSuspended = false;
+          _followSuspendedAt = null;
+          _followSuspendedFromPosition = null;
+        });
+      }
+    });
     // Rebuild on every SIM raw tick (rw_app-T0598) so gpsDotOwnPosition -
     // computed once per build below, outside any Consumer - and _FogLayer's
     // currentPosition stay live during a simulation instead of only updating
@@ -519,6 +574,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
             ? null
             : LatLng(_currentPosition!.latitude, _currentPosition!.longitude));
     final hasGps = ownPos != null;
+    // Follow-state visual, only meaningful while a run is being recorded
+    // (rw_app-T0629) - idle behavior outside a session is unchanged.
+    final followSuspendedVisual = isRecording && _followSuspended;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -526,14 +584,18 @@ class _MapScreenState extends ConsumerState<MapScreen>
         FloatingActionButton.small(
           heroTag: 'locate',
           backgroundColor: kSurface,
-          foregroundColor: hasGps ? kFg : kFgMuted,
+          foregroundColor: followSuspendedVisual ? kFgMuted : (hasGps ? kFg : kFgMuted),
           onPressed: ownPos == null
               ? null
               : () {
-                  if (isSimulationActive) _simAutoFollowSuspended = false; // re-arm
+                  setState(() {
+                    _followSuspended = false;
+                    _followSuspendedAt = null;
+                    _followSuspendedFromPosition = null;
+                  });
                   _mapController.move(ownPos, _kInitialZoom);
                 },
-          child: const Icon(Icons.my_location, size: 20),
+          child: Icon(followSuspendedVisual ? Icons.location_disabled : Icons.my_location, size: 20),
         ),
         const SizedBox(height: 12),
         // ── Run recording FAB ──────────────────────────────────────
@@ -1123,6 +1185,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
               retinaMode: MediaQuery.of(context).devicePixelRatio > 1.5,
               userAgentPackageName: 'app.runwar.runwar_app',
               tileProvider: CachedNetworkTileProvider(),
+              keepBuffer: 4,
+              panBuffer: 2,
+              tileDisplay: const TileDisplay.instantaneous(),
             ),
             // zone polygon layers — fog-gated, beam-pulse aesthetic.
             AnimatedBuilder(
