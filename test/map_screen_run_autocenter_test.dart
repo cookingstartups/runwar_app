@@ -156,7 +156,7 @@ void main() {
   });
 
   group('tile layer buffering to prevent flicker under follow-driven pans', () {
-    test('the TileLayer carries keepBuffer, panBuffer and noFade tile display', () {
+    test('the TileLayer carries keepBuffer, panBuffer and an instantaneous tile display', () {
       final src = File('lib/screens/map_screen.dart').readAsStringSync();
       final tileLayerStart = src.indexOf('TileLayer(');
       expect(tileLayerStart, greaterThanOrEqualTo(0),
@@ -167,7 +167,7 @@ void main() {
           reason: 'per flutter-mobile-animation.md section 9, keepBuffer must be 4');
       expect(tileLayerBody, contains('panBuffer: 2'),
           reason: 'per flutter-mobile-animation.md section 9, panBuffer must be 2');
-      expect(tileLayerBody, contains('tileDisplay: TileDisplay.noFade()'),
+      expect(tileLayerBody, contains('tileDisplay: const TileDisplay.instantaneous()'),
           reason: 'per flutter-mobile-animation.md section 9, tile display must skip the opacity-ramp pop-in');
     });
   });
