@@ -50,6 +50,49 @@ import 'package:runwar_app/providers/connectivity_provider.dart';
 // AuthService — needed to construct AuthNotifier stubs.
 import 'package:runwar_app/services/auth_service.dart';
 
+// RecoveryGate (mounted past the mission gates, before MainShell) reads
+// SharedPreferences via RunRecoveryService.detectPendingClosingIntent. With
+// no mock initial values, SharedPreferences.getInstance() hangs forever in
+// the widget-test binding instead of resolving or throwing, which stalls
+// _RecoveryGateState._check() and leaves RecoveryGate on its own loading
+// Scaffold indefinitely - so `find.byType(MainShell)` never resolves for ANY
+// test in this file whose gates all clear. Pre-existing on origin/main
+// (AC-4, AC-5 fail the same way there); mocking here unblocks every test
+// that reaches MainShell, including the new Mission-1 gate test below.
+import 'package:shared_preferences/shared_preferences.dart';
+
+// MainShell watches zonesProvider, which is backed by a real 5s
+// Timer.periodic (LocalZonesRepository.watchByCity) when Supabase is not
+// connected in the test sandbox. flutter_test's fake_async only cancels a
+// periodic Timer when its owning Stream loses its last listener - riverpod
+// disposal after unmount does not happen fast enough within a bounded
+// teardown pump, so any test that renders MainShell needs a fake
+// zonesRepositoryProvider with no real Timer to avoid a
+// "Timer is still pending" teardown failure.
+import 'package:runwar_app/providers/zones_repository_provider.dart';
+import 'package:runwar_app/services/database/repository.dart';
+import 'package:runwar_app/services/database/zones_repository.dart';
+import 'package:runwar_app/services/database/models/zone.dart';
+
+class _NoTimerZonesRepository implements ZonesRepository {
+  @override
+  Future<RepoResult<List<Zone>>> fetchByCity(String city) async =>
+      RepoResult.ok(<Zone>[]);
+
+  @override
+  Stream<List<Zone>> watchByCity(String city) => Stream.value(const <Zone>[]);
+
+  @override
+  Future<RepoResult<Zone>> fetchById(String id) async =>
+      RepoResult.err(RepoError.notFound);
+
+  @override
+  Future<void> dispose() async {}
+}
+
+final _noTimerZonesOverride =
+    zonesRepositoryProvider.overrideWith((ref) => _NoTimerZonesRepository());
+
 // ── Stub AuthNotifier subclasses ──────────────────────────────────────────────
 
 /// AuthNotifier that immediately emits [AuthState] with no user (unauthenticated).
@@ -185,6 +228,10 @@ Widget _scope(List<Override> overrides) => ProviderScope(
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   // ──────────────────────────────────────────────────────────────────────────
   // AC-1  Single splash held during parallel provider load
   // ──────────────────────────────────────────────────────────────────────────
@@ -567,6 +614,8 @@ void main() {
           (ref) async =>
               const TrialStatus(started: false, daysRemaining: 14, streak: 0),
         ),
+        connectivityProvider.overrideWith((ref) => Stream.value(true)),
+        _noTimerZonesOverride,
       ]);
       addTearDown(container.dispose);
 
@@ -582,6 +631,7 @@ void main() {
         ),
       );
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
       await tester.pump(const Duration(milliseconds: 50));
 
       // Sanity: boot completed, MainShell visible.
