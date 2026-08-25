@@ -1,10 +1,16 @@
 // test/screens/map_screen_owner_zone_always_visible_test.dart
 //
 // Asserts a zone owned by the current user always renders regardless of fog
-// state (AC-E5), and that when fogCenters is empty only owned zones remain
-// visible (the amended AC-E5 contract - closes the previous
+// state (AC-E5), and that when fogCenters is empty only owned/ever-claimed
+// zones remain visible (the amended AC-E5 contract - closes the previous
 // fogCenters.isEmpty ? zones : ... fail-open inconsistency against
 // _isRevealedByFog's own fail-closed contract).
+//
+// Also asserts the permanent-once-revealed-per-zone contract (hotfix/
+// historical-fog-reveal): a zone the user has EVER claimed (migration 0071's
+// zone_claim_history, read via everClaimedZoneIdsProvider) must stay
+// revealed even after being lost/expired/merged away - visibility is no
+// longer gated on CURRENT ownership alone.
 //
 // Uses static source inspection (matching the house style established by
 // map_screen_fog_gate_sim_position_test.dart) since MapScreen carries a
@@ -50,6 +56,19 @@ void main() {
               'visible (fail-open) - only owned zones should remain visible, '
               'matching _isRevealedByFog\'s own fail-closed invariant '
               '(amended AC-E5 contract)');
+    });
+
+    test('the visibleZones construction also bypasses fog gating for zones the user has EVER claimed', () {
+      final src = File('lib/screens/map_screen.dart').readAsStringSync();
+      final block = _sliceToNextMember(
+          src, 'final visibleZones = zones.where', '.toList();');
+
+      expect(block, contains('everClaimedZoneIds.contains(z.id)'),
+          reason: 'a zone the user has ever claimed/conquered must render '
+              'permanently, even after losing current ownership - if this '
+              'check were reverted, a zone lost to conquest/expiry/merge '
+              'would fall back under fog unless a run track happens to pass '
+              'near it again');
     });
   });
 }

@@ -8,6 +8,12 @@
 // is overridden to an intentionally empty list, and the zone still renders
 // because it is owned by the current user.
 //
+// Also confirms the permanent-once-revealed-per-zone contract (hotfix/
+// historical-fog-reveal): a zone the current user has EVER claimed but no
+// longer owns (owner_id belongs to another player) must still render, with
+// both userRunPointsProvider AND everClaimedZoneIdsProvider's fog-circle
+// source starved/empty except for the ever-claimed set itself.
+//
 // Modeled directly on test/integration/dispute_flow_test.dart's structure
 // (MockZonesRepository (mocktail) + StreamController<List<Zone>>.broadcast()
 // + makeTestContainer + UncontrolledProviderScope + MaterialApp(home:
@@ -35,6 +41,7 @@ import 'package:runwar_app/providers/cities_provider.dart';
 import 'package:runwar_app/providers/profile_provider.dart';
 import 'package:runwar_app/providers/run_recorder_provider.dart';
 import 'package:runwar_app/providers/runs_provider.dart';
+import 'package:runwar_app/providers/zone_claim_history_provider.dart';
 import 'package:runwar_app/services/auth_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide AuthState;
 
@@ -67,6 +74,8 @@ class MockZonesRepository extends Mock implements ZonesRepository {}
 
 const _kOwnedZoneId = 'z-owned-1';
 const _kCurrentUserId = 'current-player';
+const _kLostZoneId = 'z-lost-1';
+const _kRivalUserId = 'rival-player';
 
 Map<String, dynamic> _ownedZoneRow({String status = 'owned'}) => {
       'id': _kOwnedZoneId,
@@ -77,6 +86,26 @@ Map<String, dynamic> _ownedZoneRow({String status = 'owned'}) => {
       'geom_json': '{"type":"Polygon","coordinates":[[[-0.378,39.469],[-0.374,39.469],[-0.374,39.471],[-0.378,39.471],[-0.378,39.469]]]}',
       'created_at': '2026-05-31T10:00:00.000Z',
       'updated_at': '2026-05-31T10:00:00.000Z',
+    };
+
+// A zone the current user once claimed but has since lost to a rival - owned
+// today by _kRivalUserId, not _kCurrentUserId. Only present in
+// everClaimedZoneIdsProvider's set, not via ownerId - exercises the
+// permanent-once-revealed-per-zone contract independent of the owner-always-
+// visible guard.
+Map<String, dynamic> _lostZoneRow() => {
+      'id': _kLostZoneId,
+      'owner_id': _kRivalUserId,
+      'city': 'Valencia',
+      'influence_level': 1,
+      'status': 'owned',
+      // Immediately adjacent to _ownedZoneRow's polygon (same viewport at
+      // the test's zoom-16 initial center - a distant polygon gets culled
+      // by flutter_map's MarkerLayer viewport bounds and the test's key
+      // finder sees nothing, independent of visibleZones correctness).
+      'geom_json': '{"type":"Polygon","coordinates":[[[-0.373,39.469],[-0.369,39.469],[-0.369,39.471],[-0.373,39.471],[-0.373,39.469]]]}',
+      'created_at': '2026-05-30T10:00:00.000Z',
+      'updated_at': '2026-05-31T09:00:00.000Z',
     };
 
 // Bounded pump sequence - MapScreen's repeating pulse animation never stops,
@@ -141,6 +170,11 @@ void main() {
           // exercised too.
           userRunPointsProvider((userId: _kCurrentUserId, city: 'Valencia'))
               .overrideWith((ref) async => const <LatLng>[]),
+          // No ever-claimed history needed for this scenario - the zone is
+          // rendered via the owner-always-visible guard, not the
+          // ever-claimed one.
+          everClaimedZoneIdsProvider(_kCurrentUserId)
+              .overrideWith((ref) async => const <String>{}),
         ],
       );
       addTearDown(container.dispose);
@@ -181,6 +215,56 @@ void main() {
           reason: 'the zone must remain rendered even after the zones stream errors (AC-A1)');
       expect(find.text('Could not load zone data'), findsOneWidget,
           reason: 'an error banner must still be surfaced on the error branch (showError: true)');
+    });
+
+    testWidgets('a zone the user has ever claimed but no longer owns still renders (permanent-once-revealed)',
+        (tester) async {
+      when(() => mockZonesRepo.fetchByCity('Valencia')).thenAnswer(
+        (_) async => RepoResult.ok([Zone.fromGeoJsonRow(_lostZoneRow())]),
+      );
+
+      final container = makeTestContainer(
+        zonesRepo: mockZonesRepo,
+        overrides: [
+          authProvider.overrideWith((_) => _FakeAuthNotifier()),
+          profileGateProvider.overrideWith(
+            (_, userId) async => <String, dynamic>{'id': userId, 'city': 'Valencia'},
+          ),
+          runRecorderProvider.overrideWith((_) => _StubRunRecorderNotifier()),
+          joinedCitySlugsProvider(_kCurrentUserId)
+              .overrideWith((ref) async => ['valencia']),
+          // Fog-circle source is empty and the zone is NOT owned by the
+          // current user - the only reason it should render is the
+          // ever-claimed history set below.
+          userRunPointsProvider((userId: _kCurrentUserId, city: 'Valencia'))
+              .overrideWith((ref) async => const <LatLng>[]),
+          everClaimedZoneIdsProvider(_kCurrentUserId)
+              .overrideWith((ref) async => const <String>{_kLostZoneId}),
+        ],
+      );
+      addTearDown(container.dispose);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 2));
+      });
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: MapScreen()),
+        ),
+      );
+
+      await _settle(tester);
+      zonesController.add([Zone.fromGeoJsonRow(_lostZoneRow())]);
+      await _settle(tester);
+
+      expect(find.byKey(ValueKey('zone-$_kLostZoneId')), findsOneWidget,
+          reason: 'a zone the user once claimed must stay revealed after '
+              'losing ownership - if the visibility gate were reverted to '
+              'current-owner-only (or fog-proximity-only), this zone would '
+              'render nothing here since it is neither owned by '
+              '_kCurrentUserId nor covered by any fog circle');
     });
   });
 }

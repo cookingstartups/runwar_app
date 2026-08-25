@@ -395,6 +395,23 @@ class DatabaseService {
     await client.from('zones').upsert(zones, onConflict: 'id', ignoreDuplicates: true);
   }
 
+  /// Every zone id [userId] has EVER held ownership of (permanent-once-
+  /// revealed fog-of-war source - migration 0071's zone_claim_history,
+  /// written by the trg_record_zone_claim trigger on every zones.owner_id
+  /// assignment). Independent of current ownership: a zone later lost,
+  /// expired, or merged away still returns here if it was ever claimed.
+  Future<List<String>> getEverClaimedZoneIds(String userId) async {
+    if (userId.isEmpty) return const [];
+    final client = Supabase.instance.client;
+    final rows = await client
+        .from('zone_claim_history')
+        .select('zone_id')
+        .eq('user_id', userId);
+    return (rows as List<dynamic>)
+        .map((r) => (r as Map<String, dynamic>)['zone_id'] as String)
+        .toList();
+  }
+
   // ── Prefs ───────────────────────────────────────────────────────────────────
 
   Future<String?> getPref(String userId, String key) async {
