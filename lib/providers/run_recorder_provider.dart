@@ -67,6 +67,16 @@ final runRecorderTrackVersionProvider = StateProvider<int>((ref) => 0);
 /// provider exists only for the SIM path.
 final runRecorderSimRawPositionProvider = StateProvider<LatLng?>((ref) => null);
 
+/// Bumped every time [RunRecorderNotifier] registers a new pending
+/// owned-zone edge (a claim confirmed this session that the [zonesProvider]
+/// stream has not yet caught up with). MapScreen watches this counter -
+/// distinct from watching the pending map itself, since a plain field
+/// mutation on the notifier emits nothing through [RecorderState] - so it
+/// rebuilds and re-merges [RunRecorderNotifier.pendingOwnedZoneEdges] into
+/// the rendered zone list without waiting on any other unrelated rebuild.
+/// rw_app-territory-vanish.
+final pendingOwnedZoneEdgeVersionProvider = StateProvider<int>((ref) => 0);
+
 class RunRecorderNotifier extends StateNotifier<RecorderState> {
   RunRecorderNotifier(this._ref) : super(RecorderState.idle) {
     final svc = RunRecorderService.instance;
@@ -161,9 +171,24 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   /// Registers the outline just produced by a successful claim so the very
   /// next scan can already treat it as an owned-zone wall, without waiting
   /// on the invalidated [zonesProvider] stream to re-emit.
+  ///
+  /// Also bumps [pendingOwnedZoneEdgeVersionProvider] so MapScreen - which
+  /// consumes this same map read-only via [pendingOwnedZoneEdges] - rebuilds
+  /// and renders the claimed outline immediately too, independent of the
+  /// scan-only closure below (rw_app-territory-vanish: nothing prunes or
+  /// rebuilds that closure once recording stops, e.g. right after Finish).
   void _registerPendingOwnedZoneEdge(String zoneId, List<LatLng> outline) {
     _pendingOwnedZoneEdges[zoneId] = [List<LatLng>.from(outline)];
+    _ref.read(pendingOwnedZoneEdgeVersionProvider.notifier).state++;
   }
+
+  /// Read-only snapshot of outlines claimed this session that the
+  /// [zonesProvider] stream has not yet emitted. Consumed by MapScreen via
+  /// [mergePendingOwnedZoneEdges] - a pure read, unlike
+  /// [RunRecorderService.ownedZoneEdgesProvider] which also prunes as a side
+  /// effect of the GPS scan calling it. rw_app-territory-vanish.
+  Map<String, List<List<LatLng>>> get pendingOwnedZoneEdges =>
+      Map.unmodifiable(_pendingOwnedZoneEdges);
 
   /// Test-only hook mirroring what [confirmClaim] does internally right
   /// after a successful claim, so tests can exercise the merge behaviour of

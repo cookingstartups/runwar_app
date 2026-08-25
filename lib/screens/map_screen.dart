@@ -510,12 +510,25 @@ class _MapScreenState extends ConsumerState<MapScreen>
     final recState = ref.watch(runRecorderProvider);
     final isRecording = recState == RecorderState.recording;
 
+    // Merge in outlines claimed this session that zonesAsync's stream has
+    // not yet emitted (rw_app-territory-vanish) - e.g. the final claim of a
+    // run still in flight when Finish is tapped. Watching the version
+    // counter (not just reading the map) is what makes this rebuild the
+    // instant a claim registers, without waiting on zonesAsync to also
+    // change.
+    ref.watch(pendingOwnedZoneEdgeVersionProvider);
+    final pendingOwnedZoneEdges =
+        ref.read(runRecorderProvider.notifier).pendingOwnedZoneEdges;
+    List<Zone> withPending(List<Zone> zones) => pendingOwnedZoneEdges.isEmpty
+        ? zones
+        : mergePendingOwnedZoneEdges(zones, pendingOwnedZoneEdges, userId);
+
     final mapBody = zonesAsync.when(
-      loading: () => _buildMap(context, center, zonesAsync.valueOrNull ?? const [],
+      loading: () => _buildMap(context, center, withPending(zonesAsync.valueOrNull ?? const []),
           showError: false, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
-      error: (e, _) => _buildMap(context, center, zonesAsync.valueOrNull ?? const [],
+      error: (e, _) => _buildMap(context, center, withPending(zonesAsync.valueOrNull ?? const []),
           showError: true, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
-      data: (zones) => _buildMap(context, center, zones,
+      data: (zones) => _buildMap(context, center, withPending(zones),
           showError: false, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
     );
 
