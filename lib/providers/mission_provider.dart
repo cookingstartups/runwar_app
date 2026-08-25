@@ -75,11 +75,17 @@ final missionStatusProvider =
       zoneCount: zoneCount,
     );
   } catch (_) {
-    // On error, default to bypass so the gate never hard-blocks.
+    // On error, fail CLOSED: default to "Mission 1 not completed" rather
+    // than bypass. Bypassing here let a player with an unfetchable mission
+    // status skip the Mission-1 gate entirely (defeating both this gate and
+    // the server-side streak_started_at guard in record_daily_login, which
+    // is only ever stamped by completing Mission 1). zoneCount: 0 here is
+    // intentional - a real legacy-tester bypass (zoneCount > 0) can only be
+    // established from a successful fetch, never assumed on error.
     return const MissionStatus(
       firstMissionCompletedAt: null,
       firstAttackCompletedAt: null,
-      zoneCount: 1, // triggers bypass path
+      zoneCount: 0,
     );
   }
 });

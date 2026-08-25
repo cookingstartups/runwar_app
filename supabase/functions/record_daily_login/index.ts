@@ -61,11 +61,30 @@ Deno.serve(async (req) => {
     // Fetch player streaks row
     const { data: player, error: playerErr } = await supabase
       .from('player_streaks')
-      .select('streak, longest_streak, freeze_tokens, freeze_refreshed_at, last_login_at, milestones_claimed')
+      .select('streak, longest_streak, freeze_tokens, freeze_refreshed_at, last_login_at, milestones_claimed, streak_started_at')
       .eq('user_id', playerId)
       .maybeSingle();
 
     if (playerErr || !player) return err('player_streaks row not found for player', 404);
+
+    // Server-side gate: streak progression and milestone payouts are only
+    // valid once Mission 1 has been completed. complete_first_mission_tx
+    // stamps player_streaks.streak_started_at atomically on Mission-1
+    // completion; if it is still NULL, this player has never completed
+    // Mission 1 and must not accrue streak days or milestone rewards here.
+    // (See lib/main.dart Gate 5a / mission_provider.dart for the
+    // client-side mirror of this gate.)
+    if (!player.streak_started_at) {
+      return ok({
+        streak: player.streak ?? 0,
+        longest_streak: player.longest_streak ?? 0,
+        previous_streak: player.streak ?? 0,
+        streak_event: 'mission1_not_started',
+        milestone_unlocked: null,
+        new_balance: null,
+        check_in_granted: false,
+      });
+    }
 
     const now = new Date();
 

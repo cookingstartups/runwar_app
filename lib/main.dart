@@ -430,6 +430,18 @@ class _RouteGuardState extends ConsumerState<_RouteGuard>
       return const JoinWarConfirmationScreen();
     }
 
+    // Gate 5a/5b guard: fail CLOSED while mission status is loading or
+    // errored post-boot. Falling through here (the old behaviour) let a
+    // player whose missionStatusProvider was mid-refetch (e.g. right after
+    // ref.invalidate(missionStatusProvider(userId)) on line ~221) silently
+    // skip both the Mission-1 and Mission-2 onboarding gates for one frame,
+    // reaching MainShell/streak features before Mission 1 was confirmed
+    // complete.
+    if (missionAsync != null && (missionAsync.isLoading || missionAsync.hasError)) {
+      return const SplashScreen(
+          showStatus: true, statusLabel: 'SYNCING TERRITORY');
+    }
+
     // Gate 5a: first-mission onboarding
     final mission = missionAsync?.value;
     if (mission != null && mission.needsMission1) {

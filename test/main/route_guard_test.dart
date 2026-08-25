@@ -519,6 +519,93 @@ void main() {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
+  // Mission-1 gate fail-closed - hotfix/streak-mission1-gate
+  // ──────────────────────────────────────────────────────────────────────────
+  group(
+      'Mission-1 gate: missionStatusProvider re-loading post-boot must not '
+      'silently skip the mission gate', () {
+    // GIVEN _bootComplete is true (MainShell showing)
+    // WHEN missionStatusProvider is invalidated and re-enters AsyncLoading
+    //   (e.g. after ref.invalidate(missionStatusProvider(userId)))
+    // THEN SplashScreen is shown again (hold) rather than falling through to
+    //   MainShell - reverting the Gate 5a/5b loading guard in main.dart makes
+    //   this test fail, because `mission != null && mission.needsMission1`
+    //   would evaluate false while mission is null-during-loading, silently
+    //   skipping straight through to MainShell.
+    testWidgets(
+        'SplashScreen re-appears (fails closed) while missionStatusProvider '
+        'reloads after boot', (tester) async {
+      const userId = 'user-abc-123';
+
+      var missionCallCount = 0;
+      final secondCallCompleter = Completer<MissionStatus>();
+
+      final container = ProviderContainer(overrides: [
+        authProvider.overrideWith((ref) => _AuthedAuthNotifier()),
+        _showcaseSeenOverride,
+        hasPhoneProvider(userId).overrideWith((ref) async => true),
+        joinedCitySlugsProvider(userId)
+            .overrideWith((ref) async => ['valencia']),
+        profileGateProvider(userId).overrideWith((ref) async => {
+              'username': 'alice',
+              'invited_at': '2025-01-01T00:00:00Z',
+            }),
+        missionStatusProvider(userId).overrideWith((ref) async {
+          missionCallCount++;
+          if (missionCallCount == 1) {
+            // First resolution: gates all clear, no active mission -> MainShell.
+            return MissionStatus(
+              firstMissionCompletedAt: null,
+              firstAttackCompletedAt: DateTime.fromMillisecondsSinceEpoch(1),
+              zoneCount: 1,
+            );
+          }
+          // Second call simulates a re-fetch mid-session that takes a while.
+          return await secondCallCompleter.future;
+        }),
+        trialStatusProvider(userId).overrideWith(
+          (ref) async =>
+              const TrialStatus(started: false, daysRemaining: 14, streak: 0),
+        ),
+      ]);
+      addTearDown(container.dispose);
+
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 2));
+      });
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const RunWarApp(),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Sanity: boot completed, MainShell visible.
+      expect(find.byType(MainShell), findsOneWidget,
+          reason: 'Sanity check: MainShell must be visible after boot');
+
+      // Invalidate to re-trigger loading of mission status.
+      container.invalidate(missionStatusProvider(userId));
+      await tester.pump();
+
+      expect(find.byType(SplashScreen), findsOneWidget,
+          reason:
+              'SplashScreen must hold while missionStatusProvider is '
+              'AsyncLoading post-boot - a user whose mission status has not '
+              'yet been (re)confirmed must never fall through to MainShell '
+              'or any other gate.');
+      expect(find.byType(MainShell), findsNothing,
+          reason:
+              'MainShell must not remain visible while mission status is '
+              'unresolved.');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
   // AC-6  Provider error during boot — inline error overlay shown
   // ──────────────────────────────────────────────────────────────────────────
   group('AC-6: provider error during boot shows _ErrorOverlay on top of SplashScreen',
