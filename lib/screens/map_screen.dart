@@ -13,6 +13,7 @@ import '../providers/cities_provider.dart';
 import '../providers/profile_provider.dart';
 import '../utils/string_utils.dart';
 import '../providers/runs_provider.dart';
+import '../providers/zone_claim_history_provider.dart';
 import '../providers/zones_provider.dart';
 import '../providers/zones_repository_provider.dart';
 import '../providers/run_recorder_provider.dart';
@@ -507,6 +508,14 @@ class _MapScreenState extends ConsumerState<MapScreen>
         (point: livePos, radiusM: 1000),
     ];
 
+    // Zones this user has EVER held ownership of - permanent-once-revealed,
+    // independent of current ownership/fog proximity. Fails safe to an
+    // empty set on load/error (never blocks rendering of already-owned or
+    // currently-fog-revealed zones).
+    final everClaimedZoneIds = ref
+        .watch(everClaimedZoneIdsProvider(userId))
+        .valueOrNull ?? const <String>{};
+
     final recState = ref.watch(runRecorderProvider);
     final isRecording = recState == RecorderState.recording;
 
@@ -525,11 +534,14 @@ class _MapScreenState extends ConsumerState<MapScreen>
 
     final mapBody = zonesAsync.when(
       loading: () => _buildMap(context, center, withPending(zonesAsync.valueOrNull ?? const []),
-          showError: false, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
+          showError: false, city: city, userId: userId, fogCenters: fogCenters,
+          everClaimedZoneIds: everClaimedZoneIds, isRecording: isRecording),
       error: (e, _) => _buildMap(context, center, withPending(zonesAsync.valueOrNull ?? const []),
-          showError: true, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
+          showError: true, city: city, userId: userId, fogCenters: fogCenters,
+          everClaimedZoneIds: everClaimedZoneIds, isRecording: isRecording),
       data: (zones) => _buildMap(context, center, withPending(zones),
-          showError: false, city: city, userId: userId, fogCenters: fogCenters, isRecording: isRecording),
+          showError: false, city: city, userId: userId, fogCenters: fogCenters,
+          everClaimedZoneIds: everClaimedZoneIds, isRecording: isRecording),
     );
 
     // When in mission mode, composite MissionModeOverlay on top of the map.
@@ -1160,15 +1172,21 @@ class _MapScreenState extends ConsumerState<MapScreen>
     String city = '',
     String userId = '',
     List<({LatLng point, double radiusM})> fogCenters = const [],
+    Set<String> everClaimedZoneIds = const {},
     bool isRecording = false,
   }) {
     // Zones owned by the current player are always rendered, regardless of
     // fog state - a fresh account or an imperfect fog source must never
-    // hide a player's own territory. All other zones still require their
-    // centroid to fall inside a revealed fog circle (fail-closed: an empty
-    // fogCenters list reveals nothing for non-owned zones).
+    // hide a player's own territory. Zones the player has EVER claimed
+    // (everClaimedZoneIds - migration 0071's zone_claim_history) stay
+    // revealed permanently too, even after being lost/expired/merged away -
+    // fog-of-war must never re-hide a zone a player has already conquered.
+    // All other zones still require their centroid to fall inside a
+    // revealed fog circle (fail-closed: an empty fogCenters list reveals
+    // nothing for non-owned, never-claimed zones).
     final visibleZones = zones.where((z) =>
         z.ownerId == userId ||
+        everClaimedZoneIds.contains(z.id) ||
         (fogCenters.isNotEmpty &&
             _isRevealedByFog(_centroid(z.points), fogCenters))).toList();
     // Computed once per build instead of once per marker (null guard and
