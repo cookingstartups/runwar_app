@@ -45,6 +45,11 @@ const List<SimulationFixture> kBundledSimulationFixtures = [
     label: 'Valencia session (2026-07-18)',
     city: 'valencia',
   ),
+  SimulationFixture(
+    assetPath: 'assets/fixtures/session-2026-08-23-paphos.json',
+    label: 'Paphos',
+    city: 'paphos',
+  ),
 ];
 
 enum SimulationStatus { idle, running, done, aborted }
