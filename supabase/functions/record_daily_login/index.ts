@@ -19,13 +19,24 @@ function err(msg: string, status = 400) {
 }
 
 // Milestone config: day -> credits
+// Day 21 is the real capstone of the streak curriculum (the "30" tier below
+// is a leftover milestone name from an old design and is not reachable by
+// the current 21-day gate). Its reward is a distinct, larger jump from the
+// day-14 tier, not just the next step in the sequence, to make reaching
+// the full streak feel like a capstone rather than another checkpoint.
 const MILESTONE_CREDITS: Record<number, number> = {
   3: 100,
   7: 200,
   14: 500,
-  21: 1000,
+  21: 2500,
   30: 2000,
 };
+
+// Permanent, non-expiring badge key granted exactly once when a player
+// reaches the day-21 capstone. Persisted in `player_badges`, distinct from
+// the ephemeral `superpower_grants` reward type.
+const FULL_STREAK_BADGE_KEY = '21_day_marathon';
+const kFullStreakBadgeDay = 21;
 
 // Milestone superpowers (day -> power_type, duration seconds)
 const MILESTONE_POWERS: Record<number, { type: string; duration_s: number } | null> = {
@@ -150,9 +161,11 @@ Deno.serve(async (req) => {
 
     // Check milestones
     const milestonesClaimed: number[] = Array.isArray(player.milestones_claimed) ? player.milestones_claimed : [];
-    let milestoneUnlocked: { day: number; credits: number; power: string | null; power_duration_s: number | null } | null = null;
+    let milestoneUnlocked: { day: number; credits: number; power: string | null; power_duration_s: number | null; badge: string | null } | null = null;
     let checkInGranted = false;
     let newBalance: number | null = null;
+
+    let badgeEarned: string | null = null;
 
     const milestoneDays = [3, 7, 14, 21, 30];
     for (const day of milestoneDays) {
@@ -186,11 +199,29 @@ Deno.serve(async (req) => {
           checkInGranted = true;
         }
 
+        // Permanent capstone badge for the real day-21 gate. The
+        // milestonesClaimed guard above already makes this branch
+        // unreachable a second time for the same player; ON CONFLICT DO
+        // NOTHING is a belt-and-braces guard against a retried request
+        // racing the milestones_claimed persist step below.
+        if (day === kFullStreakBadgeDay) {
+          const { error: badgeErr } = await supabase.from('player_badges').upsert(
+            {
+              user_id: playerId,
+              badge_key: FULL_STREAK_BADGE_KEY,
+              earned_at: new Date().toISOString(),
+            },
+            { onConflict: 'user_id,badge_key', ignoreDuplicates: true },
+          );
+          if (!badgeErr) badgeEarned = FULL_STREAK_BADGE_KEY;
+        }
+
         milestoneUnlocked = {
           day,
           credits,
           power: powerConfig?.type ?? null,
           power_duration_s: powerConfig?.duration_s ?? null,
+          badge: badgeEarned,
         };
 
         // Only award one milestone per login
