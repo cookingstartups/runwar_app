@@ -123,9 +123,10 @@ Deno.test("record_daily_login rejects streak progress when Mission 1 not complet
 // GIVEN a player who HAS completed Mission 1 (streak_started_at set) and is
 // on day 20 of their streak, with no milestones claimed yet
 // WHEN record_daily_login is called for day 21
-// THEN the streak increments to 21 and the day-21 milestone (1000 credits)
-// is unlocked.
-Deno.test("record_daily_login still pays day-21 milestone for a player who completed Mission 1", async () => {
+// THEN the streak increments to 21, the day-21 capstone milestone (2500
+// credits, up from the old checkpoint amount) is unlocked, and a permanent
+// "21_day_marathon" badge is persisted exactly once.
+Deno.test("record_daily_login pays the day-21 capstone prize (credits + badge) for a player who completed Mission 1", async () => {
   const email = `tx_rdl_day21_${Date.now()}@test.invalid`;
   const user = await createTestPlayer(email);
   try {
@@ -151,7 +152,8 @@ Deno.test("record_daily_login still pays day-21 milestone for a player who compl
     assertEquals(body.streak, 21);
     assertEquals(body.streak_event, "incremented");
     assertEquals(body.milestone_unlocked?.day, 21);
-    assertEquals(body.milestone_unlocked?.credits, 1000);
+    assertEquals(body.milestone_unlocked?.credits, 2500);
+    assertEquals(body.milestone_unlocked?.badge, "21_day_marathon");
 
     const { data: row } = await sb
       .from("player_streaks")
@@ -161,6 +163,112 @@ Deno.test("record_daily_login still pays day-21 milestone for a player who compl
     assertEquals((row as { streak: number }).streak, 21);
     const claimed = (row as { milestones_claimed: number[] }).milestones_claimed;
     assertEquals(claimed.includes(21), true);
+
+    const { data: badgeRow } = await sb
+      .from("player_badges")
+      .select("badge_key")
+      .eq("user_id", user.id)
+      .eq("badge_key", "21_day_marathon")
+      .maybeSingle();
+    assertEquals((badgeRow as { badge_key: string } | null)?.badge_key, "21_day_marathon");
+  } finally {
+    await deleteTestPlayer(user.id);
+  }
+});
+
+// GIVEN a player who already claimed the day-21 milestone on a prior call
+// (milestones_claimed already contains 21, badge already persisted)
+// WHEN record_daily_login is called again after another consecutive login
+// THEN the day-21 prize is not re-granted: no new milestone fires, no
+// duplicate credit RPC call, and the badge row is not re-inserted.
+//
+// Reverting the milestones_claimed guard (or the badge upsert's
+// ignoreDuplicates/onConflict guard) would let this test observe either a
+// second milestone_unlocked payload or a duplicate player_badges row.
+Deno.test("record_daily_login does not re-grant the day-21 prize once already claimed", async () => {
+  const email = `tx_rdl_day21_dup_${Date.now()}@test.invalid`;
+  const user = await createTestPlayer(email);
+  try {
+    const sb = svcClient();
+
+    await sb.from("players").upsert({ id: user.id, credits: 0 });
+
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    await sb.from("player_streaks").upsert({
+      user_id: user.id,
+      streak: 21,
+      longest_streak: 21,
+      freeze_tokens: 2,
+      last_login_at: yesterday,
+      milestones_claimed: [3, 7, 14, 21],
+      streak_started_at: new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    await sb.from("player_badges").upsert({
+      user_id: user.id,
+      badge_key: "21_day_marathon",
+      earned_at: yesterday,
+    });
+
+    const jwt = await playerJwt(email);
+    const { status, body } = await callRecordDailyLogin(jwt, localDateNDaysAgo(0));
+
+    assertEquals(status, 200);
+    assertEquals(body.streak, 22);
+    assertEquals(body.milestone_unlocked, null);
+
+    const { data: badgeRows } = await sb
+      .from("player_badges")
+      .select("badge_key")
+      .eq("user_id", user.id)
+      .eq("badge_key", "21_day_marathon");
+    assertEquals((badgeRows as unknown[]).length, 1,
+      "the day-21 badge must not be duplicated on a later login");
+  } finally {
+    await deleteTestPlayer(user.id);
+  }
+});
+
+// GIVEN a player with a player_streaks row but streak_started_at IS NULL
+// (Mission 1 never completed), even if a caller tried to force streak=21
+// WHEN record_daily_login is called
+// THEN the Mission-1 gate still short-circuits before any milestone logic
+// runs, so the day-21 capstone prize (credits or badge) is never granted -
+// the day-21 gate depends on the same streak_started_at guard proven in the
+// "rejects streak progress" test above, not a separate check.
+Deno.test("record_daily_login never grants the day-21 capstone prize without Mission 1 completion", async () => {
+  const email = `tx_rdl_day21_gate_${Date.now()}@test.invalid`;
+  const user = await createTestPlayer(email);
+  try {
+    const sb = svcClient();
+
+    await sb.from("players").upsert({ id: user.id, credits: 0 });
+
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    await sb.from("player_streaks").upsert({
+      user_id: user.id,
+      streak: 20,
+      longest_streak: 20,
+      freeze_tokens: 2,
+      last_login_at: yesterday,
+      milestones_claimed: [],
+      streak_started_at: null, // Mission 1 never completed
+    });
+
+    const jwt = await playerJwt(email);
+    const { status, body } = await callRecordDailyLogin(jwt, localDateNDaysAgo(0));
+
+    assertEquals(status, 200);
+    assertEquals(body.streak_event, "mission1_not_started");
+    assertEquals(body.milestone_unlocked, null);
+
+    const { data: badgeRow } = await sb
+      .from("player_badges")
+      .select("badge_key")
+      .eq("user_id", user.id)
+      .eq("badge_key", "21_day_marathon")
+      .maybeSingle();
+    assertEquals(badgeRow, null,
+      "the day-21 badge must never be granted before Mission 1 is completed");
   } finally {
     await deleteTestPlayer(user.id);
   }
