@@ -49,3 +49,7 @@ app.*.map.json
 SESSION_STATE.md
 skills-lock.json
 .gitnexus
+.worktrees/
+graphify-out/
+.codegraph/
+.graphifyignore
