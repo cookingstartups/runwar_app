@@ -50,6 +50,49 @@ import 'package:runwar_app/providers/connectivity_provider.dart';
 // AuthService — needed to construct AuthNotifier stubs.
 import 'package:runwar_app/services/auth_service.dart';
 
+// RecoveryGate (mounted past the mission gates, before MainShell) reads
+// SharedPreferences via RunRecoveryService.detectPendingClosingIntent. With
+// no mock initial values, SharedPreferences.getInstance() hangs forever in
+// the widget-test binding instead of resolving or throwing, which stalls
+// _RecoveryGateState._check() and leaves RecoveryGate on its own loading
+// Scaffold indefinitely - so `find.byType(MainShell)` never resolves for ANY
+// test in this file whose gates all clear. Pre-existing on origin/main
+// (AC-4, AC-5 fail the same way there); mocking here unblocks every test
+// that reaches MainShell, including the new Mission-1 gate test below.
+import 'package:shared_preferences/shared_preferences.dart';
+
+// MainShell watches zonesProvider, which is backed by a real 5s
+// Timer.periodic (LocalZonesRepository.watchByCity) when Supabase is not
+// connected in the test sandbox. flutter_test's fake_async only cancels a
+// periodic Timer when its owning Stream loses its last listener - riverpod
+// disposal after unmount does not happen fast enough within a bounded
+// teardown pump, so any test that renders MainShell needs a fake
+// zonesRepositoryProvider with no real Timer to avoid a
+// "Timer is still pending" teardown failure.
+import 'package:runwar_app/providers/zones_repository_provider.dart';
+import 'package:runwar_app/services/database/repository.dart';
+import 'package:runwar_app/services/database/zones_repository.dart';
+import 'package:runwar_app/services/database/models/zone.dart';
+
+class _NoTimerZonesRepository implements ZonesRepository {
+  @override
+  Future<RepoResult<List<Zone>>> fetchByCity(String city) async =>
+      RepoResult.ok(<Zone>[]);
+
+  @override
+  Stream<List<Zone>> watchByCity(String city) => Stream.value(const <Zone>[]);
+
+  @override
+  Future<RepoResult<Zone>> fetchById(String id) async =>
+      RepoResult.err(RepoError.notFound);
+
+  @override
+  Future<void> dispose() async {}
+}
+
+final _noTimerZonesOverride =
+    zonesRepositoryProvider.overrideWith((ref) => _NoTimerZonesRepository());
+
 // ── Stub AuthNotifier subclasses ──────────────────────────────────────────────
 
 /// AuthNotifier that immediately emits [AuthState] with no user (unauthenticated).
@@ -185,6 +228,10 @@ Widget _scope(List<Override> overrides) => ProviderScope(
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   // ──────────────────────────────────────────────────────────────────────────
   // AC-1  Single splash held during parallel provider load
   // ──────────────────────────────────────────────────────────────────────────
@@ -515,6 +562,96 @@ void main() {
               'even if trialStatusProvider is AsyncLoading again');
       expect(find.byType(MainShell), findsOneWidget,
           reason: 'MainShell must remain visible during mid-session provider reload');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Mission-1 gate fail-closed - hotfix/streak-mission1-gate
+  // ──────────────────────────────────────────────────────────────────────────
+  group(
+      'Mission-1 gate: missionStatusProvider re-loading post-boot must not '
+      'silently skip the mission gate', () {
+    // GIVEN _bootComplete is true (MainShell showing)
+    // WHEN missionStatusProvider is invalidated and re-enters AsyncLoading
+    //   (e.g. after ref.invalidate(missionStatusProvider(userId)))
+    // THEN SplashScreen is shown again (hold) rather than falling through to
+    //   MainShell - reverting the Gate 5a/5b loading guard in main.dart makes
+    //   this test fail, because `mission != null && mission.needsMission1`
+    //   would evaluate false while mission is null-during-loading, silently
+    //   skipping straight through to MainShell.
+    testWidgets(
+        'SplashScreen re-appears (fails closed) while missionStatusProvider '
+        'reloads after boot', (tester) async {
+      const userId = 'user-abc-123';
+
+      var missionCallCount = 0;
+      final secondCallCompleter = Completer<MissionStatus>();
+
+      final container = ProviderContainer(overrides: [
+        authProvider.overrideWith((ref) => _AuthedAuthNotifier()),
+        _showcaseSeenOverride,
+        hasPhoneProvider(userId).overrideWith((ref) async => true),
+        joinedCitySlugsProvider(userId)
+            .overrideWith((ref) async => ['valencia']),
+        profileGateProvider(userId).overrideWith((ref) async => {
+              'username': 'alice',
+              'invited_at': '2025-01-01T00:00:00Z',
+            }),
+        missionStatusProvider(userId).overrideWith((ref) async {
+          missionCallCount++;
+          if (missionCallCount == 1) {
+            // First resolution: gates all clear, no active mission -> MainShell.
+            return MissionStatus(
+              firstMissionCompletedAt: null,
+              firstAttackCompletedAt: DateTime.fromMillisecondsSinceEpoch(1),
+              zoneCount: 1,
+            );
+          }
+          // Second call simulates a re-fetch mid-session that takes a while.
+          return await secondCallCompleter.future;
+        }),
+        trialStatusProvider(userId).overrideWith(
+          (ref) async =>
+              const TrialStatus(started: false, daysRemaining: 14, streak: 0),
+        ),
+        connectivityProvider.overrideWith((ref) => Stream.value(true)),
+        _noTimerZonesOverride,
+      ]);
+      addTearDown(container.dispose);
+
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 2));
+      });
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const RunWarApp(),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Sanity: boot completed, MainShell visible.
+      expect(find.byType(MainShell), findsOneWidget,
+          reason: 'Sanity check: MainShell must be visible after boot');
+
+      // Invalidate to re-trigger loading of mission status.
+      container.invalidate(missionStatusProvider(userId));
+      await tester.pump();
+
+      expect(find.byType(SplashScreen), findsOneWidget,
+          reason:
+              'SplashScreen must hold while missionStatusProvider is '
+              'AsyncLoading post-boot - a user whose mission status has not '
+              'yet been (re)confirmed must never fall through to MainShell '
+              'or any other gate.');
+      expect(find.byType(MainShell), findsNothing,
+          reason:
+              'MainShell must not remain visible while mission status is '
+              'unresolved.');
     });
   });
 
