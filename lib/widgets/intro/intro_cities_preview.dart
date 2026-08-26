@@ -2,33 +2,33 @@
 //
 // IntroCitiesPreview -- slide 10 ("Choose your ground."). A non-interactive,
 // display-only 3D card carousel previewing the real city roster
-// (kCitiesCatalog): "Land and Go" (Variant B), the locked design at
-// infra/meta/specs/runwar/onboarding-remake/slide10-redesign-decision.md.
+// (kCitiesCatalog).
 //
-// Six cities sit on a horizontal 3D ring. Each card decelerates into the
-// center, dwells there for ~1.8s while a synced readout below shows its
-// name, tagline and a numeric capacity signal, then accelerates away as the
-// next card sweeps in. One continuous loop, 6 landings per cycle.
+// Design: the "constant linear turntable" locked in
+// infra/meta/specs/runwar/intro-carousel-realism/decisions.md
+// ("Slide 10 Choose your ground", APPROVED by operator) and mocked up as
+// slide A's proposed column in
+// infra/meta/specs/runwar/intro-carousel-realism/mockups/slides-proposed.html
+// (`a-pro-orbit`: rotateY 0..360deg translateZ(R), 18s linear, perspective
+// 900px, depth-locked opacity/blur). This replaces the earlier
+// "Land and Go" dwell/land schedule, whose per-card arrival/departure
+// easing and piecewise waypoint path produced exactly the uneven-easing
+// wobble the redesign calls out.
 //
-// Ported from the mockup's "vb"/"landB" section
-// (infra/meta/specs/runwar/onboarding-remake/mockups/slide10-redesign-variants-v1.html),
-// with the numeric readout enhancement folded in from that same mockup's
-// Variant D ("War Drum") capacity line, and two craft fixes applied during
-// implementation (see the decision doc):
+// The three locked craft rules, mapped to this implementation:
 //
-//   1. Continuous easing on the return path. The mockup's CSS keyframe only
-//      declared an easing function at the arrival (0%) and departure
-//      (16.67%) breakpoints; the intermediate return-path waypoints
-//      (27% -> 42% -> 62% -> 84% -> 100%) fell back to per-segment default
-//      easing, producing a visible stutter at each keyframe boundary. Here
-//      the whole return path is driven by ONE continuous curve
-//      (`_kReturnCurve`, currently linear) applied across that entire span;
-//      only the arrival and departure legs get the deliberate eased
-//      "landing" feel.
-//   2. Glow via opacity, not blur radius. The landed-card glow is a single
-//      static (fixed blur radius) glow layer whose OPACITY is animated --
-//      never a box-shadow whose blur radius itself is animated, which is
-//      expensive to composite.
+//   1. ONE constant linear angular speed. The shared AnimationController
+//      repeats linearly over kCitiesRingLoopDuration (18s, matching the
+//      mockup) and each card's ring angle is a pure linear function of the
+//      controller value: theta = 2*pi*(t + i/6). No Curve, Cubic, or
+//      per-segment easing exists anywhere on the motion path.
+//   2. Scale, opacity and blur are functions of DEPTH only. depth =
+//      cos(theta) in [-1, 1] (1 = nearest/front). Scale falls out of the
+//      real perspective divide (Matrix4 entry(3,2)); opacity and blur are
+//      monotonic linear maps of depth. Nothing is keyed to elapsed time.
+//   3. Cards are sorted and painted back-to-front by depth every frame, so
+//      nearer cards always occlude farther ones with no popping at swap
+//      boundaries.
 //
 // Non-interactive: no GestureDetector exists anywhere in this widget, and
 // the whole thing is additionally wrapped in IgnorePointer as defense in
@@ -46,59 +46,52 @@
 // readout shows the real capacity ceiling ("N SPOTS") rather than a
 // fabricated or always-zero occupancy count.
 
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../data/cities_catalog.dart';
 import '../../theme.dart';
 
-/// One full ring cycle -- all 6 cities land once. Matches the mockup's
-/// 16.8s loop (2.8s per city slot: 16800 / 6 == 2800).
-const Duration kCitiesRingLoopDuration = Duration(milliseconds: 16800);
+/// One full ring revolution -- all 6 cities pass the front once. Matches the
+/// mockup's proposed 18s linear orbit (`a-pro-orbit 18s linear infinite`);
+/// the old 16.8s value belonged to the retired dwell schedule.
+const Duration kCitiesRingLoopDuration = Duration(milliseconds: 18000);
 
 const int _kCityCount = 6;
 
-// ── Waypoint tables (fractions of one card's own 0..1 phase) ───────────────
-// Mirrors the mockup's landB / fadeB / glowB / nameB keyframes.
-const List<double> _kWaypointT = [0.0, 0.06, 0.1667, 0.27, 0.42, 0.62, 0.84, 1.0];
-const List<double> _kWaypointX = [92.0, 0.0, 0.0, -92.0, -158.0, 0.0, 158.0, 92.0];
-const List<double> _kWaypointZ = [-58.0, 52.0, 52.0, -58.0, -160.0, -280.0, -160.0, -58.0];
-const List<double> _kWaypointRotDeg = [-33.0, 0.0, 0.0, 33.0, 44.0, 0.0, -44.0, -33.0];
+/// Ring radius in logical px. The mockup uses translateZ(150px) in a 320px
+/// viewport; scaled to a ~360dp phone width this keeps the same proportions.
+const double _kRingRadius = 168.0;
 
-const List<double> _kFadeT = [0.0, 0.06, 0.1667, 0.27, 0.42, 0.47, 0.80, 0.84, 1.0];
-const List<double> _kFadeOp = [0.9, 1.0, 1.0, 0.9, 0.5, 0.0, 0.0, 0.5, 0.9];
+/// Perspective divide, 1/d for the mockup's `perspective: 900px`. Front
+/// cards (z = -R) scale to ~1.23x, back cards (z = +R) to ~0.84x -- the
+/// depth-locked scale falloff comes entirely from this real divide.
+const double _kPerspective = 1.0 / 900.0;
 
-// Glow-layer opacity -- craft fix #2: animate opacity of a static blur, not
-// the blur radius.
-const List<double> _kGlowT = [0.0, 0.06, 0.1667, 0.27, 1.0];
-const List<double> _kGlowOp = [0.0, 1.0, 1.0, 0.0, 0.0];
+/// Depth-locked opacity endpoints: 1.0 at the front of the ring, this at
+/// the very back (mockup: opacity .28 at 180deg).
+const double _kBackOpacity = 0.28;
 
-// Readout name/tagline/capacity fade.
-const List<double> _kNameT = [0.0, 0.065, 0.085, 0.145, 0.17, 1.0];
-const List<double> _kNameOp = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0];
+/// Depth-locked blur endpoint at the very back of the ring (mockup:
+/// blur(2.4px) at 180deg). Sigma is quantized in the widget layer to avoid
+/// re-creating an ImageFilter at a new sigma every frame.
+const double _kMaxBlurSigma = 2.4;
 
-const Cubic _kArrivalCurve = Cubic(0.16, 0.84, 0.3, 1.0);
-const Cubic _kDepartureCurve = Cubic(0.55, 0.0, 0.8, 0.35);
-// Craft fix #1: ONE continuous curve drives the whole off-center return
-// path (27% -> 100%). Linear today; tune this single line, never re-ease
-// the individual waypoints below it.
-const Curve _kReturnCurve = Curves.linear;
-
-double _lerp(double a, double b, double t) => a + (b - a) * t;
-
-double _piecewiseLerp(List<double> ts, List<double> vs, double t) {
-  for (int i = 0; i < ts.length - 1; i++) {
-    if (t <= ts[i + 1]) {
-      final span = ts[i + 1] - ts[i];
-      final localT = span == 0 ? 0.0 : (t - ts[i]) / span;
-      return _lerp(vs[i], vs[i + 1], localT.clamp(0.0, 1.0));
-    }
-  }
-  return vs.last;
-}
+/// Readout visibility window, in phase distance from the exact front of the
+/// ring: fully visible while within [_kReadoutHoldPhase], linearly fading
+/// to invisible by [_kReadoutFadePhase]. 1/12 is the half-slot boundary, so
+/// consecutive cities cross-fade with no overlap and no long dead gap
+/// (mirrors the mockup's ~16.6%-of-loop per-city window).
+const double _kReadoutHoldPhase = 0.055;
+const double _kReadoutFadePhase = 1.0 / 12.0;
 
 /// This card's own phase within [0,1), given the shared controller value and
 /// the card's index (each of the 6 cards is offset by 1/6 of the loop).
+/// Phase 0 == exact front of the ring. Linear in the controller value by
+/// construction: constant angular speed, no easing anywhere on the path.
 double cityCardPhase(double controllerValue, int index) {
   final p = controllerValue + index / _kCityCount;
   return p - p.floorToDouble();
@@ -107,60 +100,56 @@ double cityCardPhase(double controllerValue, int index) {
 @immutable
 class CityCardPose {
   const CityCardPose({
-    required this.x,
-    required this.z,
-    required this.rotYRadians,
+    required this.angleRadians,
+    required this.depth,
     required this.opacity,
-    required this.glowOpacity,
+    required this.blurSigma,
     required this.readoutOpacity,
   });
 
-  final double x;
-  final double z;
-  final double rotYRadians;
+  /// Ring angle theta = 2*pi*phase. 0 == front, pi == back.
+  final double angleRadians;
+
+  /// cos(theta) in [-1, 1]; 1 is nearest to the viewer. The single value
+  /// every visual falloff (paint order, opacity, blur) derives from.
+  final double depth;
+
   final double opacity;
-  final double glowOpacity;
+  final double blurSigma;
   final double readoutOpacity;
 }
 
 /// Pure pose function for a single card's own phase. Exposed at library
 /// (non-private) scope so widget tests can assert the schedule directly.
 CityCardPose cityCardPose(double phase) {
-  double x, z, rotDeg;
-  if (phase <= 0.06) {
-    final eased = _kArrivalCurve.transform((phase / 0.06).clamp(0.0, 1.0));
-    x = _lerp(92.0, 0.0, eased);
-    z = _lerp(-58.0, 52.0, eased);
-    rotDeg = _lerp(-33.0, 0.0, eased);
-  } else if (phase <= 0.1667) {
-    x = 0.0;
-    z = 52.0;
-    rotDeg = 0.0; // dwell -- landed and holding
-  } else if (phase <= 0.27) {
-    final eased = _kDepartureCurve
-        .transform(((phase - 0.1667) / (0.27 - 0.1667)).clamp(0.0, 1.0));
-    x = _lerp(0.0, -92.0, eased);
-    z = _lerp(52.0, -58.0, eased);
-    rotDeg = _lerp(0.0, 33.0, eased);
+  final p = phase - phase.floorToDouble();
+  final theta = p * 2 * math.pi;
+  final depth = math.cos(theta);
+  // Normalized nearness: 0 at the very back, 1 at the very front. Opacity
+  // and blur are monotonic linear functions of this (i.e. of depth), never
+  // of time -- the depth-locked rule.
+  final near = (depth + 1.0) / 2.0;
+  final opacity = _kBackOpacity + (1.0 - _kBackOpacity) * near;
+  final blurSigma = _kMaxBlurSigma * (1.0 - near);
+
+  // Readout window keyed to phase distance from the exact front.
+  final d = p <= 0.5 ? p : 1.0 - p;
+  final double readoutOpacity;
+  if (d <= _kReadoutHoldPhase) {
+    readoutOpacity = 1.0;
+  } else if (d >= _kReadoutFadePhase) {
+    readoutOpacity = 0.0;
   } else {
-    // Return path -- one continuous curve across the whole [0.27, 1.0]
-    // span (craft fix #1), then piecewise-linear across the raw waypoints
-    // using that single eased progress.
-    final u = ((phase - 0.27) / (1.0 - 0.27)).clamp(0.0, 1.0);
-    final eased = _kReturnCurve.transform(u);
-    final t = 0.27 + eased * (1.0 - 0.27);
-    x = _piecewiseLerp(_kWaypointT, _kWaypointX, t);
-    z = _piecewiseLerp(_kWaypointT, _kWaypointZ, t);
-    rotDeg = _piecewiseLerp(_kWaypointT, _kWaypointRotDeg, t);
+    readoutOpacity =
+        1.0 - (d - _kReadoutHoldPhase) / (_kReadoutFadePhase - _kReadoutHoldPhase);
   }
 
   return CityCardPose(
-    x: x,
-    z: z,
-    rotYRadians: rotDeg * 3.14159265358979 / 180.0,
-    opacity: _piecewiseLerp(_kFadeT, _kFadeOp, phase),
-    glowOpacity: _piecewiseLerp(_kGlowT, _kGlowOp, phase),
-    readoutOpacity: _piecewiseLerp(_kNameT, _kNameOp, phase),
+    angleRadians: theta,
+    depth: depth,
+    opacity: opacity,
+    blurSigma: blurSigma,
+    readoutOpacity: readoutOpacity,
   );
 }
 
@@ -194,6 +183,10 @@ class _IntroCitiesPreviewState extends State<IntroCitiesPreview>
     return IgnorePointer(
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        // Weight the ring toward the bottom half of the slide's remaining
+        // space, keeping the top clear for the headline copy (the mockup
+        // parks the proposed ring in the lower half of the frame).
+        mainAxisAlignment: MainAxisAlignment.end,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SizedBox(height: 4),
@@ -235,12 +228,12 @@ class _CarouselRing extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final entries = List.generate(_kCityCount, (i) {
-      final phase = cityCardPhase(controllerValue, i);
-      final pose = cityCardPose(phase);
+      final pose = cityCardPose(cityCardPhase(controllerValue, i));
       return (city: kCitiesCatalog[i], pose: pose);
     });
-    // Paint back-to-front so nearer (higher z) cards draw over farther ones.
-    entries.sort((a, b) => a.pose.z.compareTo(b.pose.z));
+    // Paint strictly back-to-front by depth so nearer cards always occlude
+    // farther ones -- no popping at the depth-swap boundary.
+    entries.sort((a, b) => a.pose.depth.compareTo(b.pose.depth));
 
     return Stack(
       alignment: Alignment.center,
@@ -249,13 +242,22 @@ class _CarouselRing extends StatelessWidget {
           Center(
             child: Transform(
               alignment: Alignment.center,
+              // rotateY(-theta) then push out to the ring: places the card
+              // at (R*sin(theta), 0, -R*cos(theta)) facing the viewer at
+              // the front, exactly the mockup's
+              // `rotateY(theta) translateZ(R)` under Flutter's z-away
+              // convention. Scale falloff comes from the perspective
+              // divide itself -- depth-locked by construction.
               transform: Matrix4.identity()
-                ..setEntry(3, 2, 0.0016)
-                ..translateByDouble(e.pose.x, 0.0, e.pose.z, 1.0)
-                ..rotateY(e.pose.rotYRadians),
+                ..setEntry(3, 2, _kPerspective)
+                ..rotateY(-e.pose.angleRadians)
+                ..translateByDouble(0.0, 0.0, -_kRingRadius, 1.0),
               child: Opacity(
                 opacity: e.pose.opacity.clamp(0.0, 1.0),
-                child: _RingCard(city: e.city, glowOpacity: e.pose.glowOpacity),
+                child: _DepthBlur(
+                  sigma: e.pose.blurSigma,
+                  child: _RingCard(city: e.city),
+                ),
               ),
             ),
           ),
@@ -264,119 +266,130 @@ class _CarouselRing extends StatelessWidget {
   }
 }
 
+/// Applies the depth blur with the sigma quantized to 0.25 steps, so a new
+/// ImageFilter is only built when the card has moved a meaningful depth
+/// distance -- not at a fresh sigma on every single frame. Sub-threshold
+/// sigmas skip the filter entirely (the front half of the ring pays zero
+/// blur cost).
+class _DepthBlur extends StatelessWidget {
+  const _DepthBlur({required this.sigma, required this.child});
+  final double sigma;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final quantized = (sigma * 4).roundToDouble() / 4;
+    if (quantized < 0.25) return child;
+    return ImageFiltered(
+      imageFilter: ui.ImageFilter.blur(sigmaX: quantized, sigmaY: quantized),
+      child: child,
+    );
+  }
+}
+
 class _RingCard extends StatelessWidget {
-  const _RingCard({required this.city, required this.glowOpacity});
+  const _RingCard({required this.city});
   final CityEntry city;
-  final double glowOpacity;
 
   @override
   Widget build(BuildContext context) {
     final badgeText = city.isUnlocked ? 'OPEN' : 'SOON';
     final badgeColor = city.isUnlocked ? kAccent : kFgMuted;
 
-    return SizedBox(
-      width: 128,
-      height: 182,
-      child: Stack(
-        clipBehavior: Clip.none,
-        alignment: Alignment.center,
-        children: [
-          // Static, pre-blurred glow layer -- craft fix #2: only its
-          // opacity is animated, never the blur radius itself.
-          Opacity(
-            opacity: glowOpacity.clamp(0.0, 1.0),
-            child: Container(
-              width: 128,
-              height: 182,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: const [
-                  BoxShadow(color: kAccent, blurRadius: 34, spreadRadius: 2),
-                ],
-              ),
-            ),
+    return Container(
+      width: 104,
+      height: 146,
+      // Static drop shadow (mockup: 0 10px 22px rgba(0,0,0,.5)) -- fixed
+      // blur radius, never animated.
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.5),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
           ),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Container(
-              decoration: BoxDecoration(
-                border: Border.all(color: kFg.withValues(alpha: 0.16)),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: kFg.withValues(alpha: 0.16)),
+          ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.asset(
+                'assets/cities/${city.slug}.jpg',
+                fit: BoxFit.cover,
+                color: Colors.black.withValues(alpha: 0.55),
+                colorBlendMode: BlendMode.darken,
               ),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Image.asset(
-                    'assets/cities/${city.slug}.jpg',
-                    fit: BoxFit.cover,
-                    color: Colors.black.withValues(alpha: 0.55),
-                    colorBlendMode: BlendMode.darken,
-                  ),
-                  Positioned.fill(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          stops: const [0.3, 0.88],
-                          colors: [
-                            kBg.withValues(alpha: 0.05),
-                            kBg.withValues(alpha: 0.82),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 8,
-                    left: 8,
-                    child: Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: city.isUnlocked
-                            ? kAccent
-                            : kBg.withValues(alpha: 0.75),
-                        borderRadius: BorderRadius.circular(3),
-                        border: city.isUnlocked
-                            ? null
-                            : Border.all(color: kFg.withValues(alpha: 0.16)),
-                      ),
-                      child: Text(
-                        badgeText,
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 8,
-                          letterSpacing: 1.5,
-                          fontWeight: FontWeight.w700,
-                          color: city.isUnlocked ? kBg : badgeColor,
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    bottom: 10,
-                    left: 10,
-                    right: 10,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          city.name,
-                          style: displayStyle(size: 19, color: kFg),
-                        ),
-                        Text(
-                          '${city.flag} ${city.country.toUpperCase()}',
-                          style: monoStyle(size: 7, color: kFgMuted),
-                        ),
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      stops: const [0.3, 0.88],
+                      colors: [
+                        kBg.withValues(alpha: 0.05),
+                        kBg.withValues(alpha: 0.82),
                       ],
                     ),
                   ),
-                ],
+                ),
               ),
-            ),
+              Positioned(
+                top: 8,
+                left: 8,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: city.isUnlocked
+                        ? kAccent
+                        : kBg.withValues(alpha: 0.75),
+                    borderRadius: BorderRadius.circular(3),
+                    border: city.isUnlocked
+                        ? null
+                        : Border.all(color: kFg.withValues(alpha: 0.16)),
+                  ),
+                  child: Text(
+                    badgeText,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 8,
+                      letterSpacing: 1.5,
+                      fontWeight: FontWeight.w700,
+                      color: city.isUnlocked ? kBg : badgeColor,
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 10,
+                left: 10,
+                right: 10,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      city.name,
+                      style: displayStyle(size: 17, color: kFg),
+                    ),
+                    Text(
+                      '${city.flag} ${city.country.toUpperCase()}',
+                      style: monoStyle(size: 7, color: kFgMuted),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -394,8 +407,7 @@ class _Readout extends StatelessWidget {
       children: [
         for (int i = 0; i < _kCityCount; i++)
           Builder(builder: (context) {
-            final phase = cityCardPhase(controllerValue, i);
-            final pose = cityCardPose(phase);
+            final pose = cityCardPose(cityCardPhase(controllerValue, i));
             final city = kCitiesCatalog[i];
             final status = city.isUnlocked ? 'OPEN' : 'SOON';
             return Opacity(
