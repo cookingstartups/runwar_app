@@ -214,6 +214,7 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
   // t 0.45       : chest collection - 3-ring pulse, chest fade begins
   // t 0.55       : chest fully faded (alpha=0)
   // t 0.80–1.00  : _globalFade fade-out
+  static const double _startT = 0.05;
   static const double _arrivalA = 0.85;
   static const double _arrivalB = 0.85;
   // Chest collection timing
@@ -231,20 +232,53 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
     return (1.0 - (t - _fadeStart) / (1.0 - _fadeStart)).clamp(0.0, 1.0);
   }
 
+  // Index of _kDropCoord inside _kRouteBFull - Runner B must stand exactly on
+  // the chest when the collection pulse fires. Keep in sync with the route
+  // list in _IntroLootDropMapState.
+  static const int _dropIdxB = 6;
+
+  // Runner B's own progress at the moment the chest is collected.
+  static const double _collectProgressB =
+      (_collectT - _startT) / (_arrivalB - _startT);
+
   double _runnerProgress(double arrivalT) {
     if (t >= arrivalT) return 1.0;
-    const startT = 0.05;
-    if (t < startT) return 0.0;
-    return ((t - startT) / (arrivalT - startT)).clamp(0.0, 1.0);
+    if (t < _startT) return 0.0;
+    return ((t - _startT) / (arrivalT - _startT)).clamp(0.0, 1.0);
   }
 
-  Offset _posOnRoute(List<Offset> pts, double p) {
-    if (pts.isEmpty) return Offset.zero;
-    final segs = pts.length - 1;
-    final totalLen = p.clamp(0.0, 1.0) * segs;
-    final segIdx = totalLen.floor().clamp(0, segs - 1);
-    final segFrac = (totalLen - segIdx).clamp(0.0, 1.0);
-    return Offset.lerp(pts[segIdx], pts[(segIdx + 1).clamp(0, segs)], segFrac)!;
+  /// Remaps a linear timeline progress onto an arc-length progress that is
+  /// pinned to a vertex: at [anchorP] of the timeline the runner sits exactly
+  /// on `pts[anchorIdx]`.
+  ///
+  /// Runner B has to be on the chest at t=0.45, i.e. halfway through its own
+  /// timeline, but the chest is not at the halfway point of the route's real
+  /// pixel length (the off-screen exit leg south is far longer than the entry
+  /// leg north). Straight arc-length progress would therefore fire the
+  /// collection pulse while the runner is still well north of the chest. The
+  /// remap keeps one constant speed before the anchor and another after it,
+  /// which is what a runner covering unequal distances in equal times looks
+  /// like - as opposed to the per-segment speed whiplash of the old
+  /// equal-time-per-segment interpolation.
+  double _anchoredArcProgress(
+      List<Offset> pts, double p, int anchorIdx, double anchorP) {
+    if (pts.length < 2 || anchorIdx <= 0 || anchorIdx >= pts.length - 1) {
+      return p.clamp(0.0, 1.0);
+    }
+    double totalLen = 0;
+    double anchorLen = 0;
+    for (int i = 0; i < pts.length - 1; i++) {
+      totalLen += (pts[i + 1] - pts[i]).distance;
+      if (i + 1 == anchorIdx) anchorLen = totalLen;
+    }
+    if (totalLen == 0) return p.clamp(0.0, 1.0);
+    final anchorFrac = anchorLen / totalLen;
+    final clamped = p.clamp(0.0, 1.0);
+    if (clamped <= anchorP) {
+      return anchorP > 0 ? clamped / anchorP * anchorFrac : anchorFrac;
+    }
+    return anchorFrac +
+        (clamped - anchorP) / (1.0 - anchorP) * (1.0 - anchorFrac);
   }
 
   void _drawRunnerDot(Canvas canvas, Offset pos, Color color, double fade) {
@@ -354,15 +388,28 @@ class _IntroLootDropMapPainter extends CustomPainter with IntroPainterHelpers {
     final progressA = _runnerProgress(_arrivalA);
     final progressB = _runnerProgress(_arrivalB);
 
-    drawComet(canvas, routeA, progressA,
+    // Both routes have wildly uneven segment lengths (long off-screen approach
+    // and exit legs versus several very short legs clustered around the
+    // intersection), so progress is consumed as a fraction of the route's true
+    // pixel length rather than one equal time slice per segment. Runner B's
+    // progress is additionally pinned so it stands on the chest exactly when
+    // the collection pulse fires. Feeding the comet the converted
+    // equal-segment parameter keeps its head locked to the runner dot.
+    final arcA = progressA;
+    final arcB = _anchoredArcProgress(
+        routeBFull, progressB, _dropIdxB, _collectProgressB);
+
+    drawComet(canvas, routeA, arcLengthToSegmentT(routeA, arcA),
         tailLengthPx: tailLengthPx, color: kAccent, decayMul: fade);
-    drawComet(canvas, routeBFull, progressB,
+    drawComet(canvas, routeBFull, arcLengthToSegmentT(routeBFull, arcB),
         tailLengthPx: tailLengthPx, color: kSea, decayMul: fade);
 
     // ── 3. Runner dots ───────────────────────────────────────────────────────
-    final posA = progressA < 1.0 ? _posOnRoute(routeA, progressA) : routeA.last;
-    final posB =
-        progressB < 1.0 ? _posOnRoute(routeBFull, progressB) : routeBFull.last;
+    final posA =
+        progressA < 1.0 ? posOnPolylineByLength(routeA, arcA) : routeA.last;
+    final posB = progressB < 1.0
+        ? posOnPolylineByLength(routeBFull, arcB)
+        : routeBFull.last;
 
     _drawRunnerDot(canvas, posA, kAccent, fade);
     _drawRunnerDot(canvas, posB, kSea, fade);
