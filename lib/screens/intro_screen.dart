@@ -132,16 +132,7 @@ const _slides = [
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 8,
   ),
-  // 9 - Real-world events
-  _Slide(
-    tag: 'YEARLY IN-PERSON EVENT',
-    tagColor: kAccent2,
-    headline: 'Real streets. Real rivals.',
-    body: 'Behind every gamertag is a runner in your city.',
-    anim: _Anim.physicalEvents,
-    layout: _Layout.visualTopTextBottom,
-  ),
-  // 10 - Cities preview / final CTA
+  // 9 - Cities preview / final CTA
   _Slide(
     tag: 'INVITE ONLY',
     tagColor: kAccent,
@@ -149,6 +140,15 @@ const _slides = [
     body: 'Valencia is live. Five more cities sit behind the wall.',
     anim: _Anim.none,
     layout: _Layout.centeredClose,
+  ),
+  // 10 - Real-world events
+  _Slide(
+    tag: 'YEARLY IN-PERSON EVENT',
+    tagColor: kAccent2,
+    headline: 'Real streets. Real rivals.',
+    body: 'Behind every gamertag is a runner in your city.',
+    anim: _Anim.physicalEvents,
+    layout: _Layout.visualTopTextBottom,
   ),
 ];
 
@@ -243,10 +243,19 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
     ref.invalidate(showcaseSeenProvider);
   }
 
+  // Whether the current slide is the closing CTA slide (identified by
+  // layout, not list position, so slides can be reordered freely).
+  bool get _isCloseSlide => _slides[_page].layout == _Layout.centeredClose;
+
   void _navigate(int delta, {Axis axis = Axis.vertical}) {
+    // The closing CTA slide always finishes the intro on a forward swipe/tap,
+    // regardless of where it sits in the list.
+    if (delta > 0 && _isCloseSlide) {
+      _done();
+      return;
+    }
     final next = (_page + delta).clamp(0, _slides.length - 1);
     if (next == _page) {
-      if (delta > 0 && _page == _slides.length - 1) _done();
       return;
     }
     setState(() {
@@ -370,7 +379,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
               child: SizedBox(
                 height: 36,
                 child: AnimatedOpacity(
-                  opacity: _page < _slides.length - 1 ? 1.0 : 0.0,
+                  opacity: _isCloseSlide ? 0.0 : 1.0,
                   duration: const Duration(milliseconds: 200),
                   child: TextButton(
                     // Long-press resets showcase_seen without wiping SQLite data.
@@ -378,7 +387,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen>
                       final prefs = await SharedPreferences.getInstance();
                       await prefs.remove('showcase_seen');
                     },
-                    onPressed: _page < _slides.length - 1 ? _done : null,
+                    onPressed: _isCloseSlide ? null : _done,
                     child: Text('SKIP', style: monoStyle(size: 10, color: kFgFaint)),
                   ),
                 ),
@@ -604,11 +613,12 @@ class _SplitBleedSlide extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout C - Cities preview (slide 10: choose your ground)
+// Layout C - Cities preview (slide 9: choose your ground)
 // Ambient, non-interactive 3D card carousel previewing the real city roster
 // (kCitiesCatalog). No bottom CTA here -- the deck's own swipe-to-advance
 // gesture (see _navigate in _IntroScreenState) already calls _done() when
-// the user swipes past this, the last slide.
+// the user swipes forward past this slide, identified by its
+// _Layout.centeredClose layout rather than list position.
 // ---------------------------------------------------------------------------
 class _CitiesPreviewSlide extends StatelessWidget {
   final _Slide slide;
