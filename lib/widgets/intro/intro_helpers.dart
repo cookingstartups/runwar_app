@@ -208,6 +208,74 @@ mixin IntroPainterHelpers {
     canvas.drawPath(rp, routeP);
   }
 
+  /// Arc-length interpolation along an OPEN polyline.
+  ///
+  /// [frac] is a fraction of the route's TRUE screen-pixel length, so the
+  /// returned position advances at constant on-screen speed no matter how
+  /// uneven the individual segment lengths are. The naive alternative
+  /// (`frac * segmentCount`, then index) spends an equal time slice on every
+  /// segment, which makes a runner rocket through short clustered segments and
+  /// crawl along long ones.
+  ///
+  /// Sibling of the closed-loop interpolators in intro_fortify_map.dart and
+  /// intro_defense_map.dart, minus the wraparound segment from the last vertex
+  /// back to the first.
+  Offset posOnPolylineByLength(List<Offset> pts, double frac) {
+    if (pts.isEmpty) return Offset.zero;
+    if (pts.length == 1) return pts.first;
+    final segs = pts.length - 1;
+    final segLens = List<double>.filled(segs, 0);
+    double totalLen = 0;
+    for (int i = 0; i < segs; i++) {
+      final len = (pts[i + 1] - pts[i]).distance;
+      segLens[i] = len;
+      totalLen += len;
+    }
+    if (totalLen == 0) return pts.first;
+    double target = frac.clamp(0.0, 1.0) * totalLen;
+    for (int i = 0; i < segs; i++) {
+      final segLen = segLens[i];
+      if (target <= segLen) {
+        return Offset.lerp(
+            pts[i], pts[i + 1], segLen > 0 ? target / segLen : 0.0)!;
+      }
+      target -= segLen;
+    }
+    return pts.last;
+  }
+
+  /// Converts an arc-length progress [frac] (fraction of an open polyline's
+  /// true pixel length) into the equal-segment parameter that [drawComet],
+  /// [drawTrace] and [drawRunner] consume, where `t * segmentCount` indexes
+  /// into the vertex list.
+  ///
+  /// Pass the result to those helpers whenever the runner dot is positioned
+  /// with [posOnPolylineByLength], otherwise the tail head and the dot drift
+  /// apart on routes with uneven segments.
+  double arcLengthToSegmentT(List<Offset> pts, double frac) {
+    final clamped = frac.clamp(0.0, 1.0);
+    if (pts.length < 2) return clamped;
+    final segs = pts.length - 1;
+    final segLens = List<double>.filled(segs, 0);
+    double totalLen = 0;
+    for (int i = 0; i < segs; i++) {
+      final len = (pts[i + 1] - pts[i]).distance;
+      segLens[i] = len;
+      totalLen += len;
+    }
+    if (totalLen == 0) return clamped;
+    double target = clamped * totalLen;
+    for (int i = 0; i < segs; i++) {
+      final segLen = segLens[i];
+      if (target <= segLen) {
+        final local = segLen > 0 ? target / segLen : 0.0;
+        return (i + local) / segs;
+      }
+      target -= segLen;
+    }
+    return 1.0;
+  }
+
   /// Renders a comet tail: the last [tailLengthPx] screen-pixels of the route
   /// [pts] up to [routeT], with a linear alpha gradient — 0 at the tail end
   /// rising to [headAlpha]*[decayMul] at the runner's current position.
