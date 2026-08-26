@@ -2,27 +2,27 @@
 //
 // IntroPurgeLeaderboard — pure CustomPainter animation for slide 8 ("THE
 // PURGE"). Operator-locked Option B (leaderboard cut): a ranked list of
-// runners, a countdown that reaches zero, and a red cut line that rises to
-// separate survivors (above) from the eliminated (below). No map, no GPS —
-// matches the retired IntroSurvivalCut's profile.
+// runners, a countdown that reaches zero, and a red cut line - visible from
+// the very start of the loop - separating survivors (above) from the
+// eliminated (below). No map, no GPS - matches the retired IntroSurvivalCut's
+// profile.
 //
 // Row values carry no numeric distance/score — rank is signalled purely by
-// list order, plus YOU's accent-gold styling. YOU starts below the eventual
-// cut line and swaps upward, one row at a time, across three discrete turns,
-// finishing clear of the line before it rises.
+// list order, plus YOU's accent-gold styling. The cut line is on screen at
+// t=0; YOU starts below it and swaps upward, one row at a time, across three
+// discrete turns, finishing clear of the line before the countdown lands.
 //
 // Timeline (8s loop, loopController pattern):
-//   0.00-0.06  rows render top-to-bottom, countdown shows 00:05. YOU sits at
-//              the bottom-most slot, below the cut's eventual resting place.
+//   0.00       red cut line renders immediately at its resting position
+//              (between slot 4 and slot 5); rows render top-to-bottom,
+//              countdown shows 00:05. YOU sits below the line.
 //   0.06-0.22  Turn 1 — YOU swaps upward past the row directly above it.
 //   0.22-0.38  Turn 2 — YOU swaps upward again, landing on the boundary slot.
 //   0.38-0.54  Turn 3 — YOU swaps upward once more, ending clear of the cut.
 //              Countdown reaches 00:00 at the end of this turn.
-//   0.54-0.69  red cut line rises from below the last row to its resting
-//              position, now one slot lower than before the swaps.
-//   0.69-0.89  rows below the line strike through, then sweep sideways +
+//   0.58-0.82  rows below the line strike through, then sweep sideways +
 //              fade off-screen.
-//   0.89-1.00  hold on the final state.
+//   0.82-1.00  hold on the final state.
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -38,10 +38,11 @@ const double _kTurn2End = 0.38;
 const double _kTurn3Start = 0.38;
 const double _kTurn3End = 0.54;
 
-const double _kCutRiseStart = _kTurn3End;
-const double _kCutRiseEnd = 0.69;
-const double _kSweepStart = 0.69;
-const double _kSweepEnd = 0.89;
+// The cut line is static - visible at its resting position from t=0 - so the
+// sweep of eliminated rows starts shortly after the countdown lands at the
+// end of turn 3 (no rise beat precedes it anymore).
+const double _kSweepStart = 0.58;
+const double _kSweepEnd = 0.82;
 
 // ── Data model (static demo values — presentation only, not live data) ─────
 // No numeric field exists anywhere on this model: rank is conveyed only by
@@ -69,9 +70,9 @@ class _PurgeRow {
 }
 
 // Turn 0 (initial) order is the list's declaration order. YOU starts at slot
-// 6 (below the cut's eventual resting place) and swaps upward with the row
-// immediately above it once per turn, ending at slot 3, one clear survivor
-// slot above the cut.
+// 6 (below the cut line, which is on screen from t=0) and swaps upward with
+// the row immediately above it once per turn, ending at slot 3, one clear
+// survivor slot above the cut.
 const _kPurgeRows = [
   _PurgeRow('@NOVA_RUN', homeSlot: 0),
   _PurgeRow('@KM_REAPER', homeSlot: 1),
@@ -193,7 +194,7 @@ class _IntroPurgeLeaderboardPainter extends CustomPainter {
     const rowsTopY = _topPad;
 
     // ── Countdown (0.0-0.54 ticks toward 00:00, landing with turn 3) ───────
-    final countdownT = (t / _kCutRiseStart).clamp(0.0, 1.0);
+    final countdownT = (t / _kTurn3End).clamp(0.0, 1.0);
     final secondsLeft = (5 * (1.0 - countdownT)).ceil().clamp(0, 5);
     final countdownText = '00:0$secondsLeft';
     _drawCountdown(canvas, size, countdownText);
@@ -210,7 +211,7 @@ class _IntroPurgeLeaderboardPainter extends CustomPainter {
       double alpha = 1.0;
       if (row.eliminated) {
         // Eliminated rows strike through then sweep sideways + fade, once
-        // the cut line has risen and every swap has already landed.
+        // the countdown has landed and every swap has already finished.
         dx = Curves.easeIn.transform(sweepT) * size.width * 0.6;
         alpha = 1.0 - sweepT;
       }
@@ -231,7 +232,7 @@ class _IntroPurgeLeaderboardPainter extends CustomPainter {
       );
     }
 
-    // ── Red cut line — rises between the last survivor slot and the next ──
+    // ── Red cut line - static at its resting position from t=0 ───────────
     _drawCutLine(canvas, size, rowsTopY);
   }
 
@@ -301,14 +302,10 @@ class _IntroPurgeLeaderboardPainter extends CustomPainter {
   }
 
   void _drawCutLine(Canvas canvas, Size size, double rowsTopY) {
-    final restingY = rowsTopY + (_kCutAfterIndex + 1) * _rowHeight - 8;
-    final belowScreenY = rowsTopY + _kPurgeRows.length * _rowHeight + 20;
-
-    final riseT = ((t - _kCutRiseStart) / (_kCutRiseEnd - _kCutRiseStart))
-        .clamp(0.0, 1.0);
-    if (t < _kCutRiseStart) return;
-
-    final lineY = belowScreenY - (belowScreenY - restingY) * Curves.easeOut.transform(riseT);
+    // Visible from t=0: the line sits at its resting position for the whole
+    // loop while the rows swap around it (operator ask: the cut line must
+    // display at the START of the animation, not appear later).
+    final lineY = rowsTopY + (_kCutAfterIndex + 1) * _rowHeight - 8;
 
     canvas.drawLine(
       Offset(_sidePad, lineY),
