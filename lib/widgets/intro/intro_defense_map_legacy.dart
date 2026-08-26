@@ -6,7 +6,22 @@ import '../../theme.dart';
 import 'intro_helpers.dart';
 
 // ---------------------------------------------------------------------------
-// 6. IntroDefenseMap — shield rejects attacker (EARN YOUR EDGE slide)
+// 6. IntroDefenseMap — EARN YOUR EDGE slide: earn by running, boost with
+//    credits — never buy the conquest.
+//
+//    Beat 1 (EARN): the runner traces IntroZones.kS1Block1 — the same shared
+//    street block slides 2 and 4 trace — the loop closes and the block fills
+//    to the standard claimed state (IntroContinuity.kBlock1EndFillAlpha /
+//    kBlock1EndBorderWidth, identical visual language to
+//    intro_capture_map.dart's CLAIMED beat), then a hex shield glyph pops:
+//    the superpower was EARNED by the run, never bought.
+//
+//    Beat 2 (BOOST): the runner now STANDS on the block they own; a credit
+//    offer chip ("FORTIFY · 1 CREDIT") slides in and is applied — the block
+//    hardens to the gold reinforced treatment shared with
+//    intro_fortify_map.dart's ARMOR 3 terminal state
+//    (IntroContinuity.kFortifyEndFillAlpha / kFortifyEndBorderWidth).
+//    Credits only stretch what running earned — they never claim ground.
 // ---------------------------------------------------------------------------
 class IntroDefenseMap extends StatefulWidget {
   final Color accent;
@@ -17,31 +32,25 @@ class IntroDefenseMap extends StatefulWidget {
 
 class _IntroDefenseMapState extends State<IntroDefenseMap>
     with TickerProviderStateMixin, IntroMapMixin<IntroDefenseMap> {
+  // This slide's layout (textTopVisualBottom) overlays the text/CTA block
+  // over roughly the top half of the screen, so the animation should read in
+  // the bottom half — same constraint (and same value) as
+  // intro_fortify_map.dart's local override. It must NOT be merged into
+  // IntroContinuity.kMapCenter, which the visualTopTextBottom slides rely on
+  // unchanged.
+  static const _kMapCenter = LatLng(39.4659, -0.3756);
+
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  // Same attacker route and lasso as IntroCaptureMap (Change 2).
-  static const _kAttackerRoute = [
-    LatLng(39.4588, -0.3795), // 0: off-screen south
-    LatLng(39.4608, -0.3785), // 1: Buenos Aires S
-    LatLng(39.4613, -0.3777), // 2: Buenos Aires mid
-    LatLng(39.4616, -0.3768), // 3: TURN EAST
-    LatLng(39.4616, -0.3752), // 4: NE corner
-    LatLng(39.4604, -0.3752), // 5: SE corner
-    LatLng(39.4604, -0.3760), // 6: TURN WEST
-    LatLng(39.4610, -0.3783), // 7: LASSO CLOSES
-  ];
-
-  static const _kDisputedCoords = [
-    LatLng(39.4616, -0.3768), // B — NW
-    LatLng(39.4616, -0.3752), // E — NE
-    LatLng(39.4604, -0.3760), // F — SE
-    LatLng(39.4611, -0.3764), // G — SW interior
-  ];
-
   List<List<Offset>> _inheritedPts = [];
-  List<Offset> _attackerRoute = [];
-  List<Offset> _disputedArea = [];
+
+  /// The vertices of the claimed block, unclosed (for fill/border).
+  List<Offset> _blockPoly = [];
+
+  /// Same vertices with the first repeated at the end, so the comet/runner
+  /// trace closes the loop back to its start.
+  List<Offset> _blockLoop = [];
 
   void _onMapReady() {
     final cam = mapCtrl.camera;
@@ -49,12 +58,13 @@ class _IntroDefenseMapState extends State<IntroDefenseMap>
       final p = cam.latLngToScreenPoint(ll);
       return Offset(p.x.toDouble(), p.y.toDouble());
     }
+
     markMapReady(() {
       _inheritedPts = IntroZones.kS1All
           .map((block) => block.map(toScreen).toList())
           .toList();
-      _attackerRoute = _kAttackerRoute.map(toScreen).toList();
-      _disputedArea = _kDisputedCoords.map(toScreen).toList();
+      _blockPoly = IntroZones.kS1Block1.map(toScreen).toList();
+      _blockLoop = [..._blockPoly, _blockPoly.first];
     });
   }
 
@@ -62,7 +72,8 @@ class _IntroDefenseMapState extends State<IntroDefenseMap>
   void initState() {
     super.initState();
     _fadeCtrl = AnimationController(vsync: this, duration: kIntroFadeDuration);
-    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 8));
+    _ctrl =
+        AnimationController(vsync: this, duration: const Duration(seconds: 8));
     Future.delayed(kIntroFadeDelay, () {
       if (mounted) _fadeCtrl.forward();
     });
@@ -86,30 +97,29 @@ class _IntroDefenseMapState extends State<IntroDefenseMap>
           buildIntroMap(
             context: context,
             mapController: mapCtrl,
-            center: const LatLng(39.4627, -0.3756),
-            zoom: 16.0,
+            center: _kMapCenter,
+            zoom: IntroContinuity.kMapZoom,
             onReady: _onMapReady,
           ),
           if (mapReady)
             AnimatedBuilder(
               animation: _ctrl,
               builder: (_, __) {
-                final tailPx = () {
-                  final zoom = mapCtrl.camera.zoom;
-                  final lat = mapCtrl.camera.center.latitudeInRad;
-                  const earthCircumference = 2 * math.pi * 6378137.0;
-                  final metersPerPx =
-                      (earthCircumference * math.cos(lat)) /
-                      (256.0 * math.pow(2.0, zoom));
-                  return (_ctrl.value * kIntroRouteEstimatedMeters).clamp(0.0, kCometTailMaxMeters) / metersPerPx;
-                }();
+                final zoom = mapCtrl.camera.zoom;
+                final lat = mapCtrl.camera.center.latitudeInRad;
+                const earthCircumference = 2 * math.pi * 6378137.0;
+                final metersPerPx = (earthCircumference * math.cos(lat)) /
+                    (256.0 * math.pow(2.0, zoom));
+                final tailPx = (_ctrl.value * kIntroRouteEstimatedMeters)
+                        .clamp(0.0, kCometTailMaxMeters) /
+                    metersPerPx;
                 return CustomPaint(
                   painter: _IntroDefenseMapPainter(
                     t: _ctrl.value,
                     accent: widget.accent,
                     inheritedPts: _inheritedPts,
-                    attackerRoute: _attackerRoute,
-                    disputedArea: _disputedArea,
+                    blockPoly: _blockPoly,
+                    blockLoop: _blockLoop,
                     tailLengthPx: tailPx,
                   ),
                   child: const SizedBox.expand(),
@@ -127,203 +137,318 @@ class _IntroDefenseMapPainter extends CustomPainter with IntroPainterHelpers {
   @override
   final Color accent;
   final List<List<Offset>> inheritedPts;
-  final List<Offset> attackerRoute;
-  final List<Offset> disputedArea;
+  final List<Offset> blockPoly;
+  final List<Offset> blockLoop;
   final double tailLengthPx;
 
   _IntroDefenseMapPainter({
     required this.t,
     required this.accent,
     required this.inheritedPts,
-    required this.attackerRoute,
-    required this.disputedArea,
+    required this.blockPoly,
+    required this.blockLoop,
     required this.tailLengthPx,
   });
 
-  // Timeline:
-  //   0.00–0.55: attacker route + lasso draws; disputed amber fill at lasso close (~0.50).
-  //   0.55–0.65: "SHIELD ACTIVATED" stamp top-center; white flash ring at chunk centroid.
-  //   0.65–0.85: 3 hex shield rings expand; attacker lerps back south; route fades.
-  //   0.85–1.00: disputed fill → orange; "CLAIM REJECTED" + "DEFENDED FROM HOME" labels.
-  static const double _kRouteCompleteT = 0.55;
-  static const int _kLassoCloseSegIdx = 6;
+  // Timeline (8s loop):
+  //   0.00–0.40  Beat 1a — comet trace + runner around kS1Block1's edges.
+  //   0.40–0.48  Beat 1b — loop closes: ping ring, fill/border sweep to the
+  //              shared claimed state, "CLAIMED" stamp fades in.
+  //   0.48–0.52  runner lerps from the closing vertex to the block centroid
+  //              (they now stand ON the zone they own).
+  //   0.52–0.64  Beat 1c — hex shield glyph pops + "SHIELD EARNED": the
+  //              superpower unlocked by the run itself.
+  //   0.66–0.74  Beat 2a — credit chip "FORTIFY · 1 CREDIT" slides in above
+  //              the block (spend allowed only while standing on owned turf).
+  //   0.74–0.84  Beat 2b — chip applied: white flash, fill/border ramp to the
+  //              gold ARMOR-3 reinforced treatment; chip fades out.
+  //   0.86–1.00  Beat 2c — closing labels "EARNED ON THE STREET" /
+  //              "CREDITS ONLY BOOST IT"; gold pulse; hold until loop pause.
+  static const double _kTraceEndT = 0.40;
+  static const double _kFillDoneT = 0.48;
+  static const double _kStandDoneT = 0.52;
+  static const double _kEarnEndT = 0.64;
+  static const double _kChipInT = 0.66;
+  static const double _kApplyT = 0.74;
+  static const double _kGoldDoneT = 0.84;
+  static const double _kLabelT = 0.86;
 
-  Offset _disputedCentroid() {
-    if (disputedArea.isEmpty) return Offset.zero;
-    double sumX = 0, sumY = 0;
-    for (final pt in disputedArea) {
-      sumX += pt.dx;
-      sumY += pt.dy;
+  Offset _centroid(List<Offset> pts) {
+    if (pts.isEmpty) return Offset.zero;
+    double sx = 0, sy = 0;
+    for (final p in pts) {
+      sx += p.dx;
+      sy += p.dy;
     }
-    return Offset(sumX / disputedArea.length, sumY / disputedArea.length);
+    return Offset(sx / pts.length, sy / pts.length);
   }
 
-  /// Draw a regular hexagon centered at [center] with given [radius].
-  void _drawHexRing(Canvas canvas, Offset center, double radius, Paint paint) {
-    if (radius <= 0) return;
-    final path = Path();
-    for (int i = 0; i < 6; i++) {
-      final angle = (math.pi / 3) * i - math.pi / 2;
-      final x = center.dx + radius * math.cos(angle);
-      final y = center.dy + radius * math.sin(angle);
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
+  Path _makePoly(List<Offset> pts) {
+    if (pts.isEmpty) return Path();
+    final p = Path()..moveTo(pts[0].dx, pts[0].dy);
+    for (int i = 1; i < pts.length; i++) {
+      p.lineTo(pts[i].dx, pts[i].dy);
     }
-    path.close();
-    canvas.drawPath(path, paint);
+    return p..close();
+  }
+
+  void _paintCenteredText(Canvas canvas, Offset center, TextSpan span) {
+    final tp = TextPainter(text: span, textDirection: TextDirection.ltr)
+      ..layout();
+    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
   }
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (attackerRoute.isEmpty) return;
+    if (blockPoly.isEmpty || blockLoop.isEmpty) return;
 
-    final segs = attackerRoute.length - 1;
-    final centroid = _disputedCentroid();
+    final centroid = _centroid(blockPoly);
 
-    // 0. Inherited blocks — pre-filled orange.
+    // 0. Inherited blocks — static orange base (prior territory).
     drawInheritedBlocks(canvas, inheritedPts);
 
-    // Phase 1: 0.00–0.55 — attacker runs and lasso forms.
-    final routeProgress = (t / _kRouteCompleteT).clamp(0.0, 1.0);
-    final traveled = routeProgress * segs;
-    final lassoIsClosed = traveled >= _kLassoCloseSegIdx;
+    final closed = t >= _kTraceEndT;
 
-    // Route fade after shield activates.
-    final routeFade = t < 0.65 ? 1.0 : (1.0 - (t - 0.65) / 0.20).clamp(0.0, 1.0);
+    // ── Beat 1a: comet trace + runner around the block's real street edges ──
+    if (!closed) {
+      final traceProgress = (t / _kTraceEndT).clamp(0.0, 1.0);
+      drawComet(canvas, blockLoop, traceProgress,
+          tailLengthPx: tailLengthPx, color: accent);
 
-    if (routeFade > 0) {
-      drawComet(canvas, attackerRoute, routeProgress,
-          tailLengthPx: tailLengthPx, color: kSea, decayMul: routeFade);
+      final segs = blockLoop.length - 1;
+      final traveled = traceProgress * segs;
+      final segIdx = traveled.floor().clamp(0, segs - 1);
+      final segFrac = (traveled - segIdx).clamp(0.0, 1.0);
+      final pos = Offset.lerp(
+        blockLoop[segIdx],
+        blockLoop[(segIdx + 1).clamp(0, segs)],
+        segFrac,
+      )!;
+      drawRunnerAt(canvas, pos, accent);
+      return; // nothing else exists before the loop closes
     }
 
-    // Attacker runner dot: moves along route until lasso close, then lerps back south.
-    if (t < 0.65) {
-      if (!lassoIsClosed && attackerRoute.isNotEmpty) {
-        final segIdx = traveled.floor().clamp(0, segs - 1);
-        final segFrac = (traveled - segIdx).clamp(0.0, 1.0);
-        final pos = Offset.lerp(
-          attackerRoute[segIdx],
-          attackerRoute[(segIdx + 1).clamp(0, segs)],
-          segFrac,
-        )!;
-        canvas.drawCircle(
-            pos, 12,
-            Paint()
-              ..color = kSea.withValues(alpha: 0.25)
-              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
-        canvas.drawCircle(pos, 4.5, Paint()..color = kSea);
-        canvas.drawCircle(pos, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.8));
-      }
-    } else if (t < 0.85) {
-      // Lerp attacker back to off-screen south.
-      final retreatT = ((t - 0.65) / 0.20).clamp(0.0, 1.0);
-      final startPos = attackerRoute.isNotEmpty ? attackerRoute.last : Offset.zero;
-      final endPos = attackerRoute.isNotEmpty ? attackerRoute.first : Offset.zero;
-      final pos = Offset.lerp(startPos, endPos, retreatT)!;
-      final runnerFade = (1.0 - retreatT).clamp(0.0, 1.0);
-      if (runnerFade > 0) {
-        canvas.drawCircle(
-            pos, 12,
-            Paint()
-              ..color = kSea.withValues(alpha: 0.25 * runnerFade)
-              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
-        canvas.drawCircle(pos, 4.5, Paint()..color = kSea.withValues(alpha: runnerFade));
-      }
+    // ── Beat 1b/2b: block fill + border — claimed state, then gold ramp ─────
+    final fillRamp = ((t - _kTraceEndT) / (_kFillDoneT - _kTraceEndT))
+        .clamp(0.0, 1.0);
+    final goldRamp =
+        ((t - _kApplyT) / (_kGoldDoneT - _kApplyT)).clamp(0.0, 1.0);
+
+    final fillColor = Color.lerp(accent, kAccent2, goldRamp)!;
+    final fillAlpha = IntroContinuity.kBlock1EndFillAlpha * fillRamp +
+        (IntroContinuity.kFortifyEndFillAlpha -
+                IntroContinuity.kBlock1EndFillAlpha) *
+            goldRamp;
+    drawFillColor(canvas, blockPoly, fillColor, fillAlpha);
+
+    final borderColor = Color.lerp(accent, kAccent2, goldRamp)!;
+    final borderWidth = IntroContinuity.kBlock1EndBorderWidth * fillRamp +
+        (IntroContinuity.kFortifyEndBorderWidth -
+                IntroContinuity.kBlock1EndBorderWidth) *
+            goldRamp;
+    if (borderWidth > 0) {
+      canvas.drawPath(
+        _makePoly(blockPoly),
+        Paint()
+          ..color = borderColor.withValues(alpha: 0.9)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = borderWidth
+          ..strokeJoin = StrokeJoin.round,
+      );
     }
 
-    // Disputed amber fill (0.50–0.85), then snaps back to orange (0.85+).
-    if (lassoIsClosed && disputedArea.isNotEmpty) {
-      final dispRamp = ((traveled - _kLassoCloseSegIdx) / 0.3).clamp(0.0, 1.0);
-      if (t < 0.85) {
-        drawFillColor(canvas, disputedArea, const Color(0xFFFFB200), dispRamp * 0.35);
-      } else {
-        final snapT = ((t - 0.85) / 0.05).clamp(0.0, 1.0);
-        final dispColor = Color.lerp(const Color(0xFFFFB200), kAccent, snapT)!;
-        drawFillColor(canvas, disputedArea, dispColor, 0.35);
-      }
+    // Expanding ring ping at the close beat (same language as capture map).
+    final pingT = ((t - _kTraceEndT) / 0.08).clamp(0.0, 1.0);
+    if (pingT < 1.0) {
+      final ringAlpha = ((1.0 - pingT) * 0.7).clamp(0.0, 1.0);
+      canvas.drawCircle(
+        centroid,
+        pingT * 60.0,
+        Paint()
+          ..color = accent.withValues(alpha: ringAlpha)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0,
+      );
     }
 
-    // Phase 2: 0.55–0.65 — "SHIELD ACTIVATED" stamp + white flash ring.
-    if (t >= 0.55 && t < 0.75) {
-      final shieldFade = t < 0.60
-          ? ((t - 0.55) / 0.05).clamp(0.0, 1.0)
-          : t < 0.70 ? 1.0
-          : (1.0 - (t - 0.70) / 0.05).clamp(0.0, 1.0);
-      if (shieldFade > 0) {
-        final tp = TextPainter(
-          text: TextSpan(
-            text: 'SHIELD ACTIVATED',
-            style: GoogleFonts.bebasNeue(
-              fontSize: 32,
-              color: accent.withValues(alpha: shieldFade),
+    // ── Runner: closing vertex → centroid, then standing on the owned zone ──
+    final standT = ((t - _kFillDoneT) / (_kStandDoneT - _kFillDoneT))
+        .clamp(0.0, 1.0);
+    final runnerPos = Offset.lerp(blockLoop.last, centroid, standT)!;
+    drawRunnerAt(canvas, runnerPos, accent);
+
+    // ── "CLAIMED" stamp — fades in at fill-done, out as the EARN beat lands ─
+    if (t >= _kFillDoneT && t < _kEarnEndT) {
+      final stampIn = ((t - _kFillDoneT) / 0.04).clamp(0.0, 1.0);
+      final stampOut = t < _kEarnEndT - 0.06
+          ? 1.0
+          : (1.0 - (t - (_kEarnEndT - 0.06)) / 0.06).clamp(0.0, 1.0);
+      final stampOpacity = stampIn * stampOut;
+      if (stampOpacity > 0) {
+        _paintCenteredText(
+          canvas,
+          centroid + const Offset(0, 30),
+          TextSpan(
+            text: 'CLAIMED',
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 12,
+              letterSpacing: 2,
+              fontWeight: FontWeight.w700,
+              color: accent.withValues(alpha: stampOpacity),
             ),
           ),
-          textDirection: TextDirection.ltr,
-        )..layout(maxWidth: size.width);
-        tp.paint(canvas, Offset((size.width - tp.width) / 2, 48));
+        );
       }
     }
 
-    // White flash ring at centroid when shield activates.
-    if (t >= 0.55 && t < 0.65 && centroid != Offset.zero) {
-      final flashT = ((t - 0.55) / 0.10).clamp(0.0, 1.0);
-      canvas.drawCircle(
-          centroid,
-          flashT * 100,
+    // ── Beat 1c: hex shield glyph pops — superpower EARNED by the run ───────
+    if (t >= _kStandDoneT) {
+      final popT = ((t - _kStandDoneT) / 0.06).clamp(0.0, 1.0);
+      final popEase = 1.0 - math.pow(1.0 - popT, 3).toDouble();
+      final hexCenter = centroid + const Offset(0, -56);
+      final hexColor = Color.lerp(accent, kAccent2, goldRamp)!;
+      drawHexGlyph(
+        canvas,
+        hexCenter,
+        16.0 * popEase,
+        Paint()
+          ..color = hexColor.withValues(alpha: 0.9)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0
+          ..strokeJoin = StrokeJoin.round,
+      );
+      // One expanding echo ring as it lands.
+      if (popT < 1.0) {
+        canvas.drawCircle(
+          hexCenter,
+          10 + popT * 26,
           Paint()
-            ..color = Colors.white.withValues(alpha: (1.0 - flashT) * 0.55)
+            ..color = hexColor.withValues(alpha: (1.0 - popT) * 0.4)
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 2.5);
-    }
-
-    // Phase 3: 0.65–0.85 — 3 concentric hex shield rings.
-    if (t >= 0.65 && centroid != Offset.zero) {
-      for (int i = 0; i < 3; i++) {
-        final ringT = ((t - 0.65 - i * 0.06) / 0.18).clamp(0.0, 1.0);
-        if (ringT > 0) {
-          _drawHexRing(
-              canvas,
-              centroid,
-              ringT * 80,
-              Paint()
-                ..color = accent.withValues(alpha: (1.0 - ringT) * 0.5)
-                ..style = PaintingStyle.stroke
-                ..strokeWidth = 2.0);
+            ..strokeWidth = 1.5,
+        );
+      }
+      // "SHIELD EARNED" — visible through the EARN beat, then hands off.
+      if (t < _kApplyT) {
+        final earnFade = t < _kChipInT
+            ? popT
+            : (1.0 - (t - _kChipInT) / (_kApplyT - _kChipInT)).clamp(0.0, 1.0);
+        if (earnFade > 0) {
+          _paintCenteredText(
+            canvas,
+            hexCenter + const Offset(0, -26),
+            TextSpan(
+              text: 'SHIELD EARNED',
+              style: GoogleFonts.bebasNeue(
+                fontSize: 20,
+                color: accent.withValues(alpha: earnFade),
+              ),
+            ),
+          );
         }
       }
     }
 
-    // Phase 4: 0.85–1.00 — "CLAIM REJECTED" + "DEFENDED FROM HOME".
-    if (t >= 0.85) {
-      final labelFade = ((t - 0.85) / 0.05).clamp(0.0, 1.0);
-
-      if (labelFade > 0 && size.width > 0) {
-        final tp1 = TextPainter(
+    // ── Beat 2a: credit offer chip — spendable only standing on owned turf ──
+    if (t >= _kChipInT && t < _kLabelT) {
+      final chipIn = ((t - _kChipInT) / 0.05).clamp(0.0, 1.0);
+      final chipOut = t < _kApplyT
+          ? 1.0
+          : (1.0 - (t - _kApplyT) / (_kGoldDoneT - _kApplyT)).clamp(0.0, 1.0);
+      final chipOpacity = chipIn * chipOut;
+      if (chipOpacity > 0) {
+        final chipCenter =
+            centroid + Offset(0, -104 + (1.0 - chipIn) * 10);
+        final tp = TextPainter(
           text: TextSpan(
-            text: 'CLAIM REJECTED',
+            text: 'FORTIFY · 1 CREDIT',
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11,
+              letterSpacing: 1.5,
+              fontWeight: FontWeight.w700,
+              color: kAccent2.withValues(alpha: chipOpacity),
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        final chipRect = RRect.fromRectAndRadius(
+          Rect.fromCenter(
+            center: chipCenter,
+            width: tp.width + 24,
+            height: tp.height + 14,
+          ),
+          const Radius.circular(6),
+        );
+        canvas.drawRRect(
+          chipRect,
+          Paint()..color = kBg.withValues(alpha: 0.85 * chipOpacity),
+        );
+        canvas.drawRRect(
+          chipRect,
+          Paint()
+            ..color = kAccent2.withValues(alpha: 0.9 * chipOpacity)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.2,
+        );
+        tp.paint(canvas, chipCenter - Offset(tp.width / 2, tp.height / 2));
+      }
+    }
+
+    // ── Beat 2b: apply flash — white ring as the credit boost lands ─────────
+    if (t >= _kApplyT && t < _kApplyT + 0.06) {
+      final flashT = ((t - _kApplyT) / 0.06).clamp(0.0, 1.0);
+      canvas.drawCircle(
+        centroid,
+        flashT * 90,
+        Paint()
+          ..color = Colors.white.withValues(alpha: (1.0 - flashT) * 0.55)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5,
+      );
+    }
+
+    // ── Beat 2c: gold pulse on the reinforced block (fortify's ARMOR-3 cue) ─
+    if (t >= _kGoldDoneT) {
+      final pulseT = (math.sin(t * math.pi * 4) + 1) / 2;
+      canvas.drawCircle(
+        centroid,
+        20 + pulseT * 10,
+        Paint()
+          ..color = kAccent2.withValues(alpha: (1.0 - pulseT) * 0.5)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0,
+      );
+    }
+
+    // ── Closing labels — the slide's thesis, anchored below the block ───────
+    if (t >= _kLabelT) {
+      final labelFade = ((t - _kLabelT) / 0.05).clamp(0.0, 1.0);
+      if (labelFade > 0) {
+        _paintCenteredText(
+          canvas,
+          centroid + const Offset(0, 34),
+          TextSpan(
+            text: 'EARNED ON THE STREET',
             style: GoogleFonts.bebasNeue(
               fontSize: 18,
-              color: accent.withValues(alpha: labelFade),
+              color: kAccent2.withValues(alpha: labelFade),
             ),
           ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        tp1.paint(canvas, const Offset(12, 12));
-
-        final tp2 = TextPainter(
-          text: TextSpan(
-            text: 'DEFENDED FROM HOME',
+        );
+        _paintCenteredText(
+          canvas,
+          centroid + const Offset(0, 52),
+          TextSpan(
+            text: 'CREDITS ONLY BOOST IT',
             style: GoogleFonts.robotoMono(
-              fontSize: 11,
-              color: accent.withValues(alpha: labelFade),
+              fontSize: 10,
+              letterSpacing: 1.5,
+              color: kFgMuted.withValues(alpha: labelFade),
             ),
           ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        tp2.paint(canvas, Offset(12, 12 + tp1.height + 2));
+        );
       }
     }
   }
@@ -331,8 +456,8 @@ class _IntroDefenseMapPainter extends CustomPainter with IntroPainterHelpers {
   @override
   bool shouldRepaint(_IntroDefenseMapPainter old) =>
       old.t != t ||
-      old.attackerRoute != attackerRoute ||
-      old.disputedArea != disputedArea ||
+      old.blockPoly != blockPoly ||
+      old.blockLoop != blockLoop ||
       old.inheritedPts != inheritedPts ||
       old.tailLengthPx != tailLengthPx;
 }
