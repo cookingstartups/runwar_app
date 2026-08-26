@@ -1,19 +1,23 @@
 // test/widgets/intro/intro_slide10_cities_preview_test.dart
 //
-// Slide 10 redesign ("Land and Go" 3D carousel).
-// Spec: infra/meta/specs/runwar/onboarding-remake/slide10-redesign-decision.md
-// Mockup: infra/meta/specs/runwar/onboarding-remake/mockups/slide10-redesign-variants-v1.html
-// (Variant B "vb"/"landB", with Variant D's numeric readout folded in).
+// Slide 10 ("Choose your ground.") -- constant linear turntable carousel.
+// Spec: infra/meta/specs/runwar/intro-carousel-realism/decisions.md
+//   ("Slide 10 Choose your ground", APPROVED: keep the 3D ring; ONE constant
+//   linear speed with no easing drift or wobble; scale/opacity/blur tied
+//   strictly to depth; sorted back-to-front for correct occlusion; ring
+//   weighted to the bottom half).
+// Mockup: infra/meta/specs/runwar/intro-carousel-realism/mockups/
+//   slides-proposed.html, slide A proposed column (`a-pro-orbit`:
+//   rotateY 0..360deg translateZ(R), 18s linear, depth-locked opacity/blur).
 //
-// This replaces the earlier flat 2x3 CityCard grid + bottom CTA test suite
-// with coverage for the new ambient, non-interactive 3D ring carousel: no
-// button, all 6 catalog cities land on their own schedule, and taps are
-// still fully inert.
+// This replaces the earlier "Land and Go" dwell-schedule suite: the dwell
+// design's per-card arrival/departure easing is exactly the wobble the
+// redesign removes, so its waypoint/dwell assertions are gone with it.
 //
 // No pumpAndSettle() anywhere here -- the ring's AnimationController repeats
 // forever (`..repeat()`), so pumpAndSettle would never terminate. Every test
 // uses bounded `tester.pump(Duration(...))` steps instead, per
-// infra/protocols/flutter-test-patterns.md §3.
+// infra/protocols/flutter-test-patterns.md.
 
 import 'dart:io';
 
@@ -32,8 +36,8 @@ String _read(String relPath) {
 }
 
 /// Locates the nearest ancestor Opacity widget's current opacity for a
-/// given Text finder -- used to assert the readout's fade-in/fade-out
-/// schedule without depending on internal state.
+/// given Text finder -- used to assert the readout's fade schedule without
+/// depending on internal state.
 double _ancestorOpacity(WidgetTester tester, Finder textFinder) {
   final opacityFinder = find.ancestor(
     of: textFinder,
@@ -105,14 +109,13 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('tapping a landed card does not throw and changes nothing',
+    testWidgets('tapping the front card does not throw and changes nothing',
         (tester) async {
       await tester.pumpWidget(
         const MaterialApp(home: Scaffold(body: IntroCitiesPreview())),
       );
       await tester.pump();
-      // Let the first city land and settle into its dwell window.
-      await tester.pump(const Duration(milliseconds: 1900));
+      await tester.pump(const Duration(milliseconds: 400));
 
       final before = find.text(kCitiesCatalog.first.name).evaluate().length;
       await tester.tapAt(tester.getCenter(find.byType(IntroCitiesPreview)));
@@ -143,76 +146,139 @@ void main() {
     });
   });
 
-  group('landing schedule -- each city lands and dwells on its own slot', () {
-    // One full loop is 16.8s across 6 cities -> a 2.8s slot per card
-    // (matching the mockup's -2.8s per-card animation-delay stagger, i.e.
-    // card i's own local phase is (controllerValue + i/6) mod 1 -- see
-    // cityCardPhase). Dwell is the [0.06, 0.1667] window of that local
-    // phase. Solving for the controller value that puts card i at its own
-    // dwell midpoint gives the exact real time each city lands at, rather
-    // than assuming cards land in roster order (they don't -- the shared
-    // per-card phase offset makes the landing order 0, 5, 4, 3, 2, 1).
-    const dwellCenterPhase = (0.06 + 0.1667) / 2;
+  group('constant linear turntable -- no easing anywhere on the motion path', () {
+    test('loop duration matches the mockup\'s 18s linear orbit', () {
+      expect(kCitiesRingLoopDuration, const Duration(milliseconds: 18000),
+          reason: 'the proposed mockup runs `a-pro-orbit 18s linear '
+              'infinite`; the old 16.8s belonged to the retired dwell '
+              'schedule');
+    });
 
-    Duration dwellMidpointFor(int index) {
-      final cv = (dwellCenterPhase - index / 6) % 1.0;
-      return Duration(
-        milliseconds: (cv * kCitiesRingLoopDuration.inMilliseconds).round(),
-      );
-    }
+    test('angular velocity is constant across the whole revolution', () {
+      const dt = 0.01;
+      // Unwrapped angle deltas must be identical at every sample point of
+      // the loop -- any easing/wobble would make them diverge.
+      final samples = [0.0, 0.11, 0.23, 0.37, 0.49, 0.62, 0.78, 0.91];
+      final deltas = samples.map((p) {
+        final a0 = cityCardPose(p).angleRadians;
+        final a1 = cityCardPose(p + dt).angleRadians;
+        var d = a1 - a0;
+        if (d < 0) d += 2 * 3.141592653589793; // wrap at the loop seam
+        return d;
+      }).toList();
+      for (final d in deltas) {
+        expect(d, closeTo(deltas.first, 1e-9),
+            reason: 'ring angular speed must be one constant linear rate '
+                'with zero easing drift between cards');
+      }
+    });
 
-    // The tagline is only rendered inside the readout (the ring card itself
-    // only shows the city's name + flag/country), so finding it uniquely
-    // targets the readout's own opacity, not the ring card's.
-    testWidgets('each city\'s readout reaches full opacity during its own dwell',
-        (tester) async {
+    test('no Curve/Cubic easing exists in the carousel source', () {
+      final src = _read('lib/widgets/intro/intro_cities_preview.dart');
+      expect(RegExp(r'Cubic\(').hasMatch(src), isFalse,
+          reason: 'the turntable has no eased legs at all -- the old '
+              'arrival/departure Cubics are the wobble the redesign removes');
+      expect(src, isNot(contains('Curves.')),
+          reason: 'no named curve may drive any part of the ring motion');
+      expect(src, isNot(contains('CurvedAnimation')),
+          reason: 'the controller value maps linearly to ring angle');
+    });
+  });
+
+  group('depth-locked pose -- opacity/blur are monotonic functions of depth', () {
+    test('opacity and blur are monotonic in depth from front to back', () {
+      // Sample the front-to-back half of the revolution: depth strictly
+      // decreases, so opacity must strictly decrease and blur strictly
+      // increase.
+      final phases = List.generate(26, (i) => i * 0.02); // 0 .. 0.5
+      for (var i = 1; i < phases.length; i++) {
+        final prev = cityCardPose(phases[i - 1]);
+        final cur = cityCardPose(phases[i]);
+        expect(cur.depth, lessThan(prev.depth));
+        expect(cur.opacity, lessThan(prev.opacity),
+            reason: 'opacity must be a monotonic function of depth');
+        expect(cur.blurSigma, greaterThan(prev.blurSigma),
+            reason: 'blur must be a monotonic function of depth');
+      }
+    });
+
+    test('front card is fully opaque and unblurred; back card is faded', () {
+      final front = cityCardPose(0.0);
+      final back = cityCardPose(0.5);
+      expect(front.depth, closeTo(1.0, 1e-9));
+      expect(front.opacity, closeTo(1.0, 1e-9));
+      expect(front.blurSigma, closeTo(0.0, 1e-9));
+      expect(back.depth, closeTo(-1.0, 1e-9));
+      expect(back.opacity, closeTo(0.28, 1e-9),
+          reason: 'mockup: opacity .28 at the very back of the ring');
+      expect(back.blurSigma, closeTo(2.4, 1e-9),
+          reason: 'mockup: blur(2.4px) at the very back of the ring');
+    });
+
+    test('cards are sorted back-to-front by depth before painting', () {
+      final src = _read('lib/widgets/intro/intro_cities_preview.dart');
+      expect(src, contains('a.pose.depth.compareTo(b.pose.depth)'),
+          reason: 'per-frame back-to-front sort by depth is what prevents '
+              'popping at the depth-swap boundary');
+    });
+  });
+
+  group('readout window -- synced to the front passage', () {
+    testWidgets('each city\'s readout is at full opacity when its card is at '
+        'the front', (tester) async {
       for (var i = 0; i < kCitiesCatalog.length; i++) {
         final city = kCitiesCatalog[i];
+        // Card i is at the exact front when controllerValue == (1 - i/6) % 1.
+        final cv = (1.0 - i / 6) % 1.0;
         await tester.pumpWidget(
           const MaterialApp(home: Scaffold(body: IntroCitiesPreview())),
         );
         await tester.pump();
-        await tester.pump(dwellMidpointFor(i));
+        await tester.pump(Duration(
+          milliseconds: (cv * kCitiesRingLoopDuration.inMilliseconds).round(),
+        ));
 
+        // The tagline is only rendered inside the readout (the ring card
+        // itself shows name + flag/country), so it uniquely targets the
+        // readout's own opacity.
         final finder = find.text(city.tagline);
         final opacity = _ancestorOpacity(tester, finder);
-        expect(opacity, greaterThan(0.85),
-            reason: '${city.name} should be at (or near) full readout '
-                'opacity at its own dwell midpoint, got $opacity');
+        expect(opacity, greaterThan(0.95),
+            reason: '${city.name} should be at full readout opacity while '
+                'its card passes the front, got $opacity');
 
         await tester.pumpWidget(const SizedBox.shrink());
       }
     });
 
-    testWidgets('a city\'s readout is faded out well outside its own slot',
+    testWidgets('a city\'s readout is fully faded when its card is at the back',
         (tester) async {
       await tester.pumpWidget(
         const MaterialApp(home: Scaffold(body: IntroCitiesPreview())),
       );
       await tester.pump();
-      // City 0's own dwell window ends at ~2.8s (phase 0.1667 of 16.8s);
-      // 6s in is well clear of it without landing inside any other city's
-      // narrow dwell window either.
-      await tester.pump(const Duration(milliseconds: 6000));
+      // Half a revolution puts city 0 at the exact back of the ring.
+      await tester.pump(Duration(
+        milliseconds: kCitiesRingLoopDuration.inMilliseconds ~/ 2,
+      ));
 
       final finder = find.text(kCitiesCatalog.first.tagline);
       final opacity = _ancestorOpacity(tester, finder);
-      expect(opacity, lessThan(0.05),
-          reason: 'the first city\'s readout must have faded out well '
-              'outside its own dwell window, got $opacity');
+      expect(opacity, lessThan(0.001),
+          reason: 'the first city\'s readout must be invisible while its '
+              'card is at the back of the ring, got $opacity');
 
       await tester.pumpWidget(const SizedBox.shrink());
     });
   });
 
-  group('numeric scarcity readout (folded in from Variant D)', () {
+  group('numeric scarcity readout', () {
     testWidgets('shows status and a real capacity number per city',
         (tester) async {
       await tester.pumpWidget(
         const MaterialApp(home: Scaffold(body: IntroCitiesPreview())),
       );
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 1900));
 
       final unlocked = kCitiesCatalog.first; // Valencia, isUnlocked: true
       expect(unlocked.isUnlocked, isTrue);
@@ -222,7 +288,7 @@ void main() {
       expect(
         find.text('OPEN · $expectedCapacity SPOTS'),
         findsWidgets,
-        reason: 'the landed unlocked city must show its real, non-fabricated '
+        reason: 'the unlocked city must show its real, non-fabricated '
               'totalTarget capacity from kCitiesCatalog',
       );
 
@@ -247,35 +313,22 @@ void main() {
     });
   });
 
-  group('craft fixes required by the decision doc', () {
-    test('the return path is driven by one continuous curve, not per-waypoint', () {
+  group('performance craft rules', () {
+    test('the card drop shadow has a fixed blur radius, never animated', () {
       final src = _read('lib/widgets/intro/intro_cities_preview.dart');
-      expect(src, contains('_kReturnCurve'),
-          reason: 'craft fix 1: a single named curve must drive the whole '
-              'off-center return path');
-      // The waypoint tables (raw positions) must exist independently of any
-      // additional per-segment Curve/Cubic declarations beyond arrival and
-      // departure -- i.e. exactly two Cubic curves (arrival, departure),
-      // not one per intermediate keyframe.
-      final cubicCount = RegExp(r'Cubic\(').allMatches(src).length;
-      expect(cubicCount, equals(2),
-          reason: 'craft fix 1: only the arrival and departure legs may use '
-              'a bespoke eased Cubic curve -- the return path must not be '
-              're-eased at every intermediate waypoint');
-    });
-
-    test('the landed-card glow animates opacity of a static blur, not blur radius', () {
-      final src = _read('lib/widgets/intro/intro_cities_preview.dart');
-      expect(src, contains('glowOpacity'),
-          reason: 'craft fix 2: the glow layer\'s opacity must be the '
-              'animated value');
-      // BoxShadow's blurRadius must be a fixed literal, never itself driven
-      // by the animation controller/pose.
       final shadowMatch =
           RegExp(r'BoxShadow\(([\s\S]*?)\)').firstMatch(src)!.group(1)!;
       expect(shadowMatch, isNot(contains('pose')),
-          reason: 'craft fix 2: BoxShadow blurRadius must be a static '
-              'constant, not animated from the pose');
+          reason: 'BoxShadow blurRadius must be a static constant, not '
+              'animated from the pose');
+    });
+
+    test('depth blur sigma is quantized so filters are not rebuilt per frame',
+        () {
+      final src = _read('lib/widgets/intro/intro_cities_preview.dart');
+      expect(src, contains('roundToDouble'),
+          reason: 'blur sigma must be quantized to coarse steps so a new '
+              'ImageFilter is only created when depth has moved meaningfully');
     });
   });
 }
