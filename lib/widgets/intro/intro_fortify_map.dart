@@ -143,12 +143,6 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.tailLengthPx,
   });
 
-  static const List<String> _kArmorBadges = [
-    '⌃ ARMOR 1',
-    '⌃⌃ ARMOR 2',
-    '⌃⌃⌃ ARMOR 3',
-  ];
-
   // The final-lap (ARMOR 3) border width is IntroContinuity's shared
   // constant, not a local literal - slide 4 (SHIELD) reuses this exact
   // value to open on this slide's terminal state, so the two frames can
@@ -167,16 +161,6 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
       sumY += pt.dy;
     }
     return Offset(sumX / routePts.length, sumY / routePts.length);
-  }
-
-  /// NW-most vertex - approximated as minimising (dx + dy) in screen-space.
-  Offset _nwVertex() {
-    if (routePts.isEmpty) return Offset.zero;
-    Offset nw = routePts[0];
-    for (final pt in routePts) {
-      if (pt.dx + pt.dy < nw.dx + nw.dy) nw = pt;
-    }
-    return nw;
   }
 
   /// Arc-length interpolation along a closed polyline.
@@ -239,26 +223,7 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
         ..strokeJoin = StrokeJoin.round,
     );
 
-    // 3. ARMOR badge - steps 1 -> 2 -> 3 as each ~2.7s lap completes (R-12).
-    final nw = _nwVertex();
-    final centroid = _routeCentroid();
-    final labelPos = nw + (centroid - nw) * 0.18;
-    final badgeColor = lap == 2 ? kAccent2 : Colors.white;
-    final tp = TextPainter(
-      text: TextSpan(
-        text: _kArmorBadges[lap],
-        style: TextStyle(
-          color: badgeColor,
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          fontFamily: 'BebasNeue',
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, labelPos - Offset(tp.width / 2, tp.height / 2));
-
-    // 4. Runner traces the block once per lap (3 laps / 8s loop) - persists
+    // 3. Runner traces the block once per lap (3 laps / 8s loop) - persists
     // continuously (no fade) so the loop reads as ongoing training effort.
     final closedRoute = [...routePts, routePts[0]];
     final lapPos = (t * 3) % 1.0;
@@ -267,12 +232,12 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     final runnerPos = _posOnClosedLoop(routePts, lapPos);
     drawRunnerAt(canvas, runnerPos, accent);
 
-    // 5. At ARMOR 3 (final lap), a gold pulse ring reinforces the
+    // 4. At ARMOR 3 (final lap), a gold pulse ring reinforces the
     // max-hardened state.
     if (lap == 2) {
       final pulseT = (math.sin(t * math.pi * 4) + 1) / 2;
       canvas.drawCircle(
-        centroid,
+        _routeCentroid(),
         20 + pulseT * 10,
         Paint()
           ..color = kAccent2.withValues(alpha: (1.0 - pulseT) * 0.5)

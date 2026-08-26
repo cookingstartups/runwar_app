@@ -342,12 +342,16 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
     drawInheritedBlocks(canvas, inheritedPts);
 
     // Persistent lime-green player/defender runner - patrols the SAME
-    // blockPoly loop continuously through all 4 beats, independent of the
-    // pink rival's raid trace (Beat 2) and the shield/stamp beats (3-4).
-    // One lap every ~3s (t * 8/3) reads as "actively patrolling" without
-    // being distracting, in the same order of magnitude as FORTIFY's own
-    // 3-laps/8s cadence (slide 2).
-    if (blockPoly.length > 1) {
+    // blockPoly loop through Beats 1, 3 and 4, independent of the shield/
+    // stamp beats. Suppressed during Beat 2 (raid trace, 1-3.4s): the pink
+    // rival marker is the one that matters for the "under attack" beat, and
+    // both markers trace the identical closed loop (raidRoute == blockPoly),
+    // so rendering both at once put two runner dots on top of each other on
+    // the same block. One lap every ~3s (t * 8/3) reads as "actively
+    // patrolling" without being distracting, in the same order of magnitude
+    // as FORTIFY's own 3-laps/8s cadence (slide 2).
+    final inBeat2 = t >= _kBeat1End && t < _kBeat2End;
+    if (!inBeat2 && blockPoly.length > 1) {
       final closedBlock = [...blockPoly, blockPoly.first];
       final lapPos = (t * (8.0 / 3.0)) % 1.0;
       drawComet(canvas, closedBlock, lapPos,
