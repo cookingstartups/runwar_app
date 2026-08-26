@@ -44,15 +44,26 @@ void main() {
   });
 
   group('R-12: ARMOR badge progression 1 -> 2 -> 3, gold-tinted at 3', () {
-    // GIVEN  the badge text source
+    // GIVEN  the lap-derived visuals (fill/border/pulse ring)
     // WHEN   inspected
-    // THEN   the three ARMOR badge strings are present and the old
+    // THEN   the text-label badge rendering ("ARMOR 1"/"ARMOR 2"/"ARMOR 3")
+    //        has been removed entirely (hotfix/intro-slide-animation-fixes -
+    //        text labels cluttered the map, the lap is still communicated
+    //        via fill/border thickness and the gold pulse ring), and the old
     //        "LV 1"..."LV 15" numeric counter framing is gone from this file
-    test('ARMOR 1/2/3 badge strings are present', () {
+    test('ARMOR text-label badge rendering has been removed', () {
       final src = _sourceText();
-      expect(src, contains('ARMOR 1'), reason: 'R-12: ARMOR 1 badge must exist');
-      expect(src, contains('ARMOR 2'), reason: 'R-12: ARMOR 2 badge must exist');
-      expect(src, contains('ARMOR 3'), reason: 'R-12: ARMOR 3 badge must exist');
+      expect(src, isNot(contains('_kArmorBadges')),
+          reason: 'ARMOR badge string list was removed - lap is now '
+              'communicated via fill/border/pulse-ring only, no text label');
+      expect(src, isNot(contains('⌃ ARMOR 1')),
+          reason: 'ARMOR 1 text-badge string literal must be removed');
+      expect(src, isNot(contains('⌃⌃ ARMOR 2')),
+          reason: 'ARMOR 2 text-badge string literal must be removed');
+      expect(src, isNot(contains('⌃⌃⌃ ARMOR 3')),
+          reason: 'ARMOR 3 text-badge string literal must be removed');
+      expect(src, contains('_kArmorBorderWidths'),
+          reason: 'lap-derived border-width progression must still exist');
     });
 
     test('old numeric "LV" level-counter framing is absent from source file', () {

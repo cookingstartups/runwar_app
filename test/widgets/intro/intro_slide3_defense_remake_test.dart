@@ -134,19 +134,22 @@ void main() {
   group('R-12: persistent lime-green defender runner + independent camera center', () {
     // GIVEN  a persistent player/defender runner distinct from the pink rival
     // WHEN   the source is inspected
-    // THEN   it is drawn unconditionally (before any beat-gated `if`), so it
-    //        runs continuously through all 4 beats
-    test('lime-green runner is drawn unconditionally (outside beat gates)', () {
+    // THEN   it runs through Beats 1, 3 and 4, but is suppressed during Beat
+    //        2 (hotfix/intro-slide-animation-fixes) - Beat 2's raidRoute is
+    //        the same closed loop as blockPoly, so rendering the lime
+    //        defender and the pink attacker simultaneously put two runner
+    //        markers on top of each other; only the pink attacker matters
+    //        for the "under attack" narrative beat.
+    test('lime-green runner is gated off during Beat 2 (raid trace)', () {
       final src = _read('lib/widgets/intro/intro_defense_map.dart');
       expect(src, contains('kLimeGreen'),
           reason: 'a persistent lime-green defender runner must be drawn');
-      final limeIdx = src.indexOf('kLimeGreen');
-      final firstBeatIfIdx = src.indexOf('if (t >=');
-      expect(limeIdx, greaterThan(0));
-      expect(firstBeatIfIdx, greaterThan(0));
-      expect(limeIdx, lessThan(firstBeatIfIdx),
-          reason: 'the lime runner draw must be unconditional, not nested '
-              'inside a beat-specific if block');
+      expect(src, contains('inBeat2'),
+          reason: 'the lime defender draw must be gated off during Beat 2 '
+              'so only one marker (the pink attacker) shows on the block');
+      final limeGateIdx = src.indexOf('if (!inBeat2');
+      expect(limeGateIdx, greaterThan(0),
+          reason: 'the lime runner draw must be gated by `!inBeat2`');
     });
 
     // GIVEN  lib/theme.dart's color tokens

@@ -157,10 +157,17 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
   //   2.4 – 3.0s  fill sweep to IntroContinuity.kBlock1EndFillAlpha,
   //               border settles to IntroContinuity.kBlock1EndBorderWidth
   //   3.0 – 4.2s  "CLAIMED" stamp + hold
-  //   4.2 – 5.2s  fade out (base map persists), loop restarts seamlessly
+  //   4.2 – 4.5s  the "CLAIMED" stamp itself fades out (block stays put)
+  //   4.5 – 5.2s  "conquered" hold - the block settles into a solid,
+  //               unstamped owned-territory look (map_screen.dart's
+  //               ZoneStatus.owned fill/border language: solid fill +
+  //               solid border, no text) and stays fully visible right up
+  //               to the loop restart - the claim must never be seen to
+  //               fade to invisible before the cycle repeats.
   static const double _kCloseT = 2.4 / 5.2;
   static const double _kFillDoneT = 3.0 / 5.2;
   static const double _kStampEndT = 4.2 / 5.2;
+  static const double _kStampFadeOutT = 4.5 / 5.2;
 
   Offset _centroid(List<Offset> pts) {
     if (pts.isEmpty) return Offset.zero;
@@ -210,11 +217,18 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
       );
     }
 
-    // Reset window (4.2s-5.2s): everything fades to 0 while the base map
-    // persists, so the next cycle restarts with no visible seam.
-    final fade = t < _kStampEndT
+    // The claimed block's fill/border never fade out - the block holds a
+    // solid "conquered" look all the way to the loop restart, so `fade`
+    // only ever governs the comet trace during the pre-close beat.
+    const double fade = 1.0;
+
+    // "CLAIMED" stamp-only fade (4.2s-4.5s): the text disappears while the
+    // block itself stays fully visible, settling into the held conquered
+    // state for the remainder of the cycle (4.5s-5.2s).
+    final stampTextFade = t < _kStampEndT
         ? 1.0
-        : (1.0 - (t - _kStampEndT) / (1.0 - _kStampEndT)).clamp(0.0, 1.0);
+        : (1.0 - (t - _kStampEndT) / (_kStampFadeOutT - _kStampEndT))
+            .clamp(0.0, 1.0);
 
     final closed = t >= _kCloseT;
 
@@ -274,10 +288,11 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
         }
       }
 
-      // "CLAIMED" label + hold, 3.0s-4.2s.
+      // "CLAIMED" label + hold, 3.0s-4.2s, then fades out on its own
+      // (4.2s-4.5s) while the block's fill/border stay solid underneath.
       if (t >= _kFillDoneT) {
         final stampFadeIn = ((t - _kFillDoneT) / 0.08).clamp(0.0, 1.0);
-        final stampOpacity = stampFadeIn * fade;
+        final stampOpacity = stampFadeIn * stampTextFade;
         if (stampOpacity > 0) {
           final centroid = _centroid(blockPoly);
           final tp = TextPainter(
