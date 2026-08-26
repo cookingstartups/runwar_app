@@ -33,10 +33,15 @@ import 'intro_helpers.dart';
 // Faction C (kLimeGreen)    - southwest, the same avenue's other
 //   roundabout arm.
 //
-// Beat order (8s loop, normalized t 0.00–1.00):
-//   0.00–0.18  trisection reveal    - 3 faction wedges fade in around the drop
-//   0.18–0.45  faction color lock   - runners advance, already tinted
-//   0.45–0.55  flag drop + capture  - flag lands, first arrival becomes carrier
+// Beat order (8s loop, normalized t 0.00–1.00). The flag drop comes FIRST:
+// the drop is what triggers the city to react, so nothing else moves until
+// the flag is on the ground.
+//   0.00–0.07  flag drop            - flag falls onto a bare map, lands t=0.06
+//   0.06–0.20  "FLAG DROPPED"       - shockwave ring + label
+//   0.10–0.22  trisection reveal    - 3 faction wedges sweep in around the flag
+//   0.22–0.50  faction converge     - runners race in, already tinted
+//                                     A t=0.38, B t=0.44, C t=0.50
+//   0.38–0.55  capture              - first arrival (A) becomes the carrier
 //   0.55–0.62  base spawn           - carrier's base pops in; rivals show "?"
 //   0.62–0.85  carry + steal        - carrier runs home, a rival closes in
 //   0.85–1.00  hold + fade          - global fade-out, loop restarts
@@ -253,25 +258,32 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
   });
 
   // ── Timeline constants (8s loop, normalized t) ─────────────────────────────
-  // t 0.00–0.18 : trisection reveal - 3 faction wedges fade in around dropPt
-  // t 0.18–0.45 : faction color lock - runners advance, already tinted
-  //   A (blue) arrives t=0.33, B (pink) arrives t=0.39, C (lime) arrives t=0.45
-  // t 0.45–0.55 : flag drop + capture - flag falls/bounces, lands t=0.50;
-  //   "FLAG DROPPED" flashes, then "CAPTURED" in the carrier's faction color
+  // The flag lands FIRST - the drop is the event the factions react to, so
+  // the map is bare until the flag is down.
+  // t 0.00–0.07 : flag drop - flag falls/bounces onto dropPt, lands t=0.06,
+  //   shockwave ring fires on landing
+  // t 0.06–0.20 : "FLAG DROPPED" label
+  // t 0.10–0.22 : trisection reveal - 3 faction wedges sweep in around dropPt
+  // t 0.22–0.50 : faction converge - runners advance, already tinted
+  //   A (blue) arrives t=0.38, B (pink) arrives t=0.44, C (lime) arrives t=0.50
+  // t 0.38–0.55 : capture - first arrival becomes the carrier; "CAPTURED"
+  //   flashes in that faction's color, the flag holds until the base spawn
   // t 0.55–0.62 : base spawn - carrier's base pops in (visible); the other
   //   two factions' bases pop in as unlabeled "?" markers (base-secrecy rule)
   // t 0.62–0.85 : carry + steal - carrier runs home; the runner-up rival
   //   breaks off and closes in; INTERCEPT burst at t=0.80
   // t 0.85–1.00 : hold + fade - global fade-out, loop restarts
 
-  static const double _kTrisectionEnd = 0.18;
-  static const double _kLockStart = 0.18;
-  static const double _arrivalA = 0.33; // faction blue - becomes carrier
-  static const double _arrivalB = 0.39; // faction pink - becomes the interceptor
-  static const double _arrivalC = 0.45; // faction lime
-  static const double _kFlagDropStart = 0.45;
-  static const double _kFlagFallFrac = 0.05; // fall + bounce duration
-  static const double _kFlagLandT = _kFlagDropStart + _kFlagFallFrac; // 0.50
+  static const double _kFlagDropStart = 0.0;
+  static const double _kFlagFallFrac = 0.06; // fall + bounce duration
+  static const double _kFlagLandT = _kFlagDropStart + _kFlagFallFrac; // 0.06
+  static const double _kFlagDroppedLabelEnd = 0.20;
+  static const double _kTrisectionStart = 0.10;
+  static const double _kTrisectionEnd = 0.22;
+  static const double _kLockStart = 0.22;
+  static const double _arrivalA = 0.38; // faction blue - becomes carrier
+  static const double _arrivalB = 0.44; // faction pink - becomes the interceptor
+  static const double _arrivalC = 0.50; // faction lime
   static const double _kCapturedFlashEnd = 0.55;
   static const double _kBaseSpawnStart = 0.55;
   static const double _kBaseSpawnEnd = 0.62;
@@ -290,15 +302,24 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
     return (1.0 - (t - _fadeStart) / (1.0 - _fadeStart)).clamp(0.0, 1.0);
   }
 
-  /// Runner progress (0–1) along its route during the faction-lock beat,
-  /// clamped at arrival. Movement starts at _kLockStart - the flag drop now
-  /// happens AFTER the lock beat, unlike the superseded single-point
-  /// mechanic where runners moved toward an already-landed flag.
+  /// Runner progress (0–1) along its route during the converge beat, clamped
+  /// at arrival. Movement starts at _kLockStart, which now sits AFTER the
+  /// flag has landed and the trisection has swept in - the runners are
+  /// reacting to the drop, so nothing moves before it.
   double _runnerProgress(double arrivalT) {
     if (t >= arrivalT) return 1.0;
     const startT = _kLockStart;
     if (t < startT) return 0.0;
     return ((t - startT) / (arrivalT - startT)).clamp(0.0, 1.0);
+  }
+
+  /// Opacity ramp for a timed label window: fades in over [fadeIn], holds,
+  /// then fades out over the last [fadeOut] of the window.
+  double _labelOpacity(double start, double end, double fadeIn, double fadeOut) {
+    if (t < start || t >= end) return 0.0;
+    if (t < start + fadeIn) return ((t - start) / fadeIn).clamp(0.0, 1.0);
+    if (t > end - fadeOut) return ((end - t) / fadeOut).clamp(0.0, 1.0);
+    return 1.0;
   }
 
   /// Returns Offset position along a route list at fractional progress p.
@@ -343,11 +364,11 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
     tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy - tp.height / 2));
   }
 
-  // ── Flag drop: translate + bounce + shockwave (t 0.45–0.55) ───────────────
-  // The flag falls onto the drop point after the faction-lock beat and holds
-  // (with its shockwave ring) until capture is confirmed at _kCapturedFlashEnd
-  // - same fall/bounce mechanic as the superseded file, re-anchored to this
-  // later window.
+  // ── Flag drop: translate + bounce + shockwave (t 0.00–0.55) ───────────────
+  // The flag falls onto the drop point at the very top of the loop, onto a
+  // bare map, and holds there until the carrier picks it up at the base-spawn
+  // beat (_kCapturedFlashEnd). Everything else in the slide is a reaction to
+  // this landing.
   void _drawFlagDrop(Canvas canvas) {
     if (t < _kFlagDropStart || t >= _kCapturedFlashEnd) return;
     final landT = ((t - _kFlagDropStart) / _kFlagFallFrac).clamp(0.0, 1.0);
@@ -389,7 +410,7 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
   }
 
   // Start-position pulse: visible for a short window once runners are
-  // allowed to move (t=_kLockStart).
+  // allowed to move (t=_kLockStart), i.e. after the flag has landed.
   void _drawStartPulse(Canvas canvas, Offset pos, Color color) {
     const windowEnd = _kLockStart + 0.15;
     if (t < _kLockStart || t >= windowEnd) return;
@@ -425,10 +446,16 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
 
     final fade = _globalFade();
 
-    // ── 1. Trisection wedges - sweep in, then hold as background overlay ───
-    final revealScale = t < _kTrisectionEnd
-        ? Curves.easeOut.transform((t / _kTrisectionEnd).clamp(0.0, 1.0))
-        : 1.0;
+    // ── 1. Trisection wedges - sweep in AFTER the flag lands, then hold as
+    //      background overlay. Nothing is drawn before _kTrisectionStart, so
+    //      the flag drops onto a bare map.
+    final revealScale = t < _kTrisectionStart
+        ? 0.0
+        : (t < _kTrisectionEnd
+            ? Curves.easeOut.transform(((t - _kTrisectionStart) /
+                    (_kTrisectionEnd - _kTrisectionStart))
+                .clamp(0.0, 1.0))
+            : 1.0);
     drawCtfTrisection(
       canvas,
       center: dropPt,
@@ -437,12 +464,12 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
       opacity: fade,
     );
 
-    // ── 2. Start-position pulses (faction-lock beat only) ───────────────────
+    // ── 2. Start-position pulses (converge beat only) ───────────────────────
     _drawStartPulse(canvas, routeA.first, kSea);
     _drawStartPulse(canvas, routeB.first, kRunnerCPink);
     _drawStartPulse(canvas, routeC.first, kLimeGreen);
 
-    // ── 3. Faction color lock: runners advance already tinted ───────────────
+    // ── 3. Faction converge: runners advance already tinted ─────────────────
     final progressA = _runnerProgress(_arrivalA);
     final progressB = _runnerProgress(_arrivalB);
     final progressC = _runnerProgress(_arrivalC);
@@ -501,21 +528,17 @@ class _IntroFlagDropMapPainter extends CustomPainter with IntroPainterHelpers {
     _drawRunnerDot(canvas, posB, kRunnerCPink, fade);
     _drawRunnerDot(canvas, posC, kLimeGreen, fade);
 
-    // ── 6. Flag drop + capture (t 0.45–0.55) ─────────────────────────────────
+    // ── 6. Flag drop (t 0.00–0.06) + capture on first arrival (t 0.38) ───────
     _drawFlagDrop(canvas);
     _drawArrivalBurst(canvas, _arrivalA, fade);
-    if (t >= _kFlagLandT && t < _kFlagLandT + 0.03) {
-      final op = ((t - _kFlagLandT) / 0.015).clamp(0.0, 1.0);
+    // "FLAG DROPPED" fires on landing, long before any faction reacts;
+    // "CAPTURED" fires when the first runner (A) reaches the flag.
+    if (t >= _kFlagLandT && t < _kFlagDroppedLabelEnd) {
+      final op = _labelOpacity(_kFlagLandT, _kFlagDroppedLabelEnd, 0.02, 0.05);
       _drawLabel(canvas, 'FLAG DROPPED', dropPt.translate(0, -34), kAccent2,
           op * fade);
-    } else if (t >= _kFlagLandT + 0.03 && t < _kCapturedFlashEnd) {
-      const windowStart = _kFlagLandT + 0.03;
-      final op = t < windowStart + 0.01
-          ? ((t - windowStart) / 0.01).clamp(0.0, 1.0)
-          : (1.0 -
-                  (t - (windowStart + 0.01)) /
-                      (_kCapturedFlashEnd - windowStart - 0.01))
-              .clamp(0.0, 1.0);
+    } else if (t >= _arrivalA && t < _kCapturedFlashEnd) {
+      final op = _labelOpacity(_arrivalA, _kCapturedFlashEnd, 0.02, 0.06);
       _drawLabel(canvas, 'CAPTURED', dropPt.translate(0, -34), kSea, op * fade);
     }
 
