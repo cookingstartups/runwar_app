@@ -1,4 +1,4 @@
--- Migration 0071: permanent per-zone claim history for fog-of-war reveal.
+-- Migration 0072: permanent per-zone claim history for fog-of-war reveal.
 --
 -- Bug: fog visibility for a non-owned zone is gated on CURRENT ownership
 -- only (map_screen.dart's visibleZones: z.ownerId == userId OR fog-circle
