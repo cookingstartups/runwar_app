@@ -30,25 +30,20 @@ class GoogleAuthService {
       );
     }
 
-    // Try silent re-login first (no UI if already authenticated).
-    GoogleSignInAccount? account;
+    // Never call signInSilently() here. Google Play Services caches the account
+    // system-wide even after clearing app data, and the ID token it hands back
+    // is frequently stale. Supabase then rejects the exchange with
+    // AuthApiException(400 Bad ID token), and because the silent path had
+    // already produced an account the interactive picker was never reached, so
+    // sign-in failed on every single attempt with no way for the user to
+    // recover. Always use the interactive signIn() for user-triggered flows.
+    // See docs/AUTH.md.
+    final GoogleSignInAccount? account;
     try {
-      account = await _googleSignIn.signInSilently();
-    } catch (_) {
-      account = null;
-    }
-
-    // Never call signInSilently() here — Google Play Services caches the account
-    // system-wide even after clearing app data. The stale ID token is rejected by
-    // Supabase with AuthApiException(400 Bad ID token). Always use signIn() for
-    // user-triggered flows. See docs/AUTH.md.
-    if (account == null) {
-      try {
-        account = await _googleSignIn.signIn();
-      } catch (e) {
-        debugPrint('[GoogleAuthService] signIn error: $e');
-        throw GoogleAuthException('Google Sign-In failed: $e');
-      }
+      account = await _googleSignIn.signIn();
+    } catch (e) {
+      debugPrint('[GoogleAuthService] signIn error: $e');
+      throw GoogleAuthException('Google Sign-In failed: $e');
     }
 
     // User cancelled the picker.

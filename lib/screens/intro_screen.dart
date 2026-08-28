@@ -132,16 +132,7 @@ const _slides = [
     layout: _Layout.visualTopTextBottom,
     bodyMaxLines: 8,
   ),
-  // 9 - Cities preview / final CTA
-  _Slide(
-    tag: 'INVITE ONLY',
-    tagColor: kAccent,
-    headline: 'Choose your ground.',
-    body: 'Valencia is live. Five more cities sit behind the wall.',
-    anim: _Anim.none,
-    layout: _Layout.centeredClose,
-  ),
-  // 10 - Real-world events
+  // 9 - Real-world events
   _Slide(
     tag: 'YEARLY IN-PERSON EVENT',
     tagColor: kAccent2,
@@ -149,6 +140,20 @@ const _slides = [
     body: 'Behind every gamertag is a runner in your city.',
     anim: _Anim.physicalEvents,
     layout: _Layout.visualTopTextBottom,
+  ),
+  // 10 - Cities preview / final CTA.
+  //
+  // The centeredClose slide must stay LAST. A forward swipe or tap on it ends
+  // the intro (see _navigate), so any slide placed after it can never be
+  // reached: with the cities slide at position 9 the closing photo slide was
+  // present in this list but unreachable, and the deck ended one beat early.
+  _Slide(
+    tag: 'INVITE ONLY',
+    tagColor: kAccent,
+    headline: 'Choose your ground.',
+    body: 'Valencia is live. Five more cities sit behind the wall.',
+    anim: _Anim.none,
+    layout: _Layout.centeredClose,
   ),
 ];
 
@@ -613,7 +618,7 @@ class _SplitBleedSlide extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Layout C - Cities preview (slide 9: choose your ground)
+// Layout C - Cities preview (slide 10: choose your ground)
 // Ambient, non-interactive 3D card carousel previewing the real city roster
 // (kCitiesCatalog). No bottom CTA here -- the deck's own swipe-to-advance
 // gesture (see _navigate in _IntroScreenState) already calls _done() when
