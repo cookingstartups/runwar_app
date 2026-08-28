@@ -101,6 +101,34 @@ void main() {
       expect(entryCount, equals(10),
           reason: 'R-33: exactly 10 slides must remain, same order, no additions/removals');
     });
+
+    // GIVEN  _navigate ends the intro on a forward swipe/tap while the
+    //        centeredClose slide is showing
+    // WHEN   the _slides list is inspected
+    // THEN   the centeredClose slide is the LAST entry, so no slide sits
+    //        after it where it could never be reached
+    test('the centeredClose slide is the last entry so every slide is reachable',
+        () {
+      final src = _sourceText();
+      final match =
+          RegExp(r'const _slides = \[([\s\S]*?)\n\];').firstMatch(src);
+      expect(match, isNotNull, reason: '_slides list must exist');
+      final block = match!.group(1)!;
+
+      final closeMatches =
+          RegExp(r'_Layout\.centeredClose').allMatches(block).toList();
+      expect(closeMatches.length, equals(1),
+          reason: 'exactly one closing slide may exist in the deck');
+
+      final trailingSlides = RegExp(r'_Slide\(')
+          .allMatches(block.substring(closeMatches.first.end))
+          .length;
+      expect(trailingSlides, equals(0),
+          reason:
+              'no slide may follow the closing slide - a forward swipe on the '
+              'closing slide finishes the intro, so anything after it is '
+              'unreachable');
+    });
   });
 
   group('R-34: no Lottie dependency introduced', () {
