@@ -279,6 +279,7 @@ class TerritoryService {
         if (remainderHull.length >= 3) {
           await ds.updateZone(rivalId, {
             'geom_json': _encodePolygon(remainderHull),
+            'geom': _encodeWktPolygon(remainderHull),
             'dispute_at': nowIso,
             'updated_at': nowIso,
           });
@@ -297,6 +298,7 @@ class TerritoryService {
         'owner_id': userId,
         'city': rivalRow['city'] as String,
         'geom_json': _encodePolygon(intersection),
+        'geom': _encodeWktPolygon(intersection),
         'influence': 1.0,
         'status': 'owned',
         'contested_by_id': null,
@@ -334,6 +336,7 @@ class TerritoryService {
         'owner_id': userId,
         'city': city,
         'geom_json': _encodePolygon(track),
+        'geom': _encodeWktPolygon(track),
         'influence': 1.0,
         'status': 'owned',
         'contested_by_id': null,
@@ -778,6 +781,21 @@ class TerritoryService {
       (a.latitude - o.latitude) * (b.longitude - o.longitude);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /// EWKT literal for the NOT NULL PostGIS `zones.geom` column, mirroring
+  /// the claim_territory Edge Function's toWkt/ringToWktBody pair. The
+  /// offline fallback insert path used to omit `geom` entirely, so every
+  /// zone write on this path failed the live table's NOT NULL constraint
+  /// (Postgrest 23502) and the claim was lost whenever the Edge Function
+  /// call could not complete. Same auto-close rule as [_encodePolygon] so
+  /// the stored geometry always matches the rendered geom_json ring.
+  static String _encodeWktPolygon(List<LatLng> ring) {
+    final closed =
+        (ring.isNotEmpty && ring.first == ring.last) ? ring : [...ring, ring.first];
+    final body =
+        closed.map((p) => '${p.longitude} ${p.latitude}').join(', ');
+    return 'SRID=4326;POLYGON(($body))';
+  }
 
   static String _encodePolygon(List<LatLng> ring) {
     final closed =
