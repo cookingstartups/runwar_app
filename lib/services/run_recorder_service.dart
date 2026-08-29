@@ -21,6 +21,7 @@ import '../geo/lasso.dart'
         trackDistanceM,
         minRingBoundaryDistanceM,
         SelfIntersection;
+import '../geo/douglas_peucker.dart' show simplifyDouglasPeucker;
 import '../utils/runwar_constants.dart';
 
 enum RecorderState { idle, recording }
@@ -1013,14 +1014,21 @@ class RunRecorderService {
     final captureAnchorIdx = hit.isOwnedZoneWall
         ? _ownedWallCaptureAnchorIdx(hit, _track, k)
         : hit.intersectingSegmentIdx;
-    final polygon = computeCapture(
+    // Simplified (Douglas-Peucker, kDpSimplifyEpsilonM) immediately after
+    // capture - the earliest point the final closed loop exists - so every
+    // gate below (area, dedup span math on k, diagonal, compactness,
+    // path-length) evaluates the exact shape that later gets persisted, not
+    // the raw GPS trail. See kDpSimplifyEpsilonM's doc comment
+    // (runwar_constants.dart) for the full cross-language contract.
+    final polygon =
+        simplifyDouglasPeucker(computeCapture(
       _track,
       1,
       captureAnchorIdx,
       hit.intersectionPoint,
       k,
       isProximityClosure: hit.isProximityClosure,
-    );
+    ));
 
     final areaSqm = polygonArea(polygon) * 1e6;
 
@@ -1685,13 +1693,15 @@ class RunRecorderService {
       final captureAnchorIdx = hit.isOwnedZoneWall
           ? _ownedWallCaptureAnchorIdx(hit, partial, len - 1)
           : hit.intersectingSegmentIdx;
-      final polygon = computeCapture(
+      // Simplified for the same reason and at the same relative point as
+      // the live path in _scanForAutoClaim - see that call site's comment.
+      final polygon = simplifyDouglasPeucker(computeCapture(
         partial,
         1,
         captureAnchorIdx,
         hit.intersectionPoint,
         len - 1,
-      );
+      ));
       final areaSqm = polygonArea(polygon) * 1e6;
 
       // Consumed-span dedup gate, checked before the area floor - same

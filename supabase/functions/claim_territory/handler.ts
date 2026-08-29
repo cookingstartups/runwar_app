@@ -17,6 +17,8 @@ import { computeClaimInfluence, computeDisputeOverlapAreaSqm } from './merge_geo
 // never summed from source zones (overlapping/adjacent source zones would
 // double-count their shared area if simply added together).
 import { area as turfArea } from 'https://esm.sh/@turf/area@7';
+import { simplifyRingDouglasPeucker } from '../_shared/geometry.ts';
+import { DP_SIMPLIFY_EPSILON_M } from '../_shared/constants.ts';
 
 // Zone-unify edge-to-edge threshold, matching kProximityTriggerM (the same
 // 25 m radius used for loop-closure proximity triggering). A same-owner,
@@ -375,6 +377,17 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
         return ok({ result: 'failed', reason: 'corrupt_track' });
       }
     }
+
+    // Simplified (Douglas-Peucker, DP_SIMPLIFY_EPSILON_M) here, at the
+    // earliest point the final closed loop exists - after track selection
+    // or tracks-array union, before the gate below, before the WKT/geoJSON
+    // encoding further down, and before it is ever written to a zone row.
+    // The client already simplifies before dispatch (TerritoryService); this
+    // re-simplification is idempotent against an already-simplified ring and
+    // is what makes the server the authoritative side - a claim that arrives
+    // from an old, non-simplifying client still yields simplified storage.
+    // See DP_SIMPLIFY_EPSILON_M's doc comment (_shared/constants.ts).
+    coords = simplifyRingDouglasPeucker(coords, DP_SIMPLIFY_EPSILON_M);
 
     // Geometric floors the captured (or unioned) ring must clear before the
     // claim proceeds to zone-overlap evaluation. Area is always enforced;

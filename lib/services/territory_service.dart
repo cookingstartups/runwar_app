@@ -9,6 +9,7 @@ import 'supabase_service.dart';
 import 'telemetry_service.dart';
 import 'error_log_service.dart';
 import '../config/supabase_config.dart';
+import '../geo/douglas_peucker.dart' show simplifyDouglasPeucker;
 import '../geo/lasso.dart' show pointInPolygon;
 
 enum TerritoryResult { claimed, conquered, disputed, failed }
@@ -72,6 +73,16 @@ class TerritoryService {
     if (!SupabaseService.instance.isConnected) return null;
     if (tracks.isEmpty) return null;
 
+    // Simplified (Douglas-Peucker, kDpSimplifyEpsilonM) before it ever
+    // leaves the device - the client is the authoritative simplifier; the
+    // claim_territory edge function re-simplifies the received ring with
+    // the same epsilon idempotently, so an old client that has not yet
+    // picked this up still yields simplified storage. See
+    // kDpSimplifyEpsilonM's doc comment (runwar_constants.dart).
+    final simplifiedTracks = [
+      for (final t in tracks) simplifyDouglasPeucker(t),
+    ];
+
     List<num> coordOf(LatLng p) => [p.longitude, p.latitude];
     Map<String, Object> lineStringOf(List<LatLng> track) => {
           'type': 'LineString',
@@ -79,10 +90,10 @@ class TerritoryService {
         };
 
     final body = <String, Object>{'city': city};
-    if (tracks.length == 1) {
-      body['track'] = lineStringOf(tracks.first);
+    if (simplifiedTracks.length == 1) {
+      body['track'] = lineStringOf(simplifiedTracks.first);
     } else {
-      body['tracks'] = tracks.map(lineStringOf).toList();
+      body['tracks'] = simplifiedTracks.map(lineStringOf).toList();
     }
 
     try {
@@ -181,11 +192,22 @@ class TerritoryService {
   Future<ClaimOutcome> evaluateClaim(
     String userId,
     String city,
-    List<LatLng> track,
+    List<LatLng> rawTrack,
   ) async {
-    if (track.length < 3) {
+    if (rawTrack.length < 3) {
       return const ClaimOutcome(TerritoryResult.failed, null, reason: 'too_short');
     }
+
+    // Simplified (Douglas-Peucker, kDpSimplifyEpsilonM) before any gate or
+    // geometry op below runs, and before the geom_json/geom writes further
+    // down in this function - this offline fallback path is one of the two
+    // places (with the edge function) that persists a zone's stored
+    // geometry, so only the simplified vertex set is ever written here too.
+    // Idempotent against an already-simplified caller (RunRecorderService
+    // simplifies before dispatching), so this is defence-in-depth, not a
+    // second distinct simplification. See kDpSimplifyEpsilonM's doc comment
+    // (runwar_constants.dart).
+    final track = simplifyDouglasPeucker(rawTrack);
 
     final rivals = await ZonesService.instance.fetchZonesByCity(city);
     final newBBox = _bbox(track);
