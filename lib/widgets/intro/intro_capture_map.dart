@@ -5,21 +5,26 @@ import '../../theme.dart';
 import 'intro_helpers.dart';
 
 // ---------------------------------------------------------------------------
-// 2. IntroCaptureMap - player claims a single squared block (slide 2).
-//    A clean, uncontested claim: the player-controlled runner traces the
-//    4 edges of IntroZones.kS1Block1 in the slide's own accent color, the
-//    loop closes, the block fills and holds a "CLAIMED" stamp, then the
-//    cycle fades and restarts. No rival color and no dispute mechanics
-//    ever fire on this slide (R-1..R-4) - the capturer always renders in
-//    the player's own accent, never a rival color.
+// 2. IntroCaptureMap - a rival claims the block next to the player's
+//    fortified turf (slide 3, YOUR TURF).
 //
-//    Two visually distinct layers render here: the carried/pre-owned turf
-//    inherited from the prior slide (the "defender's" already-held
-//    territory) always paints as fixed kAccent orange, independent of
-//    whichever accent this slide is using - while the actively-claimed
-//    block (comet trace, runner, fill sweep, "CLAIMED" stamp - the
-//    "attacker" claiming new ground) always follows the slide's own
-//    widget.accent (currently a light-blue tag color on the YOUR TURF slide).
+//    Opens in slide 2's terminal state: kS1Block1 sits fortified (fill-only,
+//    IntroContinuity.kFortifyEndFillAlpha, kAccent orange) from frame 0 -
+//    no reset, no replay of slide 2's own controller. The kS1All orange
+//    underlay stays visible throughout, exactly as slide 2 leaves it.
+//
+//    A kSea rival then enters from off-screen along a right-angle street
+//    path OUTSIDE the conquered blocks - never cutting through a block
+//    interior - and traces a loop around the ADJACENT kS1Block2 (shares the
+//    A-B edge with kS1Block1). The loop closes, a flat kSea fill appears on
+//    kS1Block2 (a fresh level-1 claim, weaker than the player's own
+//    fortified block), a one-shot capture flash fires, and the scene holds
+//    quietly until the loop restarts. No contested-border treatment, no
+//    dispute visuals - a clean claim (mockup option A,
+//    round-2026-08-29/slide3-rival-round1.html).
+//
+//    The player's fortified kS1Block1 stays intact throughout - the old
+//    self-reclaim sequence and player-accent claim stamp are gone.
 // ---------------------------------------------------------------------------
 class IntroCaptureMap extends StatefulWidget {
   final Color accent;
@@ -41,18 +46,46 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
   late final AnimationController _ctrl;
   late final AnimationController _fadeCtrl;
 
-  /// The 4 vertices of the claimed block, unclosed (for fill/border).
-  List<Offset> _blockPoly = [];
+  /// The player's fortified block, screen-projected. Fill-only, painted
+  /// every frame - never resets.
+  List<Offset> _block1Pts = [];
 
-  /// The same 4 vertices with the first point repeated at the end, so the
-  /// comet/runner trace closes the loop back to its start.
-  List<Offset> _blockLoop = [];
+  /// The rival's target block, screen-projected (unclosed - fill/centroid
+  /// use it directly).
+  List<Offset> _block2Pts = [];
 
-  /// Slide 1's terminal captured territory (every kS1All block), projected to
-  /// screen space. Painted as a persistent under-layer so slide 2 opens on the
-  /// turf the player already holds - the pulse map's end state carried across
-  /// the cut - instead of a blank map that resets each loop.
-  List<List<Offset>> _carriedBlocks = [];
+  /// kS1All (all 3 held blocks), screen-projected - the persistent
+  /// held-territory under-layer, mirroring intro_fortify_map.dart's own
+  /// drawInheritedBlocks treatment.
+  List<List<Offset>> _underlayBlocks = [];
+
+  /// The rival's full approach + claim route: an off-screen right-angle
+  /// street path down to kS1Block2's far vertex (never grazing a block
+  /// interior), followed by the block's own perimeter back to that vertex -
+  /// the claim loop itself.
+  List<Offset> _rivalRoute = [];
+
+  /// Builds [_rivalRoute]: two street waypoints outside the block's
+  /// bounding box, then the full [block2] perimeter reordered to start/end
+  /// at [entryIdx] (the vertex farthest from the A-B edge shared with
+  /// kS1Block1, so the approach never crosses the player's own turf).
+  List<Offset> _buildRivalRoute(List<Offset> block2, int entryIdx) {
+    if (block2.isEmpty) return [];
+    final entry = block2[entryIdx];
+    final approach = <Offset>[
+      entry + const Offset(160, -220),
+      Offset(entry.dx + 160, entry.dy - 60),
+      Offset(entry.dx, entry.dy - 60),
+      entry,
+    ];
+    final n = block2.length;
+    final loop = <Offset>[];
+    for (int i = 0; i < n; i++) {
+      loop.add(block2[(entryIdx + i) % n]);
+    }
+    loop.add(entry);
+    return [...approach, ...loop];
+  }
 
   @override
   void initState() {
@@ -82,10 +115,14 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
     }
 
     markMapReady(() {
-      _blockPoly = IntroZones.kS1Block1.map(toScreen).toList();
-      _blockLoop = [..._blockPoly, _blockPoly.first];
-      _carriedBlocks =
+      _block1Pts = IntroZones.kS1Block1.map(toScreen).toList();
+      _block2Pts = IntroZones.kS1Block2.map(toScreen).toList();
+      _underlayBlocks =
           IntroZones.kS1All.map((b) => b.map(toScreen).toList()).toList();
+      // Entry vertex index 2 ("F" in kS1Block2's own vertex comments) sits
+      // farthest from the A-B edge shared with kS1Block1, so the rival's
+      // street approach never grazes the player's own block.
+      _rivalRoute = _buildRivalRoute(_block2Pts, 2);
     });
   }
 
@@ -117,10 +154,10 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
                 return CustomPaint(
                   painter: _IntroCaptureMapPainter(
                     t: _ctrl.value,
-                    accent: widget.accent,
-                    blockLoop: _blockLoop,
-                    blockPoly: _blockPoly,
-                    carriedBlocks: _carriedBlocks,
+                    block1Pts: _block1Pts,
+                    block2Pts: _block2Pts,
+                    rivalRoute: _rivalRoute,
+                    underlayBlocks: _underlayBlocks,
                     tailLengthPx: tailPx,
                   ),
                   child: const SizedBox.expand(),
@@ -135,39 +172,48 @@ class _IntroCaptureMapState extends State<IntroCaptureMap>
 
 class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
   final double t;
-  @override
-  final Color accent;
-  final List<Offset> blockLoop;
-  final List<Offset> blockPoly;
-  final List<List<Offset>> carriedBlocks;
+  final List<Offset> block1Pts;
+  final List<Offset> block2Pts;
+  final List<Offset> rivalRoute;
+  final List<List<Offset>> underlayBlocks;
   final double tailLengthPx;
+
+  // IntroPainterHelpers declares `accent` as an abstract getter for its
+  // shared drawFill/drawTrace/drawRunner/drawPings helpers; none of those
+  // are used here (every color on this slide is an explicit kAccent/kSea
+  // literal per the color-assignment rule), so this simply mirrors the
+  // rival's own color rather than driving any choice.
+  @override
+  Color get accent => kSea;
 
   _IntroCaptureMapPainter({
     required this.t,
-    required this.accent,
-    required this.blockLoop,
-    required this.blockPoly,
-    required this.carriedBlocks,
+    required this.block1Pts,
+    required this.block2Pts,
+    required this.rivalRoute,
+    required this.underlayBlocks,
     required this.tailLengthPx,
   });
 
-  // Beat timing - ~5.2s total cycle (R-3):
-  //   0.0 – 2.4s  comet trace around the 4 edges (~0.6s/edge)
-  //   2.4s        close: expanding ring ping from the block centroid
-  //   2.4 – 3.0s  fill sweep to IntroContinuity.kBlock1EndFillAlpha,
-  //               border settles to IntroContinuity.kBlock1EndBorderWidth
-  //   3.0 – 4.2s  "CLAIMED" stamp + hold
-  //   4.2 – 4.5s  the "CLAIMED" stamp itself fades out (block stays put)
-  //   4.5 – 5.2s  "conquered" hold - the block settles into a solid,
-  //               unstamped owned-territory look (map_screen.dart's
-  //               ZoneStatus.owned fill/border language: solid fill +
-  //               solid border, no text) and stays fully visible right up
-  //               to the loop restart - the claim must never be seen to
-  //               fade to invisible before the cycle repeats.
-  static const double _kCloseT = 2.4 / 5.2;
-  static const double _kFillDoneT = 3.0 / 5.2;
-  static const double _kStampEndT = 4.2 / 5.2;
-  static const double _kStampFadeOutT = 4.5 / 5.2;
+  // Beat timing - ~5.2s cycle. Phase structure mirrors the round-2 mockup's
+  // RIVAL INBOUND -> CLAIMING -> quiet-hold sequence (fractions of the
+  // cycle only; the mockup's own absolute 8s durations do not carry over):
+  //   0.00 - 0.08  held beat - block1 sits fortified, nothing else happens
+  //   0.08 - 0.55  RIVAL INBOUND + CLAIMING - the kSea runner traces the
+  //                street approach, then the kS1Block2 perimeter
+  //   0.55 - 0.64  claim resolves - flat kSea fill ramps in on kS1Block2
+  //   0.55 - 0.74  one-shot capture flash at the block centroid
+  //   0.64 - 1.00  quiet hold - block2 stays claimed with a faint
+  //                breathing glow; no contested-border treatment, no
+  //                dispute geometry (mockup option A)
+  static const double _kEntryT = 0.08;
+  static const double _kLoopCloseT = 0.55;
+  static const double _kFillDoneT = 0.64;
+  static const double _kFlashEndT = 0.74;
+
+  /// A fresh level-1 rival claim - weaker than the player's own fortified
+  /// block (IntroContinuity.kFortifyEndFillAlpha).
+  static const double _kRivalClaimAlpha = 0.19;
 
   Offset _centroid(List<Offset> pts) {
     if (pts.isEmpty) return Offset.zero;
@@ -179,149 +225,82 @@ class _IntroCaptureMapPainter extends CustomPainter with IntroPainterHelpers {
     return Offset(sx / pts.length, sy / pts.length);
   }
 
-  Path _makePoly(List<Offset> pts) {
-    if (pts.isEmpty) return Path();
-    final p = Path()..moveTo(pts[0].dx, pts[0].dy);
-    for (int i = 1; i < pts.length; i++) {
-      p.lineTo(pts[i].dx, pts[i].dy);
-    }
-    return p..close();
-  }
-
   @override
   void paint(Canvas canvas, Size size) {
-    if (blockLoop.isEmpty || blockPoly.isEmpty) return;
+    if (block1Pts.isEmpty || block2Pts.isEmpty) return;
 
-    // ── Carried turf (slide 1's end state) ─────────────────────────────────
-    // Paint the pulse map's captured union directly as a persistent under-
-    // layer at IntroContinuity.kS1CapturedFillAlpha. This is slide 1's held
-    // territory arriving intact across the cut - it is NOT gated by the loop's
-    // fade envelope, so the turf stays put while the claim sequence replays on
-    // top of it. Unioned (protocol #5) so contiguous blocks read as one shape
-    // with no internal seams, exactly like the pulse map's terminal frame.
-    // Always fixed kAccent orange - the "defender's" already-held territory -
-    // regardless of this slide's own widget.accent, so it reads as visually
-    // distinct from the actively-claimed block painted below in `accent`.
-    if (carriedBlocks.isNotEmpty) {
-      var carriedUnion = Path();
-      for (final block in carriedBlocks) {
-        if (block.isEmpty) continue;
-        carriedUnion =
-            Path.combine(PathOperation.union, carriedUnion, _makePoly(block));
+    // kS1All held territory - the same static under-layer every
+    // fortify/capture-family slide paints (drawInheritedBlocks).
+    drawInheritedBlocks(canvas, underlayBlocks);
+
+    // The player's fortified block never resets on this slide - it opens
+    // already at slide 2's terminal fill-only state and stays there.
+    drawFillColor(
+        canvas, block1Pts, kAccent, IntroContinuity.kFortifyEndFillAlpha);
+
+    if (rivalRoute.isEmpty) return;
+
+    if (t < _kLoopCloseT) {
+      // RIVAL INBOUND + CLAIMING - a single continuous comet path covers
+      // both the street approach and the block-perimeter claim trace.
+      if (t >= _kEntryT) {
+        final traceProgress =
+            ((t - _kEntryT) / (_kLoopCloseT - _kEntryT)).clamp(0.0, 1.0);
+        drawComet(canvas, rivalRoute, traceProgress,
+            tailLengthPx: tailLengthPx, color: kSea);
+        final segs = rivalRoute.length - 1;
+        final traveled = traceProgress * segs;
+        final segIdx = traveled.floor().clamp(0, segs - 1);
+        final segFrac = (traveled - segIdx).clamp(0.0, 1.0);
+        final pos = Offset.lerp(
+          rivalRoute[segIdx],
+          rivalRoute[(segIdx + 1).clamp(0, segs)],
+          segFrac,
+        )!;
+        drawRunnerAt(canvas, pos, kSea);
       }
-      canvas.drawPath(
-        carriedUnion,
+      return;
+    }
+
+    // The claim resolves - flat kSea fill, a fresh level-1 claim.
+    final fillRamp =
+        ((t - _kLoopCloseT) / (_kFillDoneT - _kLoopCloseT)).clamp(0.0, 1.0);
+    drawFillColor(canvas, block2Pts, kSea, _kRivalClaimAlpha * fillRamp);
+
+    // One-shot capture flash, right as the claim resolves.
+    final flashT =
+        ((t - _kLoopCloseT) / (_kFlashEndT - _kLoopCloseT)).clamp(0.0, 1.0);
+    if (flashT < 1.0) {
+      canvas.drawCircle(
+        _centroid(block2Pts),
+        flashT * 50.0,
         Paint()
-          ..color = kAccent.withValues(alpha: IntroContinuity.kS1CapturedFillAlpha)
-          ..style = PaintingStyle.fill,
+          ..color = kSea.withValues(alpha: (1.0 - flashT) * 0.7)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5,
       );
     }
 
-    // The claimed block's fill/border never fade out - the block holds a
-    // solid "conquered" look all the way to the loop restart, so `fade`
-    // only ever governs the comet trace during the pre-close beat.
-    const double fade = 1.0;
-
-    // "CLAIMED" stamp-only fade (4.2s-4.5s): the text disappears while the
-    // block itself stays fully visible, settling into the held conquered
-    // state for the remainder of the cycle (4.5s-5.2s).
-    final stampTextFade = t < _kStampEndT
-        ? 1.0
-        : (1.0 - (t - _kStampEndT) / (_kStampFadeOutT - _kStampEndT))
-            .clamp(0.0, 1.0);
-
-    final closed = t >= _kCloseT;
-
-    if (!closed) {
-      // Comet trace + orange runner tracing the 4 edges. No rival color,
-      // no dispute geometry - a clean, uncontested claim (R-1/R-4).
-      final traceProgress = (t / _kCloseT).clamp(0.0, 1.0);
-      drawComet(canvas, blockLoop, traceProgress,
-          tailLengthPx: tailLengthPx, color: accent, decayMul: fade);
-
-      final segs = blockLoop.length - 1;
-      final traveled = traceProgress * segs;
-      final segIdx = traveled.floor().clamp(0, segs - 1);
-      final segFrac = (traveled - segIdx).clamp(0.0, 1.0);
-      final pos = Offset.lerp(
-        blockLoop[segIdx],
-        blockLoop[(segIdx + 1).clamp(0, segs)],
-        segFrac,
-      )!;
-      drawRunnerAt(canvas, pos, accent);
-    } else {
-      // Fill sweep - ramps to IntroContinuity.kBlock1EndFillAlpha over the
-      // fill window, then holds through the stamp window. This exact value
-      // is what slide 3 re-paints verbatim as its Beat-1 opening frame (R-6).
-      final fillRamp =
-          ((t - _kCloseT) / (_kFillDoneT - _kCloseT)).clamp(0.0, 1.0);
-      final fillAlpha = IntroContinuity.kBlock1EndFillAlpha * fillRamp * fade;
-      drawFillColor(canvas, blockPoly, accent, fillAlpha);
-
-      // Border settles to a solid IntroContinuity.kBlock1EndBorderWidth
-      // stroke over the same fill window.
-      final borderWidth = IntroContinuity.kBlock1EndBorderWidth * fillRamp;
-      if (borderWidth > 0) {
-        canvas.drawPath(
-          _makePoly(blockPoly),
-          Paint()
-            ..color = accent.withValues(alpha: fade)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = borderWidth,
-        );
-      }
-
-      // Expanding ring ping from the block centroid at the close beat.
-      final pingT = ((t - _kCloseT) / 0.12).clamp(0.0, 1.0);
-      if (pingT < 1.0) {
-        final ringRadius = pingT * 60.0;
-        final ringAlpha = ((1.0 - pingT) * 0.7 * fade).clamp(0.0, 1.0);
-        if (ringAlpha > 0) {
-          canvas.drawCircle(
-            _centroid(blockPoly),
-            ringRadius,
-            Paint()
-              ..color = accent.withValues(alpha: ringAlpha)
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 2.0,
-          );
-        }
-      }
-
-      // "CLAIMED" label + hold, 3.0s-4.2s, then fades out on its own
-      // (4.2s-4.5s) while the block's fill/border stay solid underneath.
-      if (t >= _kFillDoneT) {
-        final stampFadeIn = ((t - _kFillDoneT) / 0.08).clamp(0.0, 1.0);
-        final stampOpacity = stampFadeIn * stampTextFade;
-        if (stampOpacity > 0) {
-          final centroid = _centroid(blockPoly);
-          final tp = TextPainter(
-            text: TextSpan(
-              text: 'CLAIMED',
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                letterSpacing: 2,
-                fontWeight: FontWeight.w700,
-                color: accent.withValues(alpha: stampOpacity),
-              ),
-            ),
-            textDirection: TextDirection.ltr,
-          )..layout();
-          tp.paint(
-            canvas,
-            Offset(centroid.dx - tp.width / 2, centroid.dy - tp.height / 2),
-          );
-        }
-      }
+    // Quiet hold - a faint breathing glow around the claimed block, no
+    // contested-border treatment and no dispute geometry (mockup option A).
+    if (t >= _kFillDoneT) {
+      final breathe = (math.sin((t - _kFillDoneT) * math.pi * 3) + 1) / 2;
+      canvas.drawPath(
+        Path()..addPolygon(block2Pts, true),
+        Paint()
+          ..color = kSea.withValues(alpha: 0.08 + breathe * 0.10)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3.0,
+      );
     }
   }
 
   @override
   bool shouldRepaint(_IntroCaptureMapPainter old) =>
       old.t != t ||
-      old.blockLoop != blockLoop ||
-      old.blockPoly != blockPoly ||
-      old.carriedBlocks != carriedBlocks ||
+      old.block1Pts != block1Pts ||
+      old.block2Pts != block2Pts ||
+      old.rivalRoute != rivalRoute ||
+      old.underlayBlocks != underlayBlocks ||
       old.tailLengthPx != tailLengthPx;
 }

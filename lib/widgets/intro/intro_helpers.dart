@@ -763,16 +763,20 @@ abstract final class IntroContinuity {
   /// player's turf persists across the cut instead of the map resetting empty.
   static const double kS1CapturedFillAlpha = 0.28; // union hold alpha
 
-  /// FORTIFY's (slide 2) final-lap ARMOR-3 terminal state, carried into
-  /// SHIELD's (slide 4) Beat-1 opening frame. Derived from
-  /// intro_fortify_map.dart's own final-lap math (`lap == 2`):
-  /// fillOpacity = 0.30 + 2 * 0.18 = 0.66, borderWidth = _kArmorBorderWidths[2].
-  /// Both intro_fortify_map.dart's own final lap and intro_defense_map.dart's
-  /// held opening beat reference these constants directly (never re-derive
-  /// the numbers independently), so the two frames are structurally
-  /// guaranteed to match rather than merely visually approximate.
-  static const double kFortifyEndFillAlpha = 0.66; // ARMOR 3 fill
-  static const double kFortifyEndBorderWidth = 5.0; // ARMOR 3 border (gold)
+  /// FORTIFY's (slide 2) final-lap terminal state, carried into SHIELD's
+  /// (slide 4) Beat-1 opening frame. Slide 2 is fill-only (no border) as of
+  /// the 2026-08-29 redesign: territory reads purely as a flat alpha,
+  /// 0.0633 per influence level, at level 9 (the final lap) =
+  /// 0.0633 * 9 = 0.5697, rounded to 0.57. Both intro_fortify_map.dart's own
+  /// final lap and intro_defense_map.dart's held opening beat reference
+  /// this constant directly (never re-derive the number independently), so
+  /// the two frames are structurally guaranteed to match rather than merely
+  /// visually approximate.
+  static const double kFortifyEndFillAlpha = 0.57; // level-9 fill
+  /// Border concept retired with the fill-only redesign - kept at 0 (not
+  /// removed) so intro_defense_map.dart's shared-constant reference still
+  /// resolves; consumers must guard on `> 0` before drawing a stroke with it.
+  static const double kFortifyEndBorderWidth = 0.0;
 
   /// Map screen's one-shot claim capture flash (not an intro-slide
   /// constant - shared here per this file's existing role as the single
