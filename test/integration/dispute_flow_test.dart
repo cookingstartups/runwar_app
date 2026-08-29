@@ -16,7 +16,8 @@
 //   4. Trigger a synthetic track via claimViaEdgeFunction mock →
 //        'Zone disputed!' snackbar + DisputeCountdownLabel on polygon
 //   5. Trigger a second track →
-//        'Zone conquered!' snackbar + ZoneLevelBadge shows 1 (green tier)
+//        'Zone conquered!' snackbar + zone resets to level 1 (fill-only,
+//        no badge - conveyed by fill depth alone)
 //
 // Mocks:
 //   - GeolocatorPlatform: returns fixed Valencia positions
@@ -39,7 +40,6 @@ import 'package:runwar_app/services/database/repository.dart';
 import 'package:runwar_app/services/database/zones_repository.dart';
 import 'package:runwar_app/services/database/models/zone.dart';
 import 'package:runwar_app/widgets/attack_sheet.dart';
-import 'package:runwar_app/widgets/zone_level_badge.dart';
 import 'package:runwar_app/widgets/dispute_countdown_label.dart';
 import 'package:runwar_app/providers/app_config_provider.dart';
 import 'package:runwar_app/providers/auth_provider.dart';
@@ -261,10 +261,10 @@ void main() {
       expect(cityConfig.center.latitude, closeTo(39.4699, 0.001));
       expect(cityConfig.center.longitude, closeTo(-0.3763, 0.001));
 
-      // Step 3: tap the ZoneLevelBadge marker for the rival zone.
-      // Using the ValueKey('zone-z1') set on the GestureDetector wrapping each
-      // badge marker — avoids relying on flutter_map's coordinate projection
-      // which is unreliable in test viewports.
+      // Step 3: tap the rival zone's own tap-target marker.
+      // Using the ValueKey('zone-z1') set on the GestureDetector wrapping
+      // the zone marker - avoids relying on flutter_map's coordinate
+      // projection which is unreliable in test viewports.
       await tester.tap(find.byKey(const ValueKey('zone-z1')));
       await _settle(tester);
 
@@ -310,13 +310,15 @@ void main() {
       zonesController.add([Zone.fromGeoJsonRow(conqueredRow)]);
       await _settle(tester);
 
-      // Snackbar text ('Zone conquered!') only fires via confirmClaim() — covered
-      // by unit tests. Verify the observable UI state: badge resets to level 1.
-
-      // ZoneLevelBadge for 'z1' should show level 1 (green tier).
-      final badges = tester.widgetList<ZoneLevelBadge>(find.byType(ZoneLevelBadge));
-      expect(badges.any((b) => b.level == 1), isTrue,
-          reason: 'After conquest, zone level must reset to 1');
+      // Snackbar text ('Zone conquered!') only fires via confirmClaim() -
+      // covered by unit tests. Influence level is no longer conveyed by any
+      // marker widget (fill-only rendering, no badge) - the fill-alpha
+      // formula itself is regression-locked in
+      // claim_capture_flash_and_level_label_test.dart. Here we only verify
+      // the zone's own tap target still renders after the conquest update.
+      expect(find.byKey(const ValueKey('zone-z1')), findsOneWidget,
+          reason: 'Zone marker must still render after conquest updates the '
+              'zone to owned/level 1');
     });
 
     // GIVEN: a zone at level=3 is disputed (attacker has an open dispute)
@@ -416,12 +418,15 @@ void main() {
       expect(find.byType(DisputeCountdownLabel), findsNothing,
           reason: 'DisputeCountdownLabel must unmount when zone returns to owned status');
 
-      // Zone level must have incremented to 4 (defender won).
-      final badges =
-          tester.widgetList<ZoneLevelBadge>(find.byType(ZoneLevelBadge));
-      expect(badges.any((b) => b.level == 4), isTrue,
-          reason:
-              'Defender-wins path must increment influence_level from 3 to 4 (design.md §3)');
+      // Zone level must have incremented to 4 (defender won). Influence
+      // level is no longer conveyed by any marker widget (fill-only
+      // rendering, no badge) - the fill-alpha formula itself is
+      // regression-locked in claim_capture_flash_and_level_label_test.dart.
+      // Here we only verify the zone's own tap target still renders after
+      // the resolver updates the zone.
+      expect(find.byKey(const ValueKey('zone-z1')), findsOneWidget,
+          reason: 'Zone marker must still render after the resolver '
+              'increments influence_level');
     });
   });
 }
