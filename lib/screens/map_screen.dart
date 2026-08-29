@@ -30,7 +30,6 @@ import '../widgets/closure_indicator.dart';
 import '../widgets/live_run_stats_strip.dart';
 import '../widgets/location_denied_gate.dart';
 import '../widgets/territory_overlay_painter.dart';
-import '../widgets/zone_level_badge.dart';
 import '../widgets/intro/intro_helpers.dart'
     show sharedEdgePolylines, formatSqm, IntroContinuity;
 import '../geo/lasso.dart' show polygonArea, pointInPolygon, trackDistanceM;
@@ -1233,7 +1232,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
                 ]);
               },
             ),
-            // ZoneLevelBadge + DisputeCountdownLabel markers at polygon centroids.
+            // DisputeCountdownLabel markers at polygon centroids.
             MarkerLayer(
               markers: _buildZoneMarkers(visibleZones),
             ),
@@ -1698,17 +1697,6 @@ class _MapScreenState extends ConsumerState<MapScreen>
         ));
       }
     }
-    // One numeric influence-level badge per rendered holding (contiguity
-    // group, same grouping the fill uses) - never one per zone or outline.
-    // Non-interactive: the per-zone GestureDetector above already owns taps.
-    for (final label in _computeZoneLevelLabels(zones)) {
-      markers.add(Marker(
-        point: label.anchor,
-        width: 28,
-        height: 28,
-        child: IgnorePointer(child: ZoneLevelBadge(level: label.level)),
-      ));
-    }
     return markers;
   }
 
@@ -1719,25 +1707,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
   List<LatLng> _smoothedForRender(List<LatLng> ring) =>
       chaikinSmoothClosed(ring, iterations: kZoneRenderSmoothingIterations);
 
-  /// Builds the glow (background) polygon layer — wide low-alpha stroke per zone.
+  /// Builds the glow (background) polygon layer - wide low-alpha stroke.
+  /// Owned zones are fill-only and never get a glow border; only disputed
+  /// zones (still amber/pulsing, unchanged) render here.
   List<Polygon> _buildPolygonsGlow(List<Zone> zones, double pulse) {
     final out = <Polygon>[];
     for (final z in zones) {
-      if (z.status == ZoneStatus.owned) {
-        final ownerProfile =
-            ref.watch(profileCacheProvider(z.ownerId)).valueOrNull;
-        final ownerColor =
-            _hexToColor(ownerProfile?['color']?.toString() ?? '#FF7A00');
-        final glowAlpha = 0.12 + pulse * 0.14; // 12% → 26%
-        out.add(Polygon(
-          points: _smoothedForRender(z.points),
-          isFilled: false,
-          color: Colors.transparent,
-          borderColor: ownerColor.withValues(alpha: glowAlpha),
-          borderStrokeWidth: 8.0,
-          isDotted: false,
-        ));
-      } else if (z.status == ZoneStatus.disputed) {
+      if (z.status == ZoneStatus.disputed) {
         final glowAlpha = 0.08 + pulse * 0.10;
         out.add(Polygon(
           points: _smoothedForRender(z.points),
@@ -1758,7 +1734,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   /// Disputed zones: amber at fixed 15% fill regardless of influence,
   /// always rendered independently (never part of an owned union group).
   List<Polygon> _buildPolygons(List<Zone> zones, double pulse) {
-    final out = <Polygon>[..._buildUnifiedOwnedPolygons(zones, pulse)];
+    final out = <Polygon>[..._buildUnifiedOwnedPolygons(zones)];
     for (final z in zones) {
       if (z.status == ZoneStatus.disputed) {
         final fillAlpha = 0.10 + pulse * 0.08; // 10% → 18%
@@ -1785,7 +1761,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   /// Consequences #4) emits one flutter_map Polygon per contour — this is
   /// the natural, unmodified behavior of iterating `Path.computeMetrics()`,
   /// no special-casing required.
-  List<Polygon> _buildUnifiedOwnedPolygons(List<Zone> zones, double pulse) {
+  List<Polygon> _buildUnifiedOwnedPolygons(List<Zone> zones) {
     final out = <Polygon>[];
     final owned = zones.where((z) => z.status == ZoneStatus.owned).toList();
     if (owned.isEmpty) return out;
@@ -1804,52 +1780,29 @@ class _MapScreenState extends ConsumerState<MapScreen>
       for (final group in groups) {
         final level = group.map((z) => z.influenceLevel).reduce(math.max).clamp(1, 15);
         final baseAlpha = 0.0633 * level;
-        final fillAlpha = baseAlpha * (0.75 + 0.25 * pulse);
-        final strokeWidth = 1.0 + (level / 15.0) * 2.0;
-        final borderAlpha = 0.60 + 0.40 * pulse;
 
         if (group.length == 1 && group.first.outlines.length <= 1) {
           out.add(Polygon(
             points: _smoothedForRender(group.first.points),
             isFilled: true,
-            color: ownerColor.withValues(alpha: fillAlpha),
-            borderColor: ownerColor.withValues(alpha: borderAlpha),
-            borderStrokeWidth: strokeWidth,
+            color: ownerColor.withValues(alpha: baseAlpha),
+            borderStrokeWidth: 0,
             isDotted: false,
           ));
           continue;
         }
 
-        // Per-zone fill pass (fill-only, no border of its own): each
-        // sub-area keeps its own alpha, derived from its own
-        // influenceLevel rather than the group's max, so unequal-level
-        // adjacent zones stay visually distinguishable even while they
-        // share one outline below.
-        for (final z in group) {
-          final zLevel = z.influenceLevel.clamp(1, 15);
-          final zFillAlpha = 0.0633 * zLevel * (0.75 + 0.25 * pulse);
-          for (final outline in z.outlines) {
-            out.add(Polygon(
-              points: _smoothedForRender(outline),
-              isFilled: true,
-              color: ownerColor.withValues(alpha: zFillAlpha),
-              borderStrokeWidth: 0,
-              isDotted: false,
-            ));
-          }
-        }
-
-        // Shared-outline pass (unchanged geometry computation): union every
-        // outline of every zone in this group as its own disjoint subpath
-        // (design.md Section 4/Consequences #4). A zone whose own geometry
-        // is already a MultiPolygon (a Tier-2 server merge) contributes one
-        // subpath per member outline, with NO bridging between them;
-        // Path.combine(PathOperation.union, ...) composes disjoint contours
-        // correctly on its own, so this only requires feeding it every
-        // outline instead of assuming one per zone. Only the stroke is
-        // emitted here now - fill was moved to the per-zone pass above, so
-        // this reads as one continuous edge with no interior seam and no
-        // competing per-sub-area border underneath it.
+        // Seamless-underlay pass (unchanged geometry computation): union
+        // every outline of every zone in this group as its own disjoint
+        // subpath (design.md Section 4/Consequences #4). A zone whose own
+        // geometry is already a MultiPolygon (a Tier-2 server merge)
+        // contributes one subpath per member outline, with NO bridging
+        // between them; Path.combine(PathOperation.union, ...) composes
+        // disjoint contours correctly on its own, so this only requires
+        // feeding it every outline instead of assuming one per zone. Fill
+        // only, no border - this underlay is what keeps the merged holding
+        // free of a visible hairline seam at the anti-aliased edge between
+        // adjacent per-zone fills, without drawing any stroke at all.
         final cam = _mapController.camera;
         var unified = Path();
         for (final z in group) {
@@ -1887,10 +1840,28 @@ class _MapScreenState extends ConsumerState<MapScreen>
           if (contourPts.length >= 3) {
             out.add(Polygon(
               points: contourPts,
-              isFilled: false,
-              color: Colors.transparent,
-              borderColor: ownerColor.withValues(alpha: borderAlpha),
-              borderStrokeWidth: strokeWidth,
+              isFilled: true,
+              color: ownerColor.withValues(alpha: baseAlpha),
+              borderStrokeWidth: 0,
+              isDotted: false,
+            ));
+          }
+        }
+
+        // Per-zone fill pass (fill-only, no border): drawn on top of the
+        // seamless underlay above, each sub-area keeps its own alpha,
+        // derived from its own influenceLevel rather than the group's max,
+        // so unequal-level adjacent zones stay visually distinguishable
+        // even while they share one seamless base shape underneath.
+        for (final z in group) {
+          final zLevel = z.influenceLevel.clamp(1, 15);
+          final zFillAlpha = 0.0633 * zLevel;
+          for (final outline in z.outlines) {
+            out.add(Polygon(
+              points: _smoothedForRender(outline),
+              isFilled: true,
+              color: ownerColor.withValues(alpha: zFillAlpha),
+              borderStrokeWidth: 0,
               isDotted: false,
             ));
           }
