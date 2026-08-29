@@ -1,17 +1,25 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart' hide Path;
-import '../../theme.dart';
 import 'intro_helpers.dart';
 
 // ---------------------------------------------------------------------------
-// 4. IntroFortifyMap - 3 re-laps of the shared block, ARMOR 1->2->3 (slide 4).
-//    8s total loop, ~2.7s per lap. Traces IntroZones.kS1Block1 directly
-//    (continuity with slides 2/3 - R-13), replacing the old bespoke
-//    old bespoke 6-waypoint route that pointed at an unrelated location.
-//    Lap/badge/border are derived as a pure function of the controller
-//    value inside AnimatedBuilder.builder - no addListener/setState
-//    anti-pattern (protocol rule 1; design.md).
+// 4. IntroFortifyMap - 3 re-laps of the shared block, fill-only influence
+//    levels 3 -> 6 -> 9 (slide 2). 8s total loop, ~2.7s per lap. Traces
+//    IntroZones.kS1Block1 directly (continuity with slides 2/3 - R-13),
+//    replacing the old bespoke 6-waypoint route that pointed at an
+//    unrelated location.
+//
+//    Territory renders as a flat-alpha fill only - no border stroke,
+//    no gold hard-switch on the final lap, no centroid pulse ring - the
+//    2026-08-29 redesign. Fill alpha = 0.0633 * influenceLevel, with laps
+//    mapping to levels 3/6/9 (lap 0 = alpha 0.19, lap 1 = alpha 0.38, lap 2
+//    = alpha 0.57). Each lap close fires a brief one-shot flare (level-up
+//    feedback), easing out over IntroContinuity.kCaptureFlashDuration.
+//
+//    Lap/fill/flare are derived as a pure function of the controller value
+//    inside AnimatedBuilder.builder - no addListener/setState anti-pattern
+//    (protocol rule 1; design.md).
 // ---------------------------------------------------------------------------
 class IntroFortifyMap extends StatefulWidget {
   final Color accent;
@@ -125,7 +133,7 @@ class _IntroFortifyMapState extends State<IntroFortifyMap>
 class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
   final double t;
 
-  /// 0, 1 or 2 -> ARMOR 1, 2, 3 (design.md: `(_ctrl.value * 3).floor().clamp(0, 2)`).
+  /// 0, 1 or 2 -> influence level 3, 6, 9 (design.md: `(_ctrl.value * 3).floor().clamp(0, 2)`).
   final int lap;
 
   @override
@@ -143,25 +151,12 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     required this.tailLengthPx,
   });
 
-  // The final-lap (ARMOR 3) border width is IntroContinuity's shared
-  // constant, not a local literal - slide 4 (SHIELD) reuses this exact
-  // value to open on this slide's terminal state, so the two frames can
-  // never visually drift apart.
-  static const List<double> _kArmorBorderWidths = [
-    1.5,
-    3.0,
-    IntroContinuity.kFortifyEndBorderWidth,
-  ];
-
-  Offset _routeCentroid() {
-    if (routePts.isEmpty) return Offset.zero;
-    double sumX = 0, sumY = 0;
-    for (final pt in routePts) {
-      sumX += pt.dx;
-      sumY += pt.dy;
-    }
-    return Offset(sumX / routePts.length, sumY / routePts.length);
-  }
+  // Flat-alpha influence-fill unit - 0.0633 per level, so level 9 (the
+  // final lap) resolves to 0.0633 * 9 = 0.5697, rounded to
+  // IntroContinuity.kFortifyEndFillAlpha (0.57). Slide 4 (SHIELD) reuses
+  // that exact constant to open on this slide's terminal state, so the two
+  // frames can never visually drift apart.
+  static const double _kInfluenceAlphaUnit = 0.0633;
 
   /// Arc-length interpolation along a closed polyline.
   Offset _posOnClosedLoop(List<Offset> pts, double frac) {
@@ -198,32 +193,18 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     // 0. Inherited orange blocks - static base.
     drawInheritedBlocks(canvas, inheritedPts);
 
-    // 1. Block fill - thickens with each completed lap (ARMOR 1 -> 2 -> 3).
-    // The final lap (ARMOR 3) resolves to IntroContinuity's shared constant
-    // directly, rather than recomputing a value that merely happens to
-    // match - slide 4 (SHIELD) opens on this exact fill alpha.
-    final fillOpacity =
-        lap == 2 ? IntroContinuity.kFortifyEndFillAlpha : 0.30 + lap * 0.18;
+    // 1. Block fill - flat alpha, thickens with each completed lap
+    // (level 3 -> 6 -> 9). No border, no gradient, no pulse modulation -
+    // the final lap resolves to IntroContinuity's shared constant directly,
+    // rather than recomputing a value that merely happens to match - slide
+    // 4 (SHIELD) opens on this exact fill alpha.
+    final influenceLevel = switch (lap) { 0 => 3, 1 => 6, _ => 9 };
+    final fillOpacity = lap == 2
+        ? IntroContinuity.kFortifyEndFillAlpha
+        : _kInfluenceAlphaUnit * influenceLevel;
     drawFillColor(canvas, routePts, accent, fillOpacity);
 
-    // 2. Border - thickens with each completed lap; gold-tinted at ARMOR 3.
-    final borderColor = lap == 2 ? kAccent2 : accent;
-    final borderWidth = _kArmorBorderWidths[lap];
-    final loopPath = Path()..moveTo(routePts[0].dx, routePts[0].dy);
-    for (int i = 1; i < routePts.length; i++) {
-      loopPath.lineTo(routePts[i].dx, routePts[i].dy);
-    }
-    loopPath.close();
-    canvas.drawPath(
-      loopPath,
-      Paint()
-        ..color = borderColor.withValues(alpha: 0.9)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = borderWidth
-        ..strokeJoin = StrokeJoin.round,
-    );
-
-    // 3. Runner traces the block once per lap (3 laps / 8s loop) - persists
+    // 2. Runner traces the block once per lap (3 laps / 8s loop) - persists
     // continuously (no fade) so the loop reads as ongoing training effort.
     final closedRoute = [...routePts, routePts[0]];
     final lapPos = (t * 3) % 1.0;
@@ -232,18 +213,22 @@ class _IntroFortifyMapPainter extends CustomPainter with IntroPainterHelpers {
     final runnerPos = _posOnClosedLoop(routePts, lapPos);
     drawRunnerAt(canvas, runnerPos, accent);
 
-    // 4. At ARMOR 3 (final lap), a gold pulse ring reinforces the
-    // max-hardened state.
-    if (lap == 2) {
-      final pulseT = (math.sin(t * math.pi * 4) + 1) / 2;
-      canvas.drawCircle(
-        _routeCentroid(),
-        20 + pulseT * 10,
-        Paint()
-          ..color = kAccent2.withValues(alpha: (1.0 - pulseT) * 0.5)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.0,
-      );
+    // 3. On each lap close (level-up), a brief one-shot fill flare eases
+    // out over IntroContinuity.kCaptureFlashDuration - the level-up moment
+    // feedback, reusing the same easing shape as the map screen's capture
+    // flash. Only fires when a lap has genuinely just closed (lap > 0);
+    // the very first frame (lap == 0, t == 0) is the block already sitting
+    // at level 3, not a level-up.
+    if (lap > 0) {
+      const lapDurationMs = 8000.0 / 3.0;
+      final withinLapMs = ((t * 3) - lap) * lapDurationMs;
+      final flareWindowMs =
+          IntroContinuity.kCaptureFlashDuration.inMilliseconds.toDouble();
+      if (withinLapMs < flareWindowMs) {
+        final flareT = withinLapMs / flareWindowMs;
+        final flareAlpha = (1.0 - flareT) * 0.35;
+        drawFillColor(canvas, routePts, accent, flareAlpha);
+      }
     }
   }
 

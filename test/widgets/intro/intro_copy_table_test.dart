@@ -74,7 +74,7 @@ void main() {
       const expectedHeadlines = [
         'Loop it. Own it.',
         'Under attack? Tap back.',
-        'Run it again. Make it armor.',
+        'Loop it again.\\nAssert your influence.',
         'A flag drops. The city sprints.',
         'THE PURGE BEGINS',
         'Real streets. Real rivals.',

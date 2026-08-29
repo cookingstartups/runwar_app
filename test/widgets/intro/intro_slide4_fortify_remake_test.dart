@@ -62,8 +62,22 @@ void main() {
           reason: 'ARMOR 2 text-badge string literal must be removed');
       expect(src, isNot(contains('⌃⌃⌃ ARMOR 3')),
           reason: 'ARMOR 3 text-badge string literal must be removed');
-      expect(src, contains('_kArmorBorderWidths'),
-          reason: 'lap-derived border-width progression must still exist');
+    });
+
+    // GIVEN  the 2026-08-29 fill-only redesign
+    // WHEN   the source is inspected
+    // THEN   the old lap-derived border-width progression and any kAccent2
+    //        gold hard-switch are gone entirely - territory is fill-only
+    test('border-width progression and kAccent2 gold hard-switch are removed', () {
+      final src = _sourceText();
+      expect(src, isNot(contains('_kArmorBorderWidths')),
+          reason: 'fill-only redesign: no border-width progression remains');
+      expect(src, isNot(contains('kAccent2')),
+          reason: 'fill-only redesign: no gold kAccent2 hard-switch or pulse '
+              'ring may appear anywhere in this widget');
+      expect(src, isNot(contains('PaintingStyle.stroke')),
+          reason: 'fill-only redesign: no border stroke may be drawn on the '
+              'territory polygon');
     });
 
     test('old numeric "LV" level-counter framing is absent from source file', () {
@@ -113,7 +127,7 @@ void main() {
           ? File('lib/screens/intro_screen.dart').readAsStringSync()
           : File('/home/algif/repos/venture/runwar/runwar_app/lib/screens/intro_screen.dart')
               .readAsStringSync();
-      expect(src, contains('Run it again. Make it armor.'),
+      expect(src, contains('Loop it again.\\nAssert your influence.'),
           reason: 'R-14: slide 4 headline must be updated');
       expect(
         src,

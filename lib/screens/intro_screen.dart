@@ -68,7 +68,7 @@ const _slides = [
   _Slide(
     tag: 'FORTIFY',
     tagColor: kAccent,
-    headline: 'Run it again. Make it armor.',
+    headline: 'Loop it again.\nAssert your influence.',
     body: 'Every extra lap hardens your claim. Level 1, level 2, level 3. The streets remember who trained hardest.',
     anim: _Anim.fortify,
     layout: _Layout.textTopVisualBottom,

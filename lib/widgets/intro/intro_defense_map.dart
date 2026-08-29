@@ -373,9 +373,11 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
         ..style = PaintingStyle.fill,
     );
 
-    // Border stress-flickers during Beat 2 (raid trace); otherwise a steady
-    // solid gold IntroContinuity.kFortifyEndBorderWidth stroke, matching
-    // ARMOR 3's gold-tinted border in intro_fortify_map.dart.
+    // Border concept retired with slide 2's fill-only redesign -
+    // IntroContinuity.kFortifyEndBorderWidth is now 0, so no stroke draws
+    // here at all (a bare `strokeWidth: 0` would still render a Flutter
+    // hairline stroke, hence the explicit `> 0` guard rather than relying on
+    // the width alone).
     double borderWidth = IntroContinuity.kFortifyEndBorderWidth;
     double borderAlpha = 0.9;
     if (t >= _kBeat1End && t < _kBeat2End) {
@@ -384,13 +386,15 @@ class _IntroDefenseMapAPainter extends CustomPainter with IntroPainterHelpers {
           IntroContinuity.kFortifyEndBorderWidth * (0.6 + 0.4 * flicker);
       borderAlpha = 0.6 + 0.4 * flicker;
     }
-    canvas.drawPath(
-      blockPath,
-      Paint()
-        ..color = kAccent2.withValues(alpha: borderAlpha)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = borderWidth,
-    );
+    if (borderWidth > 0) {
+      canvas.drawPath(
+        blockPath,
+        Paint()
+          ..color = kAccent2.withValues(alpha: borderAlpha)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = borderWidth,
+      );
+    }
 
     // Beat 1 (0-1s): FORTIFY's held terminal frame - the ARMOR 3 badge,
     // static for the whole beat (no fade - it is a held shot, not a
