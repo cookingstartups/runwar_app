@@ -1140,8 +1140,8 @@ void main() {
           reason: 'Flipping the flag back on must restore exactly today\'s enforcement');
       expect(rejectionCapture.captured, hasLength(1));
       expect(rejectionCapture.captured.first.reason, GateRejectionReason.compactness,
-          reason: 'The wedge clears area (~1650 sqm > 1500) and diagonal (~431 m > 30 m) '
-              'but fails compactness (~0.0089 < 0.15), so compactness is the reason it '
+          reason: 'The wedge clears area (~6662 sqm > 1500) and diagonal (~431 m > 30 m) '
+              'but fails compactness (~0.0358 < 0.15), so compactness is the reason it '
               'is rejected once shape gates are re-enabled');
     });
 
@@ -1387,17 +1387,27 @@ List<LatLng> _elongatedSliverPath() => [
 // near A). A(0,0) -> B(east, short edge) -> C(north, long edge) ->
 // D(west, back to A's longitude) -> E(closes near A).
 //
-// Captured polygon: area ~1650 sqm (clears the 1500 sqm area floor), a
+// Captured polygon: area ~6662 sqm (clears the 1500 sqm area floor), a
 // bounding-box diagonal ~431 m (clears the 30 m diagonal floor), and a
-// compactness of ~0.0089 (area / diagonal^2), far below the 0.15
+// compactness of ~0.0358 (area / diagonal^2), far below the 0.15
 // compactness floor - so it clears area and diagonal but fails compactness
 // hard. Exact figures verified against the app's own polygonArea /
 // polygonBboxDiagonalM projections (lib/geo/lasso.dart) before being fixed
 // as literals here.
+//
+// The wedge's short-edge width (~15.6 m, the lng delta between the first
+// two vertices) is deliberately kept ABOVE kDpSimplifyEpsilonM (10 m,
+// runwar_constants.dart) - the auto-claim scan now runs Douglas-Peucker
+// simplification on the captured polygon before any gate, and a narrower
+// width (the original ~3.9 m fixture) is genuinely indistinguishable from
+// GPS jitter at that epsilon, so DP would collapse the wedge to near-zero
+// area before the compactness gate ever saw it. This fixture exists to
+// exercise the compactness gate specifically, so its geometry must survive
+// simplification unchanged.
 List<LatLng> _thinWedgePath() => const [
       LatLng(34.7, 33.0),
-      LatLng(34.7, 33.00004292345667),
-      LatLng(34.70389904107111, 33.00004292345667),
+      LatLng(34.7, 33.00017),
+      LatLng(34.70389904107111, 33.00017),
       LatLng(34.70389904107111, 33.0),
       LatLng(34.70000271394971, 33.00000218528903),
     ];

@@ -137,6 +137,23 @@ const int kMaxPlausibleSessionElapsedSec = 86400; // 24 h
 // If this value changes, change the server value too.
 const bool kEnforceShapeGates = false;
 
+// Douglas-Peucker simplification epsilon (metres), applied to a closed GPS
+// capture loop at claim time - see lib/geo/douglas_peucker.dart's
+// simplifyDouglasPeucker. Only the simplified vertex set is ever written to
+// a zone's stored geometry (geom / geom_json); the raw GPS trail is never
+// persisted as the territory shape. Applied client-side in
+// RunRecorderService (before the area/compactness/diagonal/path-length
+// gates, so those gates evaluate the same shape that later gets stored) and
+// again, idempotently, in TerritoryService's offline fallback and edge
+// function request path.
+//
+// Must stay numerically identical to DP_SIMPLIFY_EPSILON_M in
+// supabase/functions/_shared/constants.ts - the server re-simplifies the
+// received ring with the same epsilon so an old client that has not yet
+// picked up client-side simplification still yields simplified storage. If
+// this value changes, change the server value too.
+const double kDpSimplifyEpsilonM = 10.0;
+
 // Minimum number of a detected loop closure's trail segments that must lie
 // outside every span already consumed by a dispatched claim in this
 // session, checked before the area floor in RunRecorderService's
