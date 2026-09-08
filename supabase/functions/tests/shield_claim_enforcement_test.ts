@@ -332,72 +332,111 @@ function block(src: string, startMarker: string, endMarker: string, label: strin
   return src.slice(start, end);
 }
 
+// Strips `//`-style line comments so a doc comment mentioning a token (e.g.
+// "holes" in a placeholder-explaining comment) cannot satisfy a check meant
+// to find that token used in real code.
+function stripLineComments(block: string): string {
+  return block
+    .split('\n')
+    .map((line) => {
+      const idx = line.indexOf('//');
+      return idx >= 0 ? line.slice(0, idx) : line;
+    })
+    .join('\n');
+}
+
+// Matches the real "exterior ring only" expression and tolerates the exact
+// cosmetic rewrites the review named: `.at(0)` instead of `[0]`, extra
+// whitespace, or the index/base names wrapped in an intermediate variable
+// (`const c0 = input.coordinates; ... c0[0]`/`c0.at(0)`) is intentionally
+// NOT matched here - that case is why the behavioural table test in
+// geometry_hole_preservation_class_test.ts exists as the primary proof;
+// this stays the secondary, source-scan backstop, tightened only against
+// the rewrites explicitly named in the finding.
+function matchesExteriorOnlySelection(code: string, baseVarPattern: string): boolean {
+  const bracketForm = new RegExp(`${baseVarPattern}\\s*\\[\\s*0\\s*\\]`);
+  const atForm = new RegExp(`${baseVarPattern}\\s*\\.\\s*at\\s*\\(\\s*0\\s*\\)`);
+  return bracketForm.test(code) || atForm.test(code);
+}
+
 Deno.test('site 1 (claim_territory toWkt): write path must not flatten a Polygon to coordinates[0] only', () => {
-  const toWktBlock = block(claimHandlerSrc, 'function toWkt(', '\n// A zone', 'claim_territory toWkt');
+  const toWktBlock = stripLineComments(block(claimHandlerSrc, 'function toWkt(', '\n// A zone', 'claim_territory toWkt'));
   assertFalse(
-    toWktBlock.includes('ringToWktBody(input.coordinates[0])'),
-    'claim_territory/handler.ts toWkt still writes only the exterior ring (coordinates[0]) for a ' +
-      'Polygon - a carved hole would never reach storage. This is the exact site AC-7(a) names.',
+    matchesExteriorOnlySelection(toWktBlock, 'input\\s*\\.\\s*coordinates'),
+    'claim_territory/handler.ts toWkt still writes only the exterior ring (coordinates[0] or the ' +
+      'cosmetically-equivalent .at(0)) for a Polygon - a carved hole would never reach storage. This ' +
+      'is the exact site AC-7(a) names.',
   );
 });
 
 Deno.test('site 2 (claim_territory outlinesOf): server re-read must not flatten a Polygon to coordinates[0] only', () => {
-  const outlinesBlock = block(
+  const outlinesBlock = stripLineComments(block(
     claimHandlerSrc,
     'function outlinesOf(',
     '\nexport interface CapturedRingGateResult',
     'claim_territory outlinesOf',
-  );
+  ));
   assertFalse(
-    outlinesBlock.includes('coords[0] ? [coords[0]] : []'),
-    'claim_territory/handler.ts outlinesOf still returns only the exterior ring for a Polygon - a ' +
-      'later overlap test would see a filled shape where a hole should have excluded it. This is the ' +
-      'exact site AC-7(b) names.',
+    matchesExteriorOnlySelection(outlinesBlock, 'coords'),
+    'claim_territory/handler.ts outlinesOf still returns only the exterior ring (coords[0] or the ' +
+      'cosmetically-equivalent .at(0)) for a Polygon - a later overlap test would see a filled shape ' +
+      'where a hole should have excluded it. This is the exact site AC-7(b) names.',
   );
 });
 
 Deno.test('site 3 (resolve_decay_merges toWkt): its own copy must not flatten a Polygon to coordinates[0] only', () => {
-  const toWktBlock = block(decaySrc, 'function toWkt(', '\nexport interface ResolveDecayMergeRequestBody', 'resolve_decay_merges toWkt');
+  const toWktBlock = stripLineComments(block(decaySrc, 'function toWkt(', '\nexport interface ResolveDecayMergeRequestBody', 'resolve_decay_merges toWkt'));
   assertFalse(
-    toWktBlock.includes('ringToWktBody(input.coordinates[0])'),
+    matchesExteriorOnlySelection(toWktBlock, 'input\\s*\\.\\s*coordinates'),
     'resolve_decay_merges/handler.ts toWkt still writes only the exterior ring - required scope per AC-6.',
   );
 });
 
 Deno.test('site 4 (resolve_decay_merges outlinesOf): its own copy must not flatten a Polygon to coordinates[0] only', () => {
-  const outlinesBlock = block(decaySrc, 'function outlinesOf(', '\nfunction ringToWktBody', 'resolve_decay_merges outlinesOf');
+  const outlinesBlock = stripLineComments(block(decaySrc, 'function outlinesOf(', '\nfunction ringToWktBody', 'resolve_decay_merges outlinesOf'));
   assertFalse(
-    outlinesBlock.includes('coords[0] ? [coords[0]] : []'),
+    matchesExteriorOnlySelection(outlinesBlock, 'coords'),
     'resolve_decay_merges/handler.ts outlinesOf still returns only the exterior ring - required scope per AC-6.',
   );
 });
 
 Deno.test('site 5 (merge_geometry toTurfPolygon): union input must become hole-aware', () => {
-  const toTurfBlock = block(
+  const toTurfBlock = stripLineComments(block(
     mergeGeometrySrc,
     'function toTurfPolygon(ring: number[][])',
     '\n// Distance/adjacency test',
     'merge_geometry toTurfPolygon',
-  );
+  ));
+  // Real code usage, not a doc-comment mention: "holes" must appear as an
+  // actual expression operand (e.g. `...(holes ?? [])`, `zone.holes`,
+  // `holes:`), not merely as a substring anywhere in the block - comments
+  // are already stripped above, and this additionally requires the token
+  // to be immediately adjacent to code-shaped punctuation rather than
+  // floating inside prose.
   assert(
-    toTurfBlock.includes('holes'),
+    /[.(\s]holes\b\s*[?.):,]/.test(toTurfBlock),
     'merge_geometry.ts toTurfPolygon still builds a turf polygon from the exterior ring only, never ' +
-      'reading ZoneInput.holes - every union/merge computed through this helper silently drops a ' +
-      'carved hole. Required per the governing design section 1.3.',
+      'reading ZoneInput.holes as a real code operand - every union/merge computed through this ' +
+      'helper silently drops a carved hole. Required per the governing design section 1.3.',
   );
 });
 
 Deno.test('site 6 (merge_geometry computeZoneSplit dissolve mapping): must classify holes, not promote every contour to an exterior', () => {
-  const dissolveBlock = block(
+  const dissolveBlock = stripLineComments(block(
     mergeGeometrySrc,
     'const geometry = rings.length === 1',
     '\n  return {\n    case: \'partialOverlap\',\n    remainder: geometry,',
     'merge_geometry computeZoneSplit dissolve mapping',
-  );
+  ));
+  // Must be CALLED and its result actually USED (assigned into `geometry`
+  // or piped through a chained call), not merely referenced somewhere in
+  // the block (e.g. inside a stale comment, which stripLineComments above
+  // already removes, or a dead/unreachable branch).
   assert(
-    dissolveBlock.includes('classifyDissolvedRings'),
+    /=\s*[^;\n]*classifyDissolvedRings\s*\(/.test(dissolveBlock),
     'merge_geometry.ts computeZoneSplit still promotes every dissolved contour (including an inner, ' +
       "hole-shaped contour) to its own MultiPolygon exterior member, instead of calling a ring " +
-      'classifier - the exact latent defect described in the governing design section 1.1.',
+      'classifier and using its result - the exact latent defect described in the governing design ' +
+      'section 1.1.',
   );
 });

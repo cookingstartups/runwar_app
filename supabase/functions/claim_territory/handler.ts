@@ -131,7 +131,9 @@ function ringToWktBody(ring: number[][]): string {
 // branch is kept only so the widened `zones.geom GEOMETRY(Geometry,4326)`
 // column can still represent an already-stored legacy row or the rare
 // hard-failure fallback in merge_geometry.ts's trueUnion.
-function toWkt(
+// Exported ONLY so geometry_hole_preservation_class_test.ts can drive the
+// real function directly - no behaviour change, visibility only.
+export function toWkt(
   input: number[][] | { type: 'Polygon'; coordinates: number[][][] } | {
     type: 'MultiPolygon';
     coordinates: number[][][][];
@@ -153,7 +155,9 @@ function toWkt(
 // so callers (rival-scan, merge-candidate loading) can test each outline
 // independently instead of misreading a MultiPolygon's nested ring array as
 // a flat point list.
-function outlinesOf(geom: { type?: string; coordinates?: unknown } | null | undefined): number[][][] {
+// Exported ONLY so geometry_hole_preservation_class_test.ts can drive the
+// real function directly - no behaviour change, visibility only.
+export function outlinesOf(geom: { type?: string; coordinates?: unknown } | null | undefined): number[][][] {
   if (!geom) return [];
   if (geom.type === 'MultiPolygon') {
     return (geom.coordinates as number[][][][]).map((poly) => poly[0]);
@@ -920,4 +924,82 @@ export async function runSplitAndMerge(
   }
 
   return { finalZoneId, merged, absorbedZoneIds, zoneGeomJson };
+}
+
+// ---------------------------------------------------------------------------
+// PLACEHOLDER scaffold ONLY, added ahead of the shield-carve feature so a
+// test suite written against the actual claim decide/apply loop can import a
+// real symbol and reach its own assertions instead of failing on an
+// unresolved import - the same discipline shield_geometry.ts's own
+// placeholders already follow. This function is today's real rival-zone
+// decide/apply behaviour, extracted verbatim (conquest, dispute, own-zone
+// defend), with no shield awareness added: it reads shield_active and
+// shield_expires_at off each row but never branches on either field. It is
+// not a fix for anything; callers must not depend on it producing a
+// shield_blocked outcome.
+export interface ShieldAwareClaimDbClient {
+  from(table: 'zones'): {
+    update(patch: Record<string, unknown>): {
+      eq(column: 'id', value: string): PromiseLike<{ error: { message: string } | null }>;
+    };
+  };
+}
+
+export interface RivalZoneRow {
+  id: string;
+  owner_id: string;
+  status: string;
+  geom_json: string | { type?: string; coordinates?: unknown };
+  shield_active?: boolean | null;
+  shield_expires_at?: string | null;
+}
+
+export interface ShieldAwareClaimResult {
+  outcome: 'ok' | 'shield_blocked';
+  conqueredId: string | null;
+  disputedId: string | null;
+  carvedRing: number[][];
+  shieldBlocked?: { zone_ids: string[]; claimed_area_m2: number; removed_area_m2: number };
+}
+
+export interface RunShieldAwareClaimDecideApplyParams {
+  db: ShieldAwareClaimDbClient;
+  zones: RivalZoneRow[];
+  newRing: number[][];
+  playerId: string;
+  nowMs: number;
+  capturedAreaSqm: number;
+}
+
+export async function runShieldAwareClaimDecideApply(
+  params: RunShieldAwareClaimDecideApplyParams,
+): Promise<ShieldAwareClaimResult> {
+  const { db, zones, newRing, playerId } = params;
+  let conqueredId: string | null = null;
+  let disputedId: string | null = null;
+
+  for (const zone of zones) {
+    let outlines: number[][][];
+    try {
+      const geom = typeof zone.geom_json === 'string' ? JSON.parse(zone.geom_json) : zone.geom_json;
+      outlines = outlinesOf(geom).filter((r) => r.length >= 3);
+    } catch {
+      continue;
+    }
+    if (outlines.length === 0) continue;
+    if (zone.owner_id === playerId) continue;
+
+    const anyRivalPointInside = outlines.some((ring) => ring.some(([x, y]) => pointInRing(x, y, newRing)));
+    const anyNewPointInside = outlines.some((ring) => newRing.some(([x, y]) => pointInRing(x, y, ring)));
+
+    if (anyRivalPointInside) {
+      conqueredId = zone.id;
+      await db.from('zones').update({ owner_id: playerId, status: 'owned' }).eq('id', zone.id);
+    } else if (anyNewPointInside) {
+      disputedId = zone.id;
+      await db.from('zones').update({ status: 'disputed', contested_by_id: playerId }).eq('id', zone.id);
+    }
+  }
+
+  return { outcome: 'ok', conqueredId, disputedId, carvedRing: newRing };
 }

@@ -60,36 +60,68 @@ void main() {
           'if (group.length == 1 && group.first.outlines.length <= 1) {',
           'continue;');
 
-      expect(fastPath, contains('holePointsList'),
+      // Tightened: a bare `contains('holePointsList')` would pass even if
+      // the value wired in were `holePointsList: null` or `const []`, which
+      // renders identically to no holePointsList at all - the defect would
+      // survive and this test would go green regardless. Require the real
+      // operand: an expression that reads group.first.holeOutlines (the
+      // actual Zone field the design routes through this site).
+      final holePointsListArg = RegExp(
+          r'holePointsList\s*:[\s\S]{0,120}?group\.first\.holeOutlines');
+      expect(holePointsListArg.hasMatch(fastPath), isTrue,
           reason: 'the single-zone fast path builds a flutter_map Polygon '
-              'directly from group.first without ever passing holePointsList '
-              '- a shielded zone with a carved hole would render as a solid '
-              'fill through this path even though flutter_map natively '
-              'supports donut rendering via Polygon.holePointsList');
+              'directly from group.first without ever passing '
+              'holePointsList: group.first.holeOutlines - a shielded zone '
+              'with a carved hole would render as a solid fill through this '
+              'path even though flutter_map natively supports donut '
+              'rendering via Polygon.holePointsList. A bare occurrence of '
+              'the token "holePointsList" is not sufficient proof: '
+              '`holePointsList: null` or `holePointsList: const []` would '
+              'also satisfy that weaker check while still rendering solid.');
     });
 
     test('the seamless underlay union subtracts holes via PathOperation.difference before computeMetrics() walks the contours', () {
       final underlayBlock = _sliceToNextMember(
           unifiedMethod, 'var unified = Path();', 'computeMetrics()');
 
-      expect(underlayBlock, contains('PathOperation.difference'),
+      // Tightened: a bare `contains('PathOperation.difference')` would pass
+      // if that token appeared anywhere in the block, including in an
+      // unrelated comment or a call with the wrong operands. Require the
+      // real Path.combine call, scoped to its first two operands: the
+      // difference operation applied to the `unified` accumulator (the
+      // union of every exterior built just above it).
+      final differenceCombine = RegExp(
+          r'Path\.combine\(\s*PathOperation\.difference\s*,\s*unified\s*,');
+      expect(differenceCombine.hasMatch(underlayBlock), isTrue,
           reason: 'the underlay currently only ever composes exteriors with '
               'PathOperation.union - a hole must be subtracted from the '
               'unioned shape via Path.combine(PathOperation.difference, '
               'unified, holePath) before computeMetrics() is called, or the '
               'seamless underlay fills straight over a carved hole '
-              'regardless of what the per-zone fill pass draws on top');
+              'regardless of what the per-zone fill pass draws on top. A '
+              'bare occurrence of the token "PathOperation.difference" is '
+              'not sufficient proof: it could appear in a comment, or in a '
+              'Path.combine call with the wrong operands entirely.');
     });
 
     test('the per-zone fill pass also passes holePointsList for each member outline', () {
       final fillPass = _sliceToNextMember(
           unifiedMethod, '// Per-zone fill pass', 'return out;');
 
-      expect(fillPass, contains('holePointsList'),
+      // Tightened for the same reason as the fast-path check above: require
+      // the real operand, an expression reading z.holeOutlines (the loop
+      // variable this pass actually iterates over), not a bare token match.
+      final holePointsListArg =
+          RegExp(r'holePointsList\s*:[\s\S]{0,120}?z\.holeOutlines');
+      expect(holePointsListArg.hasMatch(fillPass), isTrue,
           reason: 'the per-zone fill pass builds one flutter_map Polygon per '
-              'outline without ever passing holePointsList - drawn on top of '
-              'the underlay, this pass alone would repaint a carved hole '
-              'solid even if the underlay difference above were fixed');
+              'outline without ever passing holePointsList: z.holeOutlines '
+              '- drawn on top of the underlay, this pass alone would '
+              'repaint a carved hole solid even if the underlay difference '
+              'above were fixed. A bare occurrence of the token '
+              '"holePointsList" is not sufficient proof: `holePointsList: '
+              'null` or `holePointsList: const []` would also satisfy that '
+              'weaker check while still rendering solid.');
     });
   });
 

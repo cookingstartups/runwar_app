@@ -95,7 +95,9 @@ function closedRing(ring: number[][]): number[][] {
   return fx === lx && fy === ly ? ring : [...ring, [fx, fy]];
 }
 
-function toTurfPolygon(ring: number[][]): TurfFeature<PolygonGeom> {
+// Exported ONLY so geometry_hole_preservation_class_test.ts can drive the
+// real function directly - no behaviour change, visibility only.
+export function toTurfPolygon(ring: number[][]): TurfFeature<PolygonGeom> {
   return turfPolygon([closedRing(ring)]);
 }
 

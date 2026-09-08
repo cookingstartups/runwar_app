@@ -870,6 +870,13 @@ class TerritoryService {
     }
   }
 
+  /// Test-only entry point onto the private outline parser above. No
+  /// behavior change - this exists purely so the parser's hole-dropping
+  /// bug is unit-testable without going through a live claim flow.
+  @visibleForTesting
+  static List<List<LatLng>> parseOutlinesForTest(String geomJson) =>
+      _parseOutlines(geomJson);
+
   /// Backward-compatible single-ring accessor. For a `MultiPolygon` (a
   /// legacy or fallback shape only - the single-rule merge contract never
   /// produces one), returns only the FIRST member outline - call sites that
