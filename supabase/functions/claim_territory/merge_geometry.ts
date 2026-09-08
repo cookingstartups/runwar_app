@@ -72,9 +72,9 @@ export interface ZoneInput {
   // supplies it explicitly.
   influenceLevel?: number;
   // Optional interior rings carried on this zone's outer ring (a carved
-  // hole). Placeholder field only: toTurfPolygon below does not read it yet,
-  // so a merge/union computed from a ZoneInput with holes set still ignores
-  // them until that wiring lands. Defaults to none, matching every existing
+  // hole). Read by computeZoneMerges via toTurfPolygonWithHoles, so a
+  // merge/union computed from a holed ZoneInput preserves the hole rather
+  // than silently refilling it. Defaults to none, matching every existing
   // fixture that never sets this field.
   holes?: number[][][];
 }
@@ -96,9 +96,18 @@ function closedRing(ring: number[][]): number[][] {
 }
 
 // Exported ONLY so geometry_hole_preservation_class_test.ts can drive the
-// real function directly - no behaviour change, visibility only.
+// real function directly - no behaviour change, visibility only. Takes a
+// single ring with no holes parameter of its own; the union call site below
+// is the real, only place a ZoneInput's holes are threaded through.
 export function toTurfPolygon(ring: number[][]): TurfFeature<PolygonGeom> {
   return turfPolygon([closedRing(ring)]);
+}
+
+// Same contract as toTurfPolygon but threads a zone's interior rings through
+// so a union computed from a holed ZoneInput does not refill the hole.
+function toTurfPolygonWithHoles(ring: number[][], holes?: number[][][]): TurfFeature<PolygonGeom> {
+  const rings = [closedRing(ring), ...((holes ?? []).map((h) => closedRing(h)))];
+  return turfPolygon(rings);
 }
 
 // Distance/adjacency test ONLY - buffers here decide whether two polygons
@@ -219,7 +228,7 @@ function unionFindGroups(n: number, isLinked: (i: number, j: number) => boolean)
 // `zones` need not be pre-sorted by createdAt - sorted internally.
 export function computeZoneMerges(zones: ZoneInput[], thresholdM: number): MergeGroup[] {
   const sorted = [...zones].sort((a, b) => a.createdAt.localeCompare(b.createdAt)); // oldest first survives
-  const features = sorted.map((z) => toTurfPolygon(z.ring));
+  const features = sorted.map((z) => toTurfPolygonWithHoles(z.ring, z.holes));
   const halfThresholdKm = (thresholdM / 2) / 1000;
 
   // Which zones become ONE row, including transitively across a chain -
@@ -343,6 +352,93 @@ export function unionCandidateRings(
 //   case, not a live rule that runs in the ordinary quantised path above.
 // ---------------------------------------------------------------------------
 
+// RingSet/RingSetList - the shared vocabulary for "a polygon that may have
+// holes". RingSet is structurally identical to a GeoJSON Polygon's own
+// coordinates array ([exterior, ...interiorRings]); RingSetList is one entry
+// per member polygon (length 1 for a Polygon, >1 for a MultiPolygon).
+export type RingSet = number[][][];
+export type RingSetList = RingSet[];
+
+// Signed planar area (shoelace), sign only matters here - a positive value
+// means the ring winds counter-clockwise (an exterior, by GeoJSON RFC 7946
+// convention), negative means clockwise (a hole).
+function signedRingArea(ring: number[][]): number {
+  let twiceArea = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[(i + 1) % ring.length];
+    twiceArea += x1 * y2 - x2 * y1;
+  }
+  return twiceArea / 2;
+}
+
+// Any point on a ring's own boundary, used only as a representative point
+// for the containment test below - the ring's own first vertex always works
+// since it is on the boundary of the eventual polygon, not required to be
+// strictly interior.
+function ringRepresentativePoint(ring: number[][]): [number, number] {
+  return [ring[0][0], ring[0][1]];
+}
+
+// Classifies a flat list of dissolved boundary contours (no exterior/hole
+// distinction, exactly what hex_quantize.ts's dissolveBoundary produces)
+// into a RingSetList: each CCW (positive signed area) contour is an
+// exterior; each CW (negative signed area) contour is a hole, assigned to
+// the exterior whose ring contains a representative point of the hole. A
+// hole matching no exterior (should not happen for a well-formed dissolve,
+// but never silently dropped) is kept as its own single-ring exterior
+// member rather than discarded, matching this module's never-drop-a-member
+// discipline.
+export function classifyDissolvedRings(rings: number[][][]): RingSetList {
+  const exteriors: { ring: number[][]; holes: number[][][] }[] = [];
+  const holes: number[][][] = [];
+
+  for (const ring of rings) {
+    if (signedRingArea(ring) >= 0) {
+      exteriors.push({ ring, holes: [] });
+    } else {
+      holes.push(ring);
+    }
+  }
+
+  const unmatched: number[][][] = [];
+  for (const hole of holes) {
+    const pt = ringRepresentativePoint(hole);
+    const owner = exteriors.find((ext) => pointInRingSimple(pt, ext.ring));
+    if (owner) {
+      owner.holes.push(hole);
+    } else {
+      unmatched.push(hole);
+    }
+  }
+
+  const result: RingSetList = exteriors.map((ext) => [ext.ring, ...ext.holes]);
+  for (const hole of unmatched) {
+    result.push([hole]);
+  }
+  return result;
+}
+
+// Local ray-cast point-in-ring, mirroring handler.ts's own pointInRing - a
+// private copy here since this module has no Supabase/handler import (pure,
+// no I/O contract stated at the top of this file).
+function pointInRingSimple(pt: [number, number], ring: number[][]): boolean {
+  let inside = false;
+  const [px, py] = pt;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const hit = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+    if (hit) inside = !inside;
+  }
+  return inside;
+}
+
+// Closes every ring in a RingSet (exterior plus its holes).
+function closeAllRings(ringSet: number[][][]): number[][][] {
+  return ringSet.map((r) => closedRing(r));
+}
+
 export type SplitCase = 'partialOverlap' | 'fullContainment' | 'noOverlap';
 
 export interface ZoneSplitResult {
@@ -425,12 +521,14 @@ export function computeZoneSplit(
     return { case: 'partialOverlap', remainder: null, remainderDiscarded: true };
   }
 
+  // classifyDissolvedRings groups every dissolved contour into an
+  // exterior-plus-its-holes RingSetList (Section 1.1 / 5.2): a genuinely
+  // annular remainder classifies to ONE group (exterior + hole rings) and
+  // wraps as a single Polygon; only a remainder with more than one disjoint
+  // exterior wraps as a MultiPolygon.
   const geometry = rings.length === 1
-    ? { type: 'Polygon' as const, coordinates: [closedRing(rings[0])] }
-    : {
-      type: 'MultiPolygon' as const,
-      coordinates: rings.map((r) => [closedRing(r)]),
-    };
+    ? { type: 'Polygon' as const, coordinates: closeAllRings(classifyDissolvedRings(rings)[0]) }
+    : (() => { const dissolvedGroups = classifyDissolvedRings(rings); return dissolvedGroups.length > 1 ? { type: 'MultiPolygon' as const, coordinates: dissolvedGroups.map((rs) => closeAllRings(rs)) } : { type: 'Polygon' as const, coordinates: closeAllRings(dissolvedGroups[0]) }; })();
 
   return {
     case: 'partialOverlap',

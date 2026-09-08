@@ -143,9 +143,12 @@ export function toWkt(
     return `SRID=4326;POLYGON(${ringToWktBody(input)})`;
   }
   if (input.type === 'Polygon') {
-    return `SRID=4326;POLYGON(${ringToWktBody(input.coordinates[0])})`;
+    const rings = input.coordinates.map((ring) => ringToWktBody(ring)).join(', ');
+    return `SRID=4326;POLYGON(${rings})`;
   }
-  const polys = input.coordinates.map((poly) => `(${ringToWktBody(poly[0])})`).join(', ');
+  const polys = input.coordinates
+    .map((poly) => `(${poly.map((ring) => ringToWktBody(ring)).join(', ')})`)
+    .join(', ');
   return `SRID=4326;MULTIPOLYGON(${polys})`;
 }
 
@@ -160,11 +163,11 @@ export function toWkt(
 export function outlinesOf(geom: { type?: string; coordinates?: unknown } | null | undefined): number[][][] {
   if (!geom) return [];
   if (geom.type === 'MultiPolygon') {
-    return (geom.coordinates as number[][][][]).map((poly) => poly[0]);
+    return (geom.coordinates as number[][][][]).flatMap((poly) => poly);
   }
   if (geom.type === 'Polygon') {
     const coords = geom.coordinates as number[][][];
-    return coords[0] ? [coords[0]] : [];
+    return coords;
   }
   return [];
 }
