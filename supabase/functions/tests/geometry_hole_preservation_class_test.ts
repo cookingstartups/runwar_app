@@ -50,6 +50,37 @@ function pointInRing(pt: [number, number], ring: number[][]): boolean {
   return inside;
 }
 
+// Even-odd containment WITH holes: a point counts as inside only when it is
+// inside a member's exterior ring AND outside every one of that member's
+// interior (hole) rings. Adopted from shield_claim_enforcement_test.ts's
+// pointInGeometry - same contract, extended so a Polygon's own holes (index
+// 1..n) are consulted rather than only the exterior at index 0, and so each
+// MultiPolygon member's own holes (poly[1..n], not just poly[0]) are
+// consulted too. A standalone hole ring passed in on its own (e.g. testing
+// whether a point sits inside a lone carved-hole ring, with no exterior)
+// resolves via the single-ring form: index 0 is the outer boundary of
+// whatever shape was passed, indices 1..n are its holes.
+function pointInRingWithHoles(pt: [number, number], rings: number[][][]): boolean {
+  if (!pointInRing(pt, rings[0])) return false;
+  for (let i = 1; i < rings.length; i++) {
+    if (pointInRing(pt, rings[i])) return false;
+  }
+  return true;
+}
+
+function pointInGeometryWithHoles(
+  pt: [number, number],
+  geometry: { type: string; coordinates: unknown },
+): boolean {
+  if (geometry.type === 'Polygon') {
+    return pointInRingWithHoles(pt, geometry.coordinates as number[][][]);
+  }
+  if (geometry.type === 'MultiPolygon') {
+    return (geometry.coordinates as number[][][][]).some((member) => pointInRingWithHoles(pt, member));
+  }
+  return false;
+}
+
 // Shared donut fixture: a 40x40 exterior with a 5x5 hole carved 10m/10m
 // from its corner, and a marker point known to sit inside the hole.
 const EXTERIOR = rect(33.000000, LAT0, 40, 40);
@@ -112,14 +143,11 @@ Deno.test('table: merge_geometry union (toTurfPolygon call site) preserves a hol
   const groups = computeZoneMerges([holedZone, neighbourZone], 25);
   assert(groups.length === 1, 'the touching same-level pair must merge into one group');
   const merged = groups[0];
-  const rings = merged.geometry.type === 'Polygon'
-    ? (merged.geometry.coordinates as number[][][])
-    : (merged.geometry.coordinates as number[][][][]).flat();
 
-  const insideAnyRing = rings.some((r) => pointInRing(HOLE_CENTER, r));
+  const holeRefilled = pointInGeometryWithHoles(HOLE_CENTER, merged.geometry);
   assertFalse(
-    insideAnyRing,
-    'the hole center must not fall inside any ring of the merged geometry\'s member polygons in a way ' +
+    holeRefilled,
+    'the hole center must not fall inside the merged geometry\'s exterior-minus-holes in a way ' +
       "that means the union filled the hole back in. Reverting the fix makes this fail: today's " +
       'toTurfPolygon ignores ZoneInput.holes entirely, so the union computes the zone as a solid square.',
   );
@@ -152,15 +180,11 @@ Deno.test('table: computeZoneSplit annular remainder excludes the re-run footpri
   assert(result.case === 'partialOverlap', `expected a partial overlap (annular) case, got ${result.case}`);
   assert(result.remainder, 'expected a real remainder geometry for an annular split');
 
-  const memberRings = result.remainder!.type === 'Polygon'
-    ? [(result.remainder!.coordinates as number[][][])[0]]
-    : (result.remainder!.coordinates as number[][][][]).map((poly) => poly[0]);
-
-  const reRunAreaIsFilledSomewhere = memberRings.some((r) => pointInRing(reRunCenter, r));
+  const reRunAreaIsFilledSomewhere = pointInGeometryWithHoles(reRunCenter, result.remainder!);
   assertFalse(
     reRunAreaIsFilledSomewhere,
-    'the re-run\'s own interior footprint must not be reported as filled territory by any member ring ' +
-      'of the split remainder - it is a hole in the surviving donut, not a second exterior polygon. ' +
+    'the re-run\'s own interior footprint must not be reported as filled territory by the split remainder ' +
+      '- it is a hole in the surviving donut, not a second exterior polygon. ' +
       "Reverting the fix makes this fail: today's dissolve mapping promotes every dissolved contour " +
       '(including the inner, hole-shaped one) to its own MultiPolygon exterior member, so a naive ' +
       'per-member point-in-ring test (the same pattern outlinesOf/pointInRing already use downstream) ' +
