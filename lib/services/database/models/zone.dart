@@ -52,10 +52,12 @@ class Zone {
 
   final List<List<LatLng>>? _outlines;
 
-  /// Flattened interior rings (carved holes) across all member polygons.
-  /// STUB: not yet populated from geom_json - a shielded overlap carved
-  /// into a rival's claim is represented server-side as an interior ring,
-  /// but this parser does not read it yet. Always empty until wired up.
+  /// Flattened interior rings (carved holes) across all member polygons. A
+  /// shielded overlap carved into a rival's claim is represented
+  /// server-side as an interior ring on the stored Polygon (or on a member
+  /// polygon for a MultiPolygon); this list surfaces every such ring so a
+  /// consumer that walks a zone's boundary can render or hit-test the
+  /// donut shape correctly. Empty for a zone with no carved holes.
   final List<List<LatLng>> holeOutlines;
 
   /// Every outer ring for this zone: one entry for a `Polygon`, one entry
@@ -91,7 +93,8 @@ class Zone {
       geom = const {};
     }
 
-    final outlines = _parseOutlines(geom);
+    final parsed = _parseOutlines(geom);
+    final outlines = parsed.exteriors;
     final points = outlines.isEmpty ? const <LatLng>[] : outlines.first;
 
     // Clamp influenceLevel to 1..15 (design.md §1).
@@ -123,16 +126,23 @@ class Zone {
       points: points,
       disputeAt: disputeAt,
       outlines: outlines,
+      holeOutlines: parsed.holes,
     );
   }
 
-  /// Extracts one outer-ring outline per member polygon from GeoJSON [geom].
-  /// `Polygon` -> one outline (coordinates[0]); `MultiPolygon` -> one
-  /// outline per member (coordinates[i][0]). Never throws — malformed rings
-  /// are skipped, an entirely-unparseable shape yields an empty list.
-  static List<List<LatLng>> _parseOutlines(Map<String, dynamic> geom) {
+  /// Extracts every ring per member polygon from GeoJSON [geom], keeping
+  /// exterior and interior (carved-hole) rings separate. `Polygon` -> one
+  /// exterior (coordinates[0]) plus every interior ring
+  /// (coordinates[1..]); `MultiPolygon` -> one exterior per member
+  /// (coordinates[i][0]) plus that member's own interior rings
+  /// (coordinates[i][1..]). Never throws - malformed rings are skipped, an
+  /// entirely-unparseable shape yields an empty result.
+  static ({List<List<LatLng>> exteriors, List<List<LatLng>> holes})
+      _parseOutlines(Map<String, dynamic> geom) {
     final coordsRaw = geom['coordinates'];
-    if (coordsRaw is! List || coordsRaw.isEmpty) return const [];
+    if (coordsRaw is! List || coordsRaw.isEmpty) {
+      return (exteriors: const <List<LatLng>>[], holes: const <List<LatLng>>[]);
+    }
 
     List<LatLng>? ringFrom(dynamic rawRing) {
       if (rawRing is! List || rawRing.length < 3) return null;
@@ -144,19 +154,35 @@ class Zone {
       return out;
     }
 
+    final exteriors = <List<LatLng>>[];
+    final holes = <List<LatLng>>[];
+
     if (geom['type'] == 'MultiPolygon') {
-      final result = <List<LatLng>>[];
       for (final poly in coordsRaw) {
         if (poly is! List || poly.isEmpty) continue;
-        final ring = ringFrom(poly[0]);
-        if (ring != null) result.add(ring);
+        final exterior = ringFrom(poly[0]);
+        if (exterior == null) continue;
+        exteriors.add(exterior);
+        for (var i = 1; i < poly.length; i++) {
+          final hole = ringFrom(poly[i]);
+          if (hole != null) holes.add(hole);
+        }
       }
-      return result;
+      return (exteriors: exteriors, holes: holes);
     }
 
-    // Polygon (default/legacy) — single outer ring at coordinates[0].
-    final ring = ringFrom(coordsRaw[0]);
-    return ring == null ? const [] : [ring];
+    // Polygon (default/legacy) - exterior at coordinates[0], interior
+    // (carved-hole) rings at coordinates[1..].
+    final exterior = ringFrom(coordsRaw[0]);
+    if (exterior == null) {
+      return (exteriors: const <List<LatLng>>[], holes: const <List<LatLng>>[]);
+    }
+    exteriors.add(exterior);
+    for (var i = 1; i < coordsRaw.length; i++) {
+      final hole = ringFrom(coordsRaw[i]);
+      if (hole != null) holes.add(hole);
+    }
+    return (exteriors: exteriors, holes: holes);
   }
 
   @override

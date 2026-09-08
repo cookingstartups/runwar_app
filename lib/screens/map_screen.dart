@@ -1784,6 +1784,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
         if (group.length == 1 && group.first.outlines.length <= 1) {
           out.add(Polygon(
             points: _smoothedForRender(group.first.points),
+            holePointsList: group.first.holeOutlines
+                .map(_smoothedForRender)
+                .toList(),
             isFilled: true,
             color: ownerColor.withValues(alpha: baseAlpha),
             borderStrokeWidth: 0,
@@ -1812,6 +1815,21 @@ class _MapScreenState extends ConsumerState<MapScreen>
             unified = Path.combine(PathOperation.union, unified, _makePoly(screenPts));
           }
         }
+        // Subtract every carved shielded hole from the seamless underlay so
+        // a hole is a visible gap in the merged holding, not filled over by
+        // the union of exteriors above. Holes are unioned together first
+        // (a group can hold several holes across its member zones), then
+        // subtracted from the unified fill in one Path.combine, ahead of the
+        // contour walk below.
+        var holePath = Path();
+        for (final z in group) {
+          for (final hole in z.holeOutlines) {
+            final screenPts = _projectToScreen(_smoothedForRender(hole));
+            if (screenPts.isEmpty) continue;
+            holePath = Path.combine(PathOperation.union, holePath, _makePoly(screenPts));
+          }
+        }
+        unified = Path.combine(PathOperation.difference, unified, holePath);
         for (final metric in unified.computeMetrics()) {
           final contourPts = <LatLng>[];
           const step = 8.0; // px sampling step along the contour
@@ -1859,6 +1877,8 @@ class _MapScreenState extends ConsumerState<MapScreen>
           for (final outline in z.outlines) {
             out.add(Polygon(
               points: _smoothedForRender(outline),
+              holePointsList:
+                  z.holeOutlines.map(_smoothedForRender).toList(),
               isFilled: true,
               color: ownerColor.withValues(alpha: zFillAlpha),
               borderStrokeWidth: 0,
@@ -2113,20 +2133,26 @@ class _MapScreenState extends ConsumerState<MapScreen>
 // ── File-private helpers ─────────────────────────────────────────────────────
 
 /// Ray-casting point-in-polygon test. Returns first matching Zone or null.
-/// Used by MapOptions.onTap (no GestureDetector on polygons).
+/// Used by MapOptions.onTap (no GestureDetector on polygons). Hole-aware: a
+/// tap inside a carved-out shielded hole is not a hit on the surrounding
+/// zone (a shielded defender was never dispossessed of that ground).
 Zone? _zoneAtPoint(LatLng tap, List<Zone> zones) {
   for (final z in zones) {
-    if (pointInPolygon(tap, z.points)) return z;
+    if (zoneContainsPointRespectingHoles(z, tap)) return z;
   }
   return null;
 }
 
-/// Hole-aware containment test for the map tap hit-test.
-/// STUB: currently tests the exterior ring only and ignores [Zone.holeOutlines]
-/// entirely, so a tap inside a carved-out hole still reports containment -
-/// the exclusion has not been wired up yet.
+/// Hole-aware containment test for the map tap hit-test. A tap inside the
+/// exterior ring but inside any of [Zone.holeOutlines] does not count as
+/// containment - that ground was carved away by a shield and never belongs
+/// to this zone.
 bool zoneContainsPointRespectingHoles(Zone z, LatLng tap) {
-  return pointInPolygon(tap, z.points);
+  if (!pointInPolygon(tap, z.points)) return false;
+  for (final hole in z.holeOutlines) {
+    if (pointInPolygon(tap, hole)) return false;
+  }
+  return true;
 }
 
 /// Parses '#RRGGBB' or '#AARRGGBB' hex color strings.

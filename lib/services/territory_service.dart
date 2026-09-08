@@ -830,11 +830,15 @@ class TerritoryService {
     });
   }
 
-  /// Extracts one outline ring per member polygon from [geomJson]. Handles
-  /// both `Polygon` (the single-rule adjacent-zone merge contract's only
-  /// output shape, design.md Section 4) and `MultiPolygon` (legacy/fallback
-  /// only - never produced by the current merge algorithm) shapes. Returns
-  /// an empty list on any parse failure or malformed ring - never throws.
+  /// Extracts every ring per member polygon from [geomJson], exterior first.
+  /// Handles both `Polygon` (the single-rule adjacent-zone merge contract's
+  /// only output shape, design.md Section 4) and `MultiPolygon`
+  /// (legacy/fallback only - never produced by the current merge algorithm)
+  /// shapes. A carved shielded overlap is stored as an interior (hole) ring
+  /// following its member's exterior; those rings are surfaced here too, so
+  /// a caller that needs every ring (not just the exterior) can see the
+  /// carved shape rather than only the outer boundary. Returns an empty
+  /// list on any parse failure or malformed ring - never throws.
   static List<List<LatLng>> _parseOutlines(String geomJson) {
     try {
       final d = jsonDecode(geomJson);
@@ -856,15 +860,27 @@ class TerritoryService {
         final outlines = <List<LatLng>>[];
         for (final poly in coords) {
           if (poly is! List || poly.isEmpty) continue;
-          final ring = ringFrom(poly[0]);
-          if (ring != null) outlines.add(ring);
+          final exterior = ringFrom(poly[0]);
+          if (exterior == null) continue;
+          outlines.add(exterior);
+          for (var i = 1; i < poly.length; i++) {
+            final hole = ringFrom(poly[i]);
+            if (hole != null) outlines.add(hole);
+          }
         }
         return outlines;
       }
 
-      // Polygon (default/legacy) — single outer ring at coordinates[0].
-      final ring = ringFrom(coords[0]);
-      return ring == null ? const [] : [ring];
+      // Polygon (default/legacy) - exterior at coordinates[0], interior
+      // (carved-hole) rings at coordinates[1..].
+      final exterior = ringFrom(coords[0]);
+      if (exterior == null) return const [];
+      final outlines = <List<LatLng>>[exterior];
+      for (var i = 1; i < coords.length; i++) {
+        final hole = ringFrom(coords[i]);
+        if (hole != null) outlines.add(hole);
+      }
+      return outlines;
     } catch (_) {
       return const [];
     }
