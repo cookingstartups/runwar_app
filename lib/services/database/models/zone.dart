@@ -21,6 +21,7 @@ class Zone {
     required this.points,
     this.disputeAt,
     List<List<LatLng>>? outlines,
+    this.holeOutlines = const <List<LatLng>>[],
   }) : _outlines = outlines;
 
   final String id;
@@ -50,6 +51,12 @@ class Zone {
   final List<LatLng> points;
 
   final List<List<LatLng>>? _outlines;
+
+  /// Flattened interior rings (carved holes) across all member polygons.
+  /// STUB: not yet populated from geom_json - a shielded overlap carved
+  /// into a rival's claim is represented server-side as an interior ring,
+  /// but this parser does not read it yet. Always empty until wired up.
+  final List<List<LatLng>> holeOutlines;
 
   /// Every outer ring for this zone: one entry for a `Polygon`, one entry
   /// per member polygon for a `MultiPolygon`. Always non-empty when

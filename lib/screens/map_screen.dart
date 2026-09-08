@@ -2121,6 +2121,14 @@ Zone? _zoneAtPoint(LatLng tap, List<Zone> zones) {
   return null;
 }
 
+/// Hole-aware containment test for the map tap hit-test.
+/// STUB: currently tests the exterior ring only and ignores [Zone.holeOutlines]
+/// entirely, so a tap inside a carved-out hole still reports containment -
+/// the exclusion has not been wired up yet.
+bool zoneContainsPointRespectingHoles(Zone z, LatLng tap) {
+  return pointInPolygon(tap, z.points);
+}
+
 /// Parses '#RRGGBB' or '#AARRGGBB' hex color strings.
 /// Returns kAccent on any parse failure.
 Color _hexToColor(String hex) {

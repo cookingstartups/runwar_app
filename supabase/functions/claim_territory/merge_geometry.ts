@@ -71,6 +71,12 @@ export interface ZoneInput {
   // compiling unchanged; every zone in a real merge candidate query always
   // supplies it explicitly.
   influenceLevel?: number;
+  // Optional interior rings carried on this zone's outer ring (a carved
+  // hole). Placeholder field only: toTurfPolygon below does not read it yet,
+  // so a merge/union computed from a ZoneInput with holes set still ignores
+  // them until that wiring lands. Defaults to none, matching every existing
+  // fixture that never sets this field.
+  holes?: number[][][];
 }
 
 export interface MergeGroup {
