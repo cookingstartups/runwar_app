@@ -120,3 +120,54 @@ Deno.test('a rejected activation performs zero direct table writes, leaving the 
 
   assertEquals(db.fromCalls.length, 0, 'the handler must never write a table directly - only the transaction may mutate rows, and it did not on this path');
 });
+
+Deno.test('activating SHIELD against a zone id the transaction cannot find is rejected and reports zone_not_found', async () => {
+  const db = new FakeDbClient({
+    data: [{ outcome: 'zone_not_found', shield_expires_at: null, influence_level: null, grant_id: null }],
+    error: null,
+  });
+
+  const result = await activateShieldOnZone(db, 'player-a', 'zone-does-not-exist');
+
+  assertEquals(result.success, false, 'an activation against a nonexistent zone must not report success');
+  assertEquals(result.reason, 'zone_not_found', 'the rejection reason must be the transaction\'s own typed outcome, not a generic error string');
+  assertEquals(db.fromCalls.length, 0, 'a zone_not_found rejection must leave every row untouched, exactly like not_owner');
+});
+
+Deno.test('activating SHIELD with no unconsumed grant available is rejected and reports no_grant', async () => {
+  const db = new FakeDbClient({
+    data: [{ outcome: 'no_grant', shield_expires_at: null, influence_level: null, grant_id: null }],
+    error: null,
+  });
+
+  const result = await activateShieldOnZone(db, 'player-a', 'zone-owned-by-a');
+
+  assertEquals(result.success, false, 'an activation with no unconsumed grant must not report success');
+  assertEquals(result.reason, 'no_grant', 'the rejection reason must be the transaction\'s own typed outcome, not a generic error string');
+  assertEquals(db.fromCalls.length, 0, 'a no_grant rejection must leave every row untouched, exactly like not_owner');
+});
+
+Deno.test('an RPC-level error (the error field itself set) is rejected and reports rpc_error, never success', async () => {
+  const db = new FakeDbClient({
+    data: null,
+    error: { message: 'connection reset' },
+  });
+
+  const result = await activateShieldOnZone(db, 'player-a', 'zone-owned-by-a');
+
+  assertEquals(result.success, false, 'an RPC-level error must never be reported as a successful activation');
+  assertEquals(result.reason, 'rpc_error', 'an RPC-level error must map to the rpc_error reason, distinct from any typed outcome the transaction itself can return');
+  assertEquals(db.fromCalls.length, 0, 'an RPC-level error must leave every row untouched, exactly like a typed rejection outcome');
+});
+
+Deno.test('an RPC call that returns no row at all (empty data) is rejected and reports rpc_error, never success', async () => {
+  const db = new FakeDbClient({
+    data: [],
+    error: null,
+  });
+
+  const result = await activateShieldOnZone(db, 'player-a', 'zone-owned-by-a');
+
+  assertEquals(result.success, false, 'an empty result row must never be reported as a successful activation');
+  assertEquals(result.reason, 'rpc_error', 'an empty result row must map to the rpc_error reason');
+});

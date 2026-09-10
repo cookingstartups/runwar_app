@@ -58,20 +58,19 @@ export interface ActivateShieldResult {
 // consume a grant and activate the shield. No Request/Response handling
 // here, matching resolveDecayMerge's own testable-core shape.
 //
-// STUB: this is a placeholder pending the real implementation. It forwards
-// the call to the RPC with the correct arguments, but does not yet inspect
-// the RPC's returned outcome row at all - it always reports success and
-// never surfaces shield_expires_at / influence_level / grant_id, and never
-// maps not_owner / no_grant / zone_not_found to a rejection. This exists
-// only so imports resolve and the real behavior can be asserted against and
-// found missing.
+// The RPC (activate_shield_on_zone_tx) is the single atomicity boundary:
+// the ownership check, the grant consumption and the zone's shield fields
+// are all written inside one transaction there, so this handler never
+// writes a table directly and never needs to inspect ActivateShieldDbClient's
+// from() surface at all. It only calls rpc() once and maps the returned
+// typed outcome row onto the response.
 export async function activateShieldOnZone(
   db: ActivateShieldDbClient,
   userId: string,
   targetZoneId: string,
   hoursPerLevel: number = kShieldBaseHoursPerLevel,
 ): Promise<ActivateShieldResult> {
-  const { error } = await db.rpc('activate_shield_on_zone_tx', {
+  const { data, error } = await db.rpc('activate_shield_on_zone_tx', {
     p_user_id: userId,
     p_zone_id: targetZoneId,
     p_hours_per_level: hoursPerLevel,
@@ -79,7 +78,24 @@ export async function activateShieldOnZone(
   if (error) {
     return { success: false, reason: 'rpc_error' };
   }
-  return { success: true, zone_id: targetZoneId };
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) {
+    return { success: false, reason: 'rpc_error' };
+  }
+
+  const outcome = row.outcome as string | undefined;
+  if (outcome !== 'ok') {
+    return { success: false, reason: outcome ?? 'rpc_error' };
+  }
+
+  return {
+    success: true,
+    zone_id: targetZoneId,
+    shield_expires_at: row.shield_expires_at as string,
+    influence_level: row.influence_level as number,
+    grant_id: row.grant_id as string,
+  };
 }
 
 export async function handleActivateShieldRequest(req: Request): Promise<Response> {
