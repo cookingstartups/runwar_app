@@ -19,6 +19,7 @@ import { computeClaimInfluence, computeDisputeOverlapAreaSqm } from './merge_geo
 import { area as turfArea } from 'https://esm.sh/@turf/area@7';
 import { simplifyRingDouglasPeucker } from '../_shared/geometry.ts';
 import { DP_SIMPLIFY_EPSILON_M } from '../_shared/constants.ts';
+import { computeShieldCarve, kMinPostShieldClaimAreaSqm, type RingSet } from './shield_geometry.ts';
 
 // Zone-unify edge-to-edge threshold, matching kProximityTriggerM (the same
 // 25 m radius used for loop-closure proximity triggering). A same-owner,
@@ -279,6 +280,229 @@ export function evaluateCapturedRingGates(
   };
 }
 
+// ---------------------------------------------------------------------------
+// The real rival-zone decide/apply loop, shield-aware. An active shield
+// diverts a rival's overlapping claim into a carve (never a full conquest,
+// never a dispute), subtracting the shielded outline from the
+// submitted ring; a carve that leaves the claimant below the post-carve
+// floor voids the whole claim before any write happens. Decide
+// (shield collection, carve, floor check, non-shielded classification
+// against the CARVED geometry) is fully separated from apply (the actual
+// UPDATE calls) so the void path is provably zero-write. This is the ONLY
+// rival-zone decide/apply logic handleClaimTerritoryRequest runs - it is not
+// layered alongside the old unshielded loop, it replaces it.
+// ---------------------------------------------------------------------------
+export interface ShieldAwareClaimDbClient {
+  from(table: 'zones'): {
+    update(patch: Record<string, unknown>): {
+      eq(column: 'id', value: string): PromiseLike<{ error: { message: string } | null }>;
+    };
+  };
+}
+
+export interface RivalZoneRow {
+  id: string;
+  owner_id: string;
+  status: string;
+  geom_json: string | { type?: string; coordinates?: unknown };
+  shield_active?: boolean | null;
+  shield_expires_at?: string | null;
+}
+
+type CarvedGeometry =
+  | { type: 'Polygon'; coordinates: number[][][] }
+  | { type: 'MultiPolygon'; coordinates: number[][][][] };
+
+export interface ShieldAwareClaimResult {
+  outcome: 'ok' | 'shield_blocked';
+  conqueredId: string | null;
+  disputedId: string | null;
+  carvedRing: number[][];
+  carvedGeometry: CarvedGeometry;
+  claimedAreaSqm: number;
+  shieldBlocked?: { zone_ids: string[]; claimed_area_m2: number; removed_area_m2: number };
+}
+
+export interface RunShieldAwareClaimDecideApplyParams {
+  db: ShieldAwareClaimDbClient;
+  zones: RivalZoneRow[];
+  newRing: number[][];
+  playerId: string;
+  nowMs: number;
+  capturedAreaSqm: number;
+}
+
+// A point counts as inside a carved (possibly-holed) geometry member only
+// when it is inside that member's exterior AND outside every one of that
+// member's own hole rings, applied here to the ATTACKER's own
+// carved territory so pass 2 below never reports a rival zone as
+// overlapping ground a shield actually removed.
+function pointInRingSetExcludingHoles(x: number, y: number, ringSet: number[][][]): boolean {
+  if (ringSet.length === 0) return false;
+  if (!pointInRing(x, y, ringSet[0])) return false;
+  for (let i = 1; i < ringSet.length; i++) {
+    if (pointInRing(x, y, ringSet[i])) return false;
+  }
+  return true;
+}
+
+function isPointInCarvedGeometry(x: number, y: number, geometry: CarvedGeometry): boolean {
+  if (geometry.type === 'Polygon') return pointInRingSetExcludingHoles(x, y, geometry.coordinates);
+  return geometry.coordinates.some((member) => pointInRingSetExcludingHoles(x, y, member));
+}
+
+function carvedExteriorPoints(geometry: CarvedGeometry): number[][] {
+  if (geometry.type === 'Polygon') return geometry.coordinates[0] ?? [];
+  return geometry.coordinates.flatMap((member) => member[0] ?? []);
+}
+
+export async function runShieldAwareClaimDecideApply(
+  params: RunShieldAwareClaimDecideApplyParams,
+): Promise<ShieldAwareClaimResult> {
+  const { db, zones, newRing, playerId, nowMs, capturedAreaSqm } = params;
+
+  // Pass 1: every rival zone whose shield is active RIGHT NOW (a single
+  // nowMs captured once at request start, never a value cached earlier or
+  // supplied by the client) and whose stored outline overlaps the
+  // SUBMITTED ring - never a previously-carved remainder, so one shield can
+  // never mask a second one when a claim overlaps several shielded zones at once.
+  const shieldedZoneIds: string[] = [];
+  const shieldedRingSets: RingSet[] = [];
+
+  for (const zone of zones) {
+    if (zone.owner_id === playerId) continue;
+    const isActivelyShielded = zone.shield_active === true &&
+      !!zone.shield_expires_at && Date.parse(zone.shield_expires_at) > nowMs;
+    if (!isActivelyShielded) continue;
+
+    let outlines: number[][][];
+    try {
+      const geom = typeof zone.geom_json === 'string' ? JSON.parse(zone.geom_json) : zone.geom_json;
+      outlines = outlinesOf(geom).filter((r) => r.length >= 3);
+    } catch {
+      continue;
+    }
+    if (outlines.length === 0) continue;
+
+    const overlapsSubmitted = outlines.some((ring) =>
+      ring.some(([x, y]) => pointInRing(x, y, newRing)) ||
+      newRing.some(([x, y]) => pointInRing(x, y, ring))
+    );
+    if (!overlapsSubmitted) continue;
+
+    shieldedZoneIds.push(zone.id);
+    shieldedRingSets.push(outlines);
+  }
+
+  let carvedGeometry: CarvedGeometry = { type: 'Polygon', coordinates: [closedRing(newRing)] };
+  let claimedAreaSqm = capturedAreaSqm;
+
+  if (shieldedRingSets.length > 0) {
+    const carve = computeShieldCarve(newRing, shieldedRingSets);
+    if (!carve.geometry || carve.remainingAreaSqm < kMinPostShieldClaimAreaSqm) {
+      // Void the whole claim. Zero writes below this line - every
+      // mutating call in this function lives in the apply loop further
+      // down, which this return never reaches.
+      return {
+        outcome: 'shield_blocked',
+        conqueredId: null,
+        disputedId: null,
+        carvedRing: newRing,
+        carvedGeometry,
+        claimedAreaSqm: 0,
+        shieldBlocked: {
+          zone_ids: shieldedZoneIds,
+          claimed_area_m2: 0,
+          removed_area_m2: carve.removedAreaSqm,
+        },
+      };
+    }
+    carvedGeometry = carve.geometry;
+    claimedAreaSqm = carve.remainingAreaSqm;
+  }
+
+  const carvedExterior = carvedGeometry.type === 'Polygon'
+    ? carvedGeometry.coordinates[0]
+    : carvedGeometry.coordinates[0][0];
+  const carvedPoints = carvedExteriorPoints(carvedGeometry);
+
+  // Pass 2: classify every NON-shielded rival against the CARVED geometry -
+  // a rival zone that overlapped only the area a shield removed must not be
+  // conquered or disputed, since the attacker never actually received that
+  // ground.
+  let conqueredId: string | null = null;
+  let disputedId: string | null = null;
+
+  for (const zone of zones) {
+    if (zone.owner_id === playerId) continue;
+    if (shieldedZoneIds.includes(zone.id)) continue;
+
+    let outlines: number[][][];
+    try {
+      const geom = typeof zone.geom_json === 'string' ? JSON.parse(zone.geom_json) : zone.geom_json;
+      outlines = outlinesOf(geom).filter((r) => r.length >= 3);
+    } catch {
+      continue;
+    }
+    if (outlines.length === 0) continue;
+
+    const anyRivalPointInside = outlines.some((ring) =>
+      ring.some(([x, y]) => isPointInCarvedGeometry(x, y, carvedGeometry))
+    );
+    const anyNewPointInside = outlines.some((ring) => carvedPoints.some(([x, y]) => pointInRing(x, y, ring)));
+
+    if (anyRivalPointInside) {
+      // Full or partial conquest. dispute_at/dispute_overlap_m2 are ALSO
+      // cleared here (not just contested_by_id): a third player's full
+      // conquest of a zone mid-dispute with a DIFFERENT attacker must wipe
+      // that dispute's state, or the pg_cron resolver later misfires
+      // against geometry unrelated to the original dispute.
+      conqueredId = zone.id;
+      await db.from('zones').update({
+        owner_id: playerId,
+        influence: computeClaimInfluence(claimedAreaSqm),
+        status: 'owned',
+        contested_by_id: null,
+        dispute_at: null,
+        dispute_overlap_m2: null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', zone.id);
+    } else if (anyNewPointInside) {
+      // Partial overlap -> dispute. dispute_at is an ABSOLUTE resolution
+      // deadline (now + 15 minutes), not an "opened at" timestamp.
+      // dispute_overlap_m2 is snapshotted ONCE here, against the carved
+      // exterior, as the true intersection area the attacker actually
+      // received.
+      disputedId = zone.id;
+      const disputeOverlapM2 = computeDisputeOverlapAreaSqm(carvedExterior, outlines);
+      const disputeAt = new Date(nowMs + 15 * 60 * 1000).toISOString();
+      await db.from('zones').update({
+        status: 'disputed',
+        contested_by_id: playerId,
+        dispute_at: disputeAt,
+        dispute_overlap_m2: disputeOverlapM2,
+        updated_at: new Date().toISOString(),
+      }).eq('id', zone.id);
+    }
+  }
+
+  return {
+    outcome: 'ok',
+    conqueredId,
+    disputedId,
+    carvedRing: carvedExterior,
+    carvedGeometry,
+    claimedAreaSqm,
+    shieldBlocked: shieldedZoneIds.length > 0
+      ? {
+        zone_ids: shieldedZoneIds,
+        claimed_area_m2: claimedAreaSqm,
+        removed_area_m2: Math.max(0, capturedAreaSqm - claimedAreaSqm),
+      }
+      : undefined,
+  };
+}
+
 // The request handler lives in this sibling module, separate from
 // index.ts's module-level Deno.serve() call, so a test can import it
 // without triggering that call and starting a real listener. index.ts
@@ -408,107 +632,88 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
       return ok({ result: 'failed', reason: capturedGates.reason ?? 'too_short' });
     }
 
-    // Load existing zones for this city
-    const { data: existingZones } = await supabase
+    // Load existing zones for this city. Bound and hard-failed on error: a
+    // failed select silently falling back to "no rival zones" would, after
+    // this feature, also silently mean "no shielded zones", letting a
+    // transient database error bypass a shield entirely.
+    const { data: existingZones, error: zonesErr } = await supabase
       .from('zones')
-      .select('id, owner_id, geom_json, status, influence')
+      .select('id, owner_id, geom_json, status, influence, shield_active, shield_expires_at')
       .eq('city', city);
+    if (zonesErr) return err(`Zone load failed: ${zonesErr.message}`, 500);
 
     const zones = existingZones ?? [];
     const newRing = coords; // [lng, lat] pairs
+    const nowMs = Date.now(); // single capture, every shield expiry comparison this request makes uses it
 
-    let conqueredId: string | null = null;
-    let disputedId: string | null = null;
+    // Shield-aware decide/apply: an active shield diverts a rival's
+    // overlapping claim into a carve (never a conquest, never a dispute)
+    // and a carve that leaves the claimant below the post-carve floor voids
+    // the whole claim before any write happens. This is the sole rival-zone
+    // decide/apply logic - it replaces the old unshielded conquest/dispute
+    // loop outright rather than running alongside it.
+    const shieldResult = await runShieldAwareClaimDecideApply({
+      db: supabase,
+      zones: zones as RivalZoneRow[],
+      newRing,
+      playerId,
+      nowMs,
+      capturedAreaSqm: capturedGates.areaSqm,
+    });
+
+    if (shieldResult.outcome === 'shield_blocked') {
+      // Void the whole claim. Everything above this point in the
+      // request is read-only (the city select), so the database is left
+      // exactly as it was before the claim was submitted.
+      return ok({ result: 'failed', reason: 'shield_blocked', shield_blocked: shieldResult.shieldBlocked });
+    }
+
+    const conqueredId = shieldResult.conqueredId;
+    const disputedId = shieldResult.disputedId;
     let disputeResolved = false;
 
+    // Own-zone defend: a player's own zone is never a rival overlap and is
+    // untouched by the decide/apply pass above. Runs only once the claim is
+    // confirmed not voided, so a void performs zero writes here either.
     for (const zone of zones) {
+      if (zone.owner_id !== playerId || zone.status !== 'disputed') continue;
       let outlines: number[][][];
       try {
-        const geom = typeof zone.geom_json === 'string'
-          ? JSON.parse(zone.geom_json)
-          : zone.geom_json;
-        // MultiPolygon-aware defensively: a legacy or fallback multi-outline
-        // zone stores 2+ member outlines. Each one is tested independently
-        // below (OR-combined) so an overlap against ANY member outline is
-        // detected, not just the first one misread as a flat ring.
+        const geom = typeof zone.geom_json === 'string' ? JSON.parse(zone.geom_json) : zone.geom_json;
         outlines = outlinesOf(geom).filter((r) => r.length >= 3);
       } catch { continue; }
       if (outlines.length === 0) continue;
-
-      // Check if any rival ring point falls inside our new polygon, and vice
-      // versa, across EVERY member outline of this zone's geometry.
-      const isRival = zone.owner_id !== playerId;
       const anyRivalPointInside = outlines.some((ring) => ring.some(([x, y]) => pointInRing(x, y, newRing)));
-      const anyNewPointInside = outlines.some((ring) => newRing.some(([x, y]) => pointInRing(x, y, ring)));
-
-      if (isRival) {
-        if (anyRivalPointInside) {
-          // Full or partial conquest
-          conqueredId = zone.id;
-          // Sublinear, area-scaled award (computeClaimInfluence) - see that
-          // function's doc comment in merge_geometry.ts. dispute_at/
-          // dispute_overlap_m2 are ALSO cleared here (not just
-          // contested_by_id): a third player's full conquest of a zone that
-          // is mid-dispute with a DIFFERENT attacker must wipe that
-          // dispute's state, or the pg_cron resolver later misfires against
-          // geometry that no longer has anything to do with the original
-          // dispute (spec R9).
-          await supabase.from('zones').update({
-            owner_id: playerId,
-            influence: computeClaimInfluence(capturedGates.areaSqm),
-            status: 'owned',
-            contested_by_id: null,
-            dispute_at: null,
-            dispute_overlap_m2: null,
-            updated_at: new Date().toISOString(),
-          }).eq('id', zone.id);
-        } else if (anyNewPointInside) {
-          // Partial overlap → dispute. dispute_at is an ABSOLUTE resolution
-          // deadline (now + 15 minutes), not an "opened at" timestamp - the
-          // pg_cron resolver (spec R3/R4) and the client countdown (spec
-          // R11) both just compare it against now(). dispute_overlap_m2 is
-          // snapshotted ONCE here, at dispute-open, as the true intersection
-          // area between the attacker's new ring and the zone's current
-          // geometry (spec R2-AC2) - never recomputed later.
-          disputedId = zone.id;
-          const disputeOverlapM2 = computeDisputeOverlapAreaSqm(newRing, outlines);
-          const disputeAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-          await supabase.from('zones').update({
-            status: 'disputed',
-            contested_by_id: playerId,
-            dispute_at: disputeAt,
-            dispute_overlap_m2: disputeOverlapM2,
-            updated_at: new Date().toISOString(),
-          }).eq('id', zone.id);
-        }
-      } else {
-        // Own zone that was disputed - defending resolves it
-        if (zone.status === 'disputed' && anyRivalPointInside) {
-          disputeResolved = true;
-          await supabase.from('zones').update({
-            status: 'owned',
-            contested_by_id: null,
-            updated_at: new Date().toISOString(),
-          }).eq('id', zone.id);
-        }
+      if (anyRivalPointInside) {
+        disputeResolved = true;
+        await supabase.from('zones').update({
+          status: 'owned',
+          contested_by_id: null,
+          updated_at: new Date().toISOString(),
+        }).eq('id', zone.id);
       }
     }
 
-    // Insert new zone for this player. `geom` is NOT NULL on the base table, so it
-    // must be populated (the ring is auto-closed for a valid polygon); `geom_json`
-    // uses the same closed ring so the rendered polygon matches.
+    // Insert new zone for this player. `geom`/`geom_json` store the CARVED
+    // geometry (Section 2 Q1 of the design) - a shield-affected claim stores
+    // its post-subtraction remainder, holes included, never the raw
+    // submitted ring. `geom` is NOT NULL on the base table, so it must be
+    // populated regardless of whether a carve occurred.
     const newId = uuid();
     const now = new Date().toISOString();
-    const ring = closedRing(coords); // [lng, lat] pairs, closed
+    const carvedGeometry = shieldResult.carvedGeometry;
+    const ring = shieldResult.carvedRing; // exterior-only ring, for the split/merge candidate below
     const { error: insertErr } = await supabase.from('zones').insert({
       id: newId,
       owner_id: playerId,
       city,
-      geom: toWkt(ring),
-      geom_json: JSON.stringify({ type: 'Polygon', coordinates: [ring] }),
-      // Sublinear, area-scaled award - see computeClaimInfluence's doc
-      // comment in merge_geometry.ts.
-      influence: computeClaimInfluence(capturedGates.areaSqm),
+      geom: toWkt(carvedGeometry),
+      geom_json: JSON.stringify(carvedGeometry),
+      // Sublinear, area-scaled award (computeClaimInfluence) - recomputed
+      // from the CARVED area, never the pre-carve captured area, so a
+      // shield-reduced claim is never paid full influence for territory the
+      // shield denied.
+      influence: computeClaimInfluence(shieldResult.claimedAreaSqm),
       status: 'owned',
       contested_by_id: null,
       created_at: now,
@@ -521,7 +726,7 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
     let finalZoneId: string = newId;
     let merged = false;
     let absorbedZoneIds: string[] = [];
-    let zoneGeomJson = JSON.stringify({ type: 'Polygon', coordinates: [ring] });
+    let zoneGeomJson = JSON.stringify(carvedGeometry);
 
     if (!disputedId) {
       const { computeZoneMerges, computeZoneSplit, computeNextInfluenceLevel } = await import(
@@ -598,6 +803,14 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
       zoneGeomJson = splitMergeOutcome.zoneGeomJson;
     }
 
+    // Additive only: present only when at least one active shielded
+    // overlap was subtracted from this claim without voiding it. An
+    // unshielded claim's response shape is byte-identical to before this
+    // feature.
+    const shieldBlockedField = shieldResult.shieldBlocked
+      ? { shield_blocked: shieldResult.shieldBlocked }
+      : {};
+
     if (conqueredId) {
       return ok({
         result: 'conquered',
@@ -606,6 +819,7 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
         merged,
         absorbed_zone_ids: absorbedZoneIds,
         zone_geom_json: zoneGeomJson,
+        ...shieldBlockedField,
       });
     }
     if (disputedId) {
@@ -616,6 +830,7 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
         merged: false,
         absorbed_zone_ids: [],
         zone_geom_json: zoneGeomJson,
+        ...shieldBlockedField,
       });
     }
     return ok({
@@ -625,6 +840,7 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
       merged,
       absorbed_zone_ids: absorbedZoneIds,
       zone_geom_json: zoneGeomJson,
+      ...shieldBlockedField,
     });
 
   } catch (e) {
@@ -929,80 +1145,3 @@ export async function runSplitAndMerge(
   return { finalZoneId, merged, absorbedZoneIds, zoneGeomJson };
 }
 
-// ---------------------------------------------------------------------------
-// PLACEHOLDER scaffold ONLY, added ahead of the shield-carve feature so a
-// test suite written against the actual claim decide/apply loop can import a
-// real symbol and reach its own assertions instead of failing on an
-// unresolved import - the same discipline shield_geometry.ts's own
-// placeholders already follow. This function is today's real rival-zone
-// decide/apply behaviour, extracted verbatim (conquest, dispute, own-zone
-// defend), with no shield awareness added: it reads shield_active and
-// shield_expires_at off each row but never branches on either field. It is
-// not a fix for anything; callers must not depend on it producing a
-// shield_blocked outcome.
-export interface ShieldAwareClaimDbClient {
-  from(table: 'zones'): {
-    update(patch: Record<string, unknown>): {
-      eq(column: 'id', value: string): PromiseLike<{ error: { message: string } | null }>;
-    };
-  };
-}
-
-export interface RivalZoneRow {
-  id: string;
-  owner_id: string;
-  status: string;
-  geom_json: string | { type?: string; coordinates?: unknown };
-  shield_active?: boolean | null;
-  shield_expires_at?: string | null;
-}
-
-export interface ShieldAwareClaimResult {
-  outcome: 'ok' | 'shield_blocked';
-  conqueredId: string | null;
-  disputedId: string | null;
-  carvedRing: number[][];
-  shieldBlocked?: { zone_ids: string[]; claimed_area_m2: number; removed_area_m2: number };
-}
-
-export interface RunShieldAwareClaimDecideApplyParams {
-  db: ShieldAwareClaimDbClient;
-  zones: RivalZoneRow[];
-  newRing: number[][];
-  playerId: string;
-  nowMs: number;
-  capturedAreaSqm: number;
-}
-
-export async function runShieldAwareClaimDecideApply(
-  params: RunShieldAwareClaimDecideApplyParams,
-): Promise<ShieldAwareClaimResult> {
-  const { db, zones, newRing, playerId } = params;
-  let conqueredId: string | null = null;
-  let disputedId: string | null = null;
-
-  for (const zone of zones) {
-    let outlines: number[][][];
-    try {
-      const geom = typeof zone.geom_json === 'string' ? JSON.parse(zone.geom_json) : zone.geom_json;
-      outlines = outlinesOf(geom).filter((r) => r.length >= 3);
-    } catch {
-      continue;
-    }
-    if (outlines.length === 0) continue;
-    if (zone.owner_id === playerId) continue;
-
-    const anyRivalPointInside = outlines.some((ring) => ring.some(([x, y]) => pointInRing(x, y, newRing)));
-    const anyNewPointInside = outlines.some((ring) => newRing.some(([x, y]) => pointInRing(x, y, ring)));
-
-    if (anyRivalPointInside) {
-      conqueredId = zone.id;
-      await db.from('zones').update({ owner_id: playerId, status: 'owned' }).eq('id', zone.id);
-    } else if (anyNewPointInside) {
-      disputedId = zone.id;
-      await db.from('zones').update({ status: 'disputed', contested_by_id: playerId }).eq('id', zone.id);
-    }
-  }
-
-  return { outcome: 'ok', conqueredId, disputedId, carvedRing: newRing };
-}
