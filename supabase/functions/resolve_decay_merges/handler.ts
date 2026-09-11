@@ -46,18 +46,24 @@ function err(msg: string, status = 400) {
   });
 }
 
-// Every member outline of a possibly-legacy MultiPolygon row, mirroring
-// claim_territory/handler.ts's own outlinesOf - kept as a local copy rather
-// than an added export from that module, since this is the only other
-// caller and the two functions must stay independently deployable.
-function outlinesOf(geom: { type?: string; coordinates?: unknown } | null | undefined): number[][][] {
+// Every MEMBER of a possibly-legacy MultiPolygon row, each returned as its
+// own full ring set ([exterior, ...interiorRings]) rather than a flat list
+// of bare exterior rings - a member's own hole rings travel WITH their
+// exterior here (unlike claim_territory/handler.ts's own outlinesOf, which
+// returns a flat list of every ring for point-in-ring overlap tests, a
+// different consumer shape). This shape is what resolveDecayMerge below
+// needs to attach a member's holes to its own ZoneInput.holes instead of a
+// hole being promoted to its own top-level ring. Kept as a local copy
+// rather than an added export from that module, since this is the only
+// other caller and the two functions must stay independently deployable.
+function outlinesOf(geom: { type?: string; coordinates?: unknown } | null | undefined): number[][][][] {
   if (!geom) return [];
   if (geom.type === 'MultiPolygon') {
-    return (geom.coordinates as number[][][][]).map((poly) => poly[0]);
+    return (geom.coordinates as number[][][][]).filter((poly) => poly.length > 0);
   }
   if (geom.type === 'Polygon') {
     const coords = geom.coordinates as number[][][];
-    return coords[0] ? [coords[0]] : [];
+    return coords.length > 0 ? [coords] : [];
   }
   return [];
 }
@@ -73,9 +79,12 @@ function toWkt(
   input: { type: 'Polygon'; coordinates: number[][][] } | { type: 'MultiPolygon'; coordinates: number[][][][] },
 ): string {
   if (input.type === 'Polygon') {
-    return `SRID=4326;POLYGON(${ringToWktBody(input.coordinates[0])})`;
+    const rings = input.coordinates.map((ring) => ringToWktBody(ring)).join(', ');
+    return `SRID=4326;POLYGON(${rings})`;
   }
-  const polys = input.coordinates.map((poly) => `(${ringToWktBody(poly[0])})`).join(', ');
+  const polys = input.coordinates
+    .map((poly) => `(${poly.map((ring) => ringToWktBody(ring)).join(', ')})`)
+    .join(', ');
   return `SRID=4326;MULTIPOLYGON(${polys})`;
 }
 
@@ -140,12 +149,20 @@ export async function resolveDecayMerge(
       shieldActiveById.set(id, (r.shield_active as boolean | null) ?? false);
       shieldExpiresAtById.set(id, (r.shield_expires_at as string | null) ?? null);
       const geom = typeof r.geom_json === 'string' ? JSON.parse(r.geom_json) : r.geom_json;
-      return outlinesOf(geom).map((ring) => ({
-        id,
-        ring,
-        createdAt: r.created_at as string,
-        influenceLevel: (r.influence_level as number | null) ?? 1,
-      }));
+      // Each entry from outlinesOf is one member's full ring set
+      // ([exterior, ...holes]) - the exterior becomes the ZoneInput's own
+      // ring, and any remaining rings become its holes, so a carved hole
+      // survives into computeZoneMerges instead of being promoted to its
+      // own top-level ring.
+      return outlinesOf(geom)
+        .filter((ringSet) => ringSet[0] && ringSet[0].length >= 3)
+        .map((ringSet) => ({
+          id,
+          ring: ringSet[0],
+          holes: ringSet.length > 1 ? ringSet.slice(1) : undefined,
+          createdAt: r.created_at as string,
+          influenceLevel: (r.influence_level as number | null) ?? 1,
+        }));
     })
     .flat();
 
