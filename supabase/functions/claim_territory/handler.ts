@@ -173,6 +173,32 @@ export function outlinesOf(geom: { type?: string; coordinates?: unknown } | null
   return [];
 }
 
+// Hole-aware companion to outlinesOf, used ONLY at the merge-candidate
+// construction sites below (the initial candidate build and the
+// split-reconciliation rebuild) - outlinesOf itself stays a flat per-ring
+// list for its own point-in-ring overlap-test callers, unchanged. Unlike
+// outlinesOf's flat return, this returns one entry per polygon MEMBER, each
+// entry being that member's full ring set ([exterior, ...interiorRings]), so
+// a hole ring is never promoted to its own independent merge candidate.
+// Mirrors resolve_decay_merges/handler.ts's own local outlinesOf (kept as an
+// independent copy for the same reason that one is: the two call sites here
+// and resolve_decay_merges's own merge-candidate construction must stay
+// independently deployable). Exported ONLY so tests can drive the real
+// function directly - no behaviour change, visibility only.
+export function ringSetsOf(
+  geom: { type?: string; coordinates?: unknown } | null | undefined,
+): number[][][][] {
+  if (!geom) return [];
+  if (geom.type === 'MultiPolygon') {
+    return (geom.coordinates as number[][][][]).filter((poly) => poly.length > 0);
+  }
+  if (geom.type === 'Polygon') {
+    const coords = geom.coordinates as number[][][];
+    return coords.length > 0 ? [coords] : [];
+  }
+  return [];
+}
+
 export interface CapturedRingGateResult {
   passed: boolean;
   reason?: 'too_short';
@@ -761,13 +787,18 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
           // feed each one back in as its own ZoneInput ring (same db row id)
           // so a later claim can still test contiguity against each piece
           // independently. computeZoneMerges naturally dedupes them back into
-          // one group since they were never actually apart.
-          return outlinesOf(geom).map((r2) => ({
-            id: r.id as string,
-            ring: r2,
-            createdAt: r.created_at as string,
-            influenceLevel: (r.influence_level as number | null) ?? 1,
-          }));
+          // one group since they were never actually apart. Each member's own
+          // interior (hole) ring(s) are attached as that member's `holes`,
+          // never promoted to their own independent candidate.
+          return ringSetsOf(geom)
+            .filter((rs) => rs[0] && rs[0].length >= 3)
+            .map((rs) => ({
+              id: r.id as string,
+              ring: rs[0],
+              holes: rs.length > 1 ? rs.slice(1) : undefined,
+              createdAt: r.created_at as string,
+              influenceLevel: (r.influence_level as number | null) ?? 1,
+            }));
         })
         .flat();
 
@@ -1022,10 +1053,11 @@ export async function runSplitAndMerge(
     if (remainderGeom) {
       if (expandedRowIds.has(candidate.id)) continue;
       expandedRowIds.add(candidate.id);
-      for (const outlineRing of outlinesOf(remainderGeom)) {
+      for (const rs of ringSetsOf(remainderGeom).filter((rs) => rs[0] && rs[0].length >= 3)) {
         reconciledInputs.push({
           id: candidate.id,
-          ring: outlineRing,
+          ring: rs[0],
+          holes: rs.length > 1 ? rs.slice(1) : undefined,
           createdAt: candidate.createdAt,
           influenceLevel: candidate.influenceLevel,
         });
