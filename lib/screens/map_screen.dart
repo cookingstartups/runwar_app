@@ -880,41 +880,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  /// Distinct snackbar copy + haptic pulse per claim outcome (guards against
-  /// regressing the disputed-outcome message and gives the core claim moment
-  /// feel, not just a default-styled toast). Positioned ahead of
-  /// _onAutoClaimOutcome (its only call site) so the `TerritoryResult.disputed`
-  /// branch reads immediately after the first `_showResultSnack(` occurrence.
-  void _showResultSnack(BuildContext context, ClaimOutcome outcome) {
-    final (String msg, Color color, IconData icon) = switch (outcome.result) {
-      TerritoryResult.claimed => ('Territory claimed!', kAccent, Icons.flag),
-      TerritoryResult.conquered => ('Zone conquered!', kAccent2, Icons.bolt),
-      TerritoryResult.disputed => ('Zone disputed!', _kDisputedColor, Icons.warning_amber_rounded),
-      TerritoryResult.failed => ('Could not claim zone — try again', kDanger, Icons.error_outline),
-    };
-    switch (outcome.result) {
-      case TerritoryResult.claimed:
-      case TerritoryResult.conquered:
-        HapticFeedback.heavyImpact();
-      case TerritoryResult.disputed:
-        HapticFeedback.mediumImpact();
-      case TerritoryResult.failed:
-        HapticFeedback.lightImpact();
-    }
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      backgroundColor: kSurface,
-      content: Row(
-        children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(width: 10),
-          Expanded(child: Text(msg, style: TextStyle(color: color))),
-        ],
-      ),
-    ));
-  }
-
   /// Handles an auto-claim outcome emitted by RunRecorderNotifier.autoClaimOutcomes.
-  /// Triggers E&U animation, mission hooks, and result snack.
+  /// Triggers E&U animation, mission hooks, and result snack. Positioned
+  /// ahead of _showResultSnack (its only call site) so the failed-outcome
+  /// dispatch to _showResultSnack below reads before that function's own
+  /// definition.
   /// The recorder remains in `recording` state throughout this handler.
   Future<void> _onAutoClaimOutcome(
       ({ClaimOutcome outcome, List<LatLng> polygon}) ev) async {
@@ -941,9 +911,13 @@ class _MapScreenState extends ConsumerState<MapScreen>
         stackTrace: StackTrace.current,
         retryCount: 0,
       );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Claim failed - try again')),
-      );
+      // Route through the existing styled/haptic/icon presentation path
+      // instead of an ad hoc inline SnackBar that threw outcome.reason away
+      // (R3) - this is the fix for the root cause that made
+      // _showResultSnack's TerritoryResult.failed arm structurally dead
+      // code: this early return used to build its own SnackBar and never
+      // called _showResultSnack at all.
+      _showResultSnack(context, outcome);
       return;
     }
 
@@ -1037,6 +1011,58 @@ class _MapScreenState extends ConsumerState<MapScreen>
     }
 
     _showResultSnack(context, outcome);
+  }
+
+  /// Distinct snackbar copy + haptic pulse per claim outcome (guards against
+  /// regressing the disputed-outcome message and gives the core claim moment
+  /// feel, not just a default-styled toast).
+  void _showResultSnack(BuildContext context, ClaimOutcome outcome) {
+    final (String msg, Color color, IconData icon) = switch (outcome.result) {
+      TerritoryResult.claimed => ('Territory claimed!', kAccent, Icons.flag),
+      TerritoryResult.conquered => ('Zone conquered!', kAccent2, Icons.bolt),
+      TerritoryResult.disputed => ('Zone disputed!', _kDisputedColor, Icons.warning_amber_rounded),
+      TerritoryResult.failed => (
+          // Reason-to-copy mapping (mirrors _onGateRejected's switch style
+          // above) so the player sees WHY a claim failed instead of one
+          // fixed generic message regardless of cause (R3). A null or
+          // not-yet-recognized reason - including a future server reason
+          // this client build predates - always falls through to the
+          // existing generic fallback below, never an empty string or a
+          // crash.
+          switch (outcome.reason) {
+            'speed_violation' =>
+              'Moving too fast for a valid claim - slow down and retry',
+            'teleport' => 'GPS jump detected - claim rejected',
+            'too_short' => 'Loop too short - keep running',
+            'corrupt_track' => 'GPS signal lost - try again',
+            'shield_blocked' => 'That zone is shielded - try elsewhere',
+            String r when r.startsWith('edge_function_error_') =>
+              'Could not reach the server - try again',
+            _ => 'Could not claim zone - try again',
+          },
+          kDanger,
+          Icons.error_outline,
+        ),
+    };
+    switch (outcome.result) {
+      case TerritoryResult.claimed:
+      case TerritoryResult.conquered:
+        HapticFeedback.heavyImpact();
+      case TerritoryResult.disputed:
+        HapticFeedback.mediumImpact();
+      case TerritoryResult.failed:
+        HapticFeedback.lightImpact();
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      backgroundColor: kSurface,
+      content: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 10),
+          Expanded(child: Text(msg, style: TextStyle(color: color))),
+        ],
+      ),
+    ));
   }
 
   /// Calls `complete_first_mission`, updates local SQLite, shows the

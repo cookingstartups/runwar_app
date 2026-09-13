@@ -74,6 +74,21 @@ class RunRecorderService {
   final ValueNotifier<LatLng?> lastSimRawPosition = ValueNotifier(null);
 
   final List<LatLng> _track = <LatLng>[];
+
+  // Parallel, index-aligned metadata arrays maintained alongside _track,
+  // never widening _track's own LatLng type (design.md section 6.2 decision
+  // (b) - the largest blast radius option, widening LatLng itself, is
+  // rejected there; this mirrors the existing lastSimRawPosition convention
+  // of tracking a value alongside _track without changing _track's type).
+  // _trackTsMs[i]/_trackAltM[i] describe _track[i]: device timestamp (epoch
+  // ms) and altitude in metres, or null when genuinely unknown (never
+  // defaulted to 0 - see section 6.6/6.7). Appended at every site that adds
+  // to _track (proximity-closure fast path, ordinary spacing-filter path,
+  // resumeFromScratch rehydration) so the arrays never drift out of index
+  // alignment with _track, and cleared everywhere _track itself is cleared.
+  final List<int> _trackTsMs = <int>[];
+  final List<double?> _trackAltM = <double?>[];
+
   DateTime? _startedAt;
   DateTime? _closedAt;
   StreamSubscription<Position>? _posSub;
@@ -268,7 +283,9 @@ class RunRecorderService {
   // run_recorder_provider.dart's confirmClaim, which this service does not
   // see, so "claim" here means "gate-cleared dispatch", not
   // server-confirmed. Reset alongside _sessionStartTime everywhere a new
-  // session begins (startRun, beginSimulation, resumeFromScratch) or ends
+  // session begins (startRun, beginSimulation, resumeFromScratch, whose
+  // rehydration loop also reads back the new nullable 'alt' column added to
+  // run_scratch - see resumeFromScratch below) or ends
   // (stopRun, cancelRun, _clearTrackInternal) so a stale timestamp from a
   // prior session can never leak into the next one.
   DateTime? _lastClaimAt;
@@ -305,6 +322,17 @@ class RunRecorderService {
   // loop per call, so it always dispatches a list of exactly one - this is
   // not a behaviour change for that path, only a signature change.
   Future<void> Function(List<List<LatLng>> capturedPolygons)? onAutoClaim;
+
+  // Additive sibling callback to onAutoClaim (design.md section 6.4): a
+  // wholly new, separate, nullable field rather than a change to
+  // onAutoClaim's own declared signature (widening it would break the 10
+  // existing test files plus run_recorder_provider.dart, which all assign it
+  // a plain one-argument closure). Carries the per-vertex
+  // [ts_ms, alt_or_minus_one] metadata for the SAME captured polygon(s) just
+  // passed to onAutoClaim, index-aligned 1:1 per vertex, invoked in the same
+  // synchronous pass as onAutoClaim, immediately after it, at both existing
+  // dispatch call sites (_scanForAutoClaim, _drainDeferredCrossings).
+  Future<void> Function(List<List<List<num>>> capturedMeta)? onAutoClaimMeta;
 
   // Callback invoked when an auto-claim scan silently rejects a detected loop
   // closure at the area-floor or session-elapsed gate. Set by the provider
@@ -555,6 +583,8 @@ class RunRecorderService {
       for (int i = 0; i < _track.length; i++) {
         if (_equirectangularDistanceM(_track[i], newLatLng) < kProximityTriggerM) {
           _track.add(newLatLng);
+          _trackTsMs.add(pos.timestamp.millisecondsSinceEpoch);
+          _trackAltM.add(pos.altitude.isFinite ? pos.altitude : null);
           trackVersion.value++;
           final scratchUid = _scratchUserId();
           if (scratchUid != null) {
@@ -615,6 +645,8 @@ class RunRecorderService {
       return;
     }
     _track.add(newLatLng);
+    _trackTsMs.add(pos.timestamp.millisecondsSinceEpoch);
+    _trackAltM.add(pos.altitude.isFinite ? pos.altitude : null);
     trackVersion.value++;
     // Persist point to scratch table for crash/process-kill recovery. A
     // simulation writes under a namespaced scratch key (see _scratchUserId)
@@ -1161,7 +1193,8 @@ class RunRecorderService {
         stackTrace: StackTrace.current,
         retryCount: 0,
       );
-      _retainDeferredCrossing(polygon, k, hit.intersectingSegmentIdx, elapsedSec);
+      _retainDeferredCrossing(polygon, k, hit.intersectingSegmentIdx, elapsedSec,
+          isProximityClosure: hit.isProximityClosure);
       onGateRejected?.call(GateRejectionReason.sessionElapsed, {'elapsed_sec': elapsedSec});
       return;
     }
@@ -1190,6 +1223,23 @@ class RunRecorderService {
       // single-member group - grouping across sibling loops happens in the
       // batch paths (_drainDeferredCrossings, _rescanRehydratedTrack).
       cb([polygon]).catchError((_) {});
+    }
+    // Dispatched in the SAME synchronous pass as onAutoClaim above,
+    // immediately after it (design.md section 6.4) - computeCaptureMeta
+    // slices _trackTsMs/_trackAltM via the exact same integer index range
+    // (captureAnchorIdx..k) used to slice _track into the polygon just
+    // dispatched above, so metadata extraction is exact-index and cannot
+    // mispair with a nearby-but-different vertex.
+    final metaCb = onAutoClaimMeta;
+    if (metaCb != null) {
+      final meta = computeCaptureMeta(
+        _trackTsMs,
+        _trackAltM,
+        captureAnchorIdx,
+        k,
+        isProximityClosure: hit.isProximityClosure,
+      );
+      metaCb([meta]).catchError((_) {});
     }
   }
 
@@ -1233,7 +1283,8 @@ class RunRecorderService {
   /// [_drainDeferredCrossings] once genuinely enough time has elapsed.
   /// SPEC-0143.
   void _retainDeferredCrossing(
-      List<LatLng> polygon, int k, int intersectingSegmentIdx, int elapsedSec) {
+      List<LatLng> polygon, int k, int intersectingSegmentIdx, int elapsedSec,
+      {bool isProximityClosure = false}) {
     if (polygon.length < 3) return; // cannot be claimed; nothing to retain
     final identity = '$intersectingSegmentIdx:$k';
     for (final d in _deferredCrossings) {
@@ -1254,6 +1305,7 @@ class RunRecorderService {
       detectedAtTrailIndex: k,
       intersectingSegmentIdx: intersectingSegmentIdx,
       detectedAtElapsedSec: elapsedSec,
+      isProximityClosure: isProximityClosure,
     ));
   }
 
@@ -1316,6 +1368,29 @@ class RunRecorderService {
       final groups = _groupPolygonsByProximity(toDispatch);
       for (final group in groups) {
         onAutoClaim?.call(group).catchError((_) {});
+        // Dispatched in the SAME synchronous pass, immediately after
+        // onAutoClaim (design.md section 6.4). Each polygon in `group` is
+        // the SAME object reference as one `d.polygon` in `pending` (never
+        // copied), so identity lookup pairs each polygon back to the
+        // crossing that produced it, without relying on value equality.
+        final metaCb = onAutoClaimMeta;
+        if (metaCb != null) {
+          final metaGroup = <List<List<num>>>[];
+          for (final poly in group) {
+            final d = pending.firstWhere(
+              (e) => identical(e.polygon, poly),
+              orElse: () => pending.first,
+            );
+            metaGroup.add(computeCaptureMeta(
+              _trackTsMs,
+              _trackAltM,
+              d.intersectingSegmentIdx,
+              d.detectedAtTrailIndex,
+              isProximityClosure: d.isProximityClosure,
+            ));
+          }
+          metaCb(metaGroup).catchError((_) {});
+        }
       }
     }
     // Record the drain as the new claim-interval reference point, same as
@@ -1568,6 +1643,8 @@ class RunRecorderService {
       final rows = await RunScratchStore.instance.getPoints(userId);
       if (rows.isEmpty) return;
       _track.clear();
+      _trackTsMs.clear();
+      _trackAltM.clear();
       DateTime? earliest;
       // Read the durable session_id from the first scratch row (all rows share
       // the same session_id since they were written in the same run).
@@ -1578,6 +1655,14 @@ class RunRecorderService {
         final lng = row['lng'] as double;
         _track.add(LatLng(lat, lng));
         final tsStr = row['ts'] as String?;
+        // Rows written before the 'alt' column existed read back with a null
+        // map entry (sqlite ALTER TABLE backfills NULL) - preserved as null
+        // here, never defaulted to 0.0, so a resumed session degrades to
+        // "speed check runs without altitude data" instead of fabricating a
+        // false ground-level altitude (design.md section 6.6/6.7).
+        _trackAltM.add(row['alt'] as double?);
+        _trackTsMs.add(
+            tsStr == null ? 0 : (DateTime.tryParse(tsStr)?.millisecondsSinceEpoch ?? 0));
         if (tsStr != null && earliest == null) {
           earliest = DateTime.tryParse(tsStr)?.toUtc();
         }
@@ -1749,7 +1834,8 @@ class RunRecorderService {
         // consumed here: the polygon is already captured, and consuming its
         // span now (before it has actually dispatched) would make the
         // dedup gate reject it right back out at drain time.
-        _retainDeferredCrossing(polygon, len - 1, hit.intersectingSegmentIdx, -1);
+        _retainDeferredCrossing(polygon, len - 1, hit.intersectingSegmentIdx, -1,
+            isProximityClosure: hit.isProximityClosure);
         continue;
       }
       _consumedSpans.add([captureAnchorIdx, len - 1]);
@@ -1791,6 +1877,8 @@ class RunRecorderService {
 
   void _clearTrackInternal() {
     _track.clear();
+    _trackTsMs.clear();
+    _trackAltM.clear();
     _startedAt = null;
     _closedAt = null;
     _sessionStartTime = null;
@@ -1877,9 +1965,12 @@ class RunRecorderService {
     _simTimer?.cancel();
     _simTimer = null;
     _track.clear();
+    _trackTsMs.clear();
+    _trackAltM.clear();
     activeCity = '';
     stateNotifier.value = RecorderState.idle;
     onAutoClaim = null;
+    onAutoClaimMeta = null;
     onGateRejected = null;
     onGpsFix = null;
     onGpsFixBatch = null;
@@ -1913,15 +2004,55 @@ class _DeferredCrossing {
     required this.detectedAtTrailIndex,
     required this.intersectingSegmentIdx,
     required this.detectedAtElapsedSec,
+    this.isProximityClosure = false,
   });
 
   final List<LatLng> polygon;
   final int detectedAtTrailIndex;
   final int intersectingSegmentIdx;
   final int detectedAtElapsedSec;
+  // Mirrors SelfIntersection.isProximityClosure at the moment this crossing
+  // was captured - needed by computeCaptureMeta at drain time to decide
+  // whether a synthetic (non-recorded) intersection vertex is present at the
+  // head of this crossing's polygon (design.md section 6.3).
+  final bool isProximityClosure;
   bool dispatched = false;
 
   String get identity => '$intersectingSegmentIdx:$detectedAtTrailIndex';
+}
+
+/// Sibling of [computeCapture] (lasso.dart): slices the parallel
+/// [tsMs]/[altM] metadata arrays via the exact SAME integer index range
+/// (`intersectingSegmentIdx..k`) used to slice `_track` into a captured
+/// polygon, so metadata extraction is exact-index, never proximity-matched,
+/// and cannot mispair a timestamp with the wrong vertex (design.md section
+/// 6.2 decision, 6.4). Each returned entry is `[ts_ms, alt_or_minus_one]`,
+/// index-aligned 1:1 with the polygon [computeCapture] returns for the same
+/// arguments - `alt` is emitted as `-1` when the recorded altitude for that
+/// vertex is `null` (device reported none), since the wire-level `num`
+/// element cannot itself carry Dart's `null`.
+///
+/// For the non-proximity-closure case, [computeCapture] prepends a
+/// synthetic `intersectionPoint` that has no native timestamp of its own;
+/// this assigns it the metadata of `trailPoints[intersectingSegmentIdx]` (the
+/// first REAL vertex immediately following it), a deliberate, bounded
+/// approximation - see design.md section 6.3. For the proximity-closure
+/// case no synthetic vertex exists, so no special case is needed.
+List<List<num>> computeCaptureMeta(
+  List<int> tsMs,
+  List<double?> altM,
+  int intersectingSegmentIdx,
+  int k, {
+  bool isProximityClosure = false,
+}) {
+  final meta = <List<num>>[
+    if (!isProximityClosure)
+      [tsMs[intersectingSegmentIdx], altM[intersectingSegmentIdx] ?? -1],
+  ];
+  for (int idx = intersectingSegmentIdx; idx <= k; idx++) {
+    meta.add([tsMs[idx], altM[idx] ?? -1]);
+  }
+  return meta;
 }
 
 /// Equirectangular distance in metres between two LatLng points.

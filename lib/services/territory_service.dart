@@ -66,10 +66,20 @@ class TerritoryService {
   /// the new `tracks` field, an array of LineStrings, so the server can union
   /// them into one contiguous shape (claim_territory/merge_geometry.ts's
   /// unionCandidateRings) instead of registering N independent claims.
+  /// [tracksMeta], when supplied, carries per-vertex `[ts_ms, alt]` metadata
+  /// index-aligned to the CORRESPONDING entry of [tracks] (design.md section
+  /// 6.4/6.5) - one outer entry per track, one inner `[ts_ms, alt]` entry per
+  /// vertex of that track. Emits the 4-tuple `[lng, lat, alt, ts_ms]` shape
+  /// for a track whose metadata is present AND length-matches that track's
+  /// own (already-simplified) vertex list; a null, absent, or length-
+  /// mismatched metadata entry falls back to the legacy `[lng, lat]` 2-tuple
+  /// for that whole track - never a partial mix within one ring (design.md
+  /// section 3/10's "no metadata available" fallback contract).
   Future<ClaimOutcome?> claimViaEdgeFunction(
     List<List<LatLng>> tracks,
-    String city,
-  ) async {
+    String city, {
+    List<List<List<num>>>? tracksMeta,
+  }) async {
     if (!SupabaseService.instance.isConnected) return null;
     if (tracks.isEmpty) return null;
 
@@ -83,17 +93,37 @@ class TerritoryService {
       for (final t in tracks) simplifyDouglasPeucker(t),
     ];
 
-    List<num> coordOf(LatLng p) => [p.longitude, p.latitude];
-    Map<String, Object> lineStringOf(List<LatLng> track) => {
+    List<num> coordOf(LatLng p, [List<num>? meta]) =>
+        meta == null ? [p.longitude, p.latitude]
+                     : [p.longitude, p.latitude, meta[1], meta[0]];
+
+    Map<String, Object> lineStringOf(List<LatLng> track,
+            [List<List<num>>? meta]) =>
+        {
           'type': 'LineString',
-          'coordinates': track.map(coordOf).toList(),
+          'coordinates': [
+            for (var i = 0; i < track.length; i++)
+              coordOf(track[i], meta != null && i < meta.length ? meta[i] : null),
+          ],
         };
+
+    // Per-track metadata usable only when it length-matches the
+    // corresponding (already-simplified) track - otherwise this track falls
+    // back to the legacy 2-tuple shape in full, never a partial mix.
+    List<List<num>>? metaForTrack(int i) {
+      if (tracksMeta == null || i >= tracksMeta.length) return null;
+      final m = tracksMeta[i];
+      return m.length == simplifiedTracks[i].length ? m : null;
+    }
 
     final body = <String, Object>{'city': city};
     if (simplifiedTracks.length == 1) {
-      body['track'] = lineStringOf(simplifiedTracks.first);
+      body['track'] = lineStringOf(simplifiedTracks.first, metaForTrack(0));
     } else {
-      body['tracks'] = simplifiedTracks.map(lineStringOf).toList();
+      body['tracks'] = [
+        for (var i = 0; i < simplifiedTracks.length; i++)
+          lineStringOf(simplifiedTracks[i], metaForTrack(i)),
+      ];
     }
 
     try {
