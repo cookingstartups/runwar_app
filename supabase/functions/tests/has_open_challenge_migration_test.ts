@@ -77,3 +77,9 @@ Deno.test('grants EXECUTE to service_role only, never to authenticated or anon',
   assertFalse(/GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+has_open_challenge\(uuid\)\s+TO\s+(authenticated|anon)/i.test(src),
     'must not grant EXECUTE to authenticated or anon - only the service-role edge function client calls this');
 });
+
+Deno.test('revokes ALL from PUBLIC before granting to service_role, per the 0040/0073 precedent', () => {
+  const src = findMigrationSrc();
+  assert(/REVOKE\s+ALL\s+ON\s+FUNCTION\s+has_open_challenge\(uuid\)\s+FROM\s+PUBLIC/i.test(src),
+    'must revoke ALL on has_open_challenge(uuid) from PUBLIC - Postgres defaults function EXECUTE to PUBLIC, so without this the function is callable directly via PostgREST RPC by any authenticated/anon role');
+});
