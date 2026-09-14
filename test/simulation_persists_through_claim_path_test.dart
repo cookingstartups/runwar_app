@@ -53,8 +53,9 @@ class _ClaimCapturingRunRecorderNotifier extends RunRecorderNotifier {
   Future<ClaimOutcome> confirmClaim(
     String userId,
     String city,
-    List<List<LatLng>> capturedPolygons,
-  ) async {
+    List<List<LatLng>> capturedPolygons, {
+    List<List<List<num?>>>? capturedMeta,
+  }) async {
     calls.add((
       userId: userId,
       city: city,
