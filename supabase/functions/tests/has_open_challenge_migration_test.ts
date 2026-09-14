@@ -56,6 +56,12 @@ Deno.test('filters on the live pending status literal, not the doctrine-literal 
     'must not filter on status = open - the live schema never sets this value');
 });
 
+Deno.test('joins user_id and status = pending with AND, not two independent or OR-joined clauses', () => {
+  const src = findMigrationSrc();
+  assert(/WHERE\s+user_id\s*=\s*p_player_id\s+AND\s+status\s*=\s*'pending'/i.test(src),
+    'the WHERE clause must combine user_id = p_player_id AND status = \'pending\' with AND - a body written with OR (or any join returning any pending challenge for any player, or any status for the given player) must fail this test');
+});
+
 Deno.test('orders by issued_at descending, limited to one row', () => {
   const src = findMigrationSrc();
   assert(/ORDER BY\s+issued_at\s+DESC/i.test(src),
