@@ -85,6 +85,11 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     svc.lastSimRawPosition.addListener(_onSimRawPosition);
     // Register the auto-claim callback.
     svc.onAutoClaim = _handleAutoClaim;
+    // Register the companion timing/altitude metadata callback. The service
+    // fires onAutoClaimMeta immediately after onAutoClaim, in the same
+    // synchronous scan pass - see _handleAutoClaim/_handleAutoClaimMeta
+    // below for how the two are paired.
+    svc.onAutoClaimMeta = _handleAutoClaimMeta;
     // Register the gate-rejection callback (R1) — mirrors onAutoClaim's pattern.
     svc.onGateRejected = (reason, details) async {
       if (!_gateRejectionController.isClosed) {
@@ -263,6 +268,16 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     return RunRecorderService.instance.resumeFromScratch(userId);
   }
 
+  /// Timing/altitude metadata for the auto-claim group [_handleAutoClaim] is
+  /// about to confirm, populated by [_handleAutoClaimMeta]. RunRecorderService
+  /// fires onAutoClaim then onAutoClaimMeta back-to-back, synchronously,
+  /// within one scan pass - [_handleAutoClaim] yields one microtask turn
+  /// before reading this field so the meta callback has a chance to run
+  /// first, without changing onAutoClaim's own call signature. Cleared
+  /// immediately after being read so a later claim can never accidentally
+  /// reuse a stale value.
+  List<List<List<num?>>>? _pendingCapturedMeta;
+
   /// Handles an auto-claim callback fired by RunRecorderService when a valid
   /// self-intersection is detected. [capturedPolygons] carries one-or-more
   /// sibling loops from the SAME run that RunRecorderService has already
@@ -270,6 +285,15 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   /// submitted as ONE claim so the server can union them into one
   /// contiguous shape, instead of dispatching one claim per loop.
   Future<void> _handleAutoClaim(List<List<LatLng>> capturedPolygons) async {
+    _pendingCapturedMeta = null;
+    // Yield one microtask turn: RunRecorderService calls onAutoClaimMeta
+    // immediately after onAutoClaim within the same synchronous scan pass,
+    // so by the time this resumes, _handleAutoClaimMeta (below) has already
+    // had a chance to populate _pendingCapturedMeta for this SAME group.
+    await Future<void>.value();
+    final capturedMeta = _pendingCapturedMeta;
+    _pendingCapturedMeta = null;
+
     final auth = _ref.read(authProvider);
     final userId = auth.user?['id'] as String?;
     if (userId == null) {
@@ -306,7 +330,12 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     }
     final city = capitalize(slugs.first);
     try {
-      final outcome = await confirmClaim(userId, city, capturedPolygons);
+      final outcome = await confirmClaim(
+        userId,
+        city,
+        capturedPolygons,
+        capturedMeta: capturedMeta,
+      );
       // Push outcome to the stream MapScreen listens on for the E&U overlay.
       // The overlay is drawn from the first member polygon - the server's
       // returned zone_geom_json (already invalidated into zonesProvider
@@ -331,6 +360,15 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
     }
   }
 
+  /// Companion to [_handleAutoClaim]: stores the just-arrived per-vertex
+  /// timing/altitude metadata so the in-flight [_handleAutoClaim] call for
+  /// the SAME group - already waiting one microtask turn for exactly this -
+  /// can pair it with the right claim before dispatching.
+  Future<void> _handleAutoClaimMeta(
+      List<List<List<num?>>> capturedMeta) async {
+    _pendingCapturedMeta = capturedMeta;
+  }
+
   /// Evaluates a territory claim using the captured polygon(s), persists the
   /// run, and returns the [ClaimOutcome]. The recorder stays in `recording`
   /// state.
@@ -338,6 +376,10 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   /// [capturedPolygons] is one-or-more sibling loops already grouped by
   /// RunRecorderService's proximity check - a single-loop closure is a list
   /// of exactly one, unchanged from the prior single-polygon behaviour.
+  /// [capturedMeta], when supplied, carries the per-vertex `[ts_ms, alt]`
+  /// timing/altitude metadata paired with capturedPolygons by
+  /// [_handleAutoClaim]/[_handleAutoClaimMeta] above, forwarded unchanged to
+  /// the edge function claim path.
   ///
   /// Pre: every member of capturedPolygons has length >= 3; recorder state
   ///      == recording.
@@ -346,8 +388,9 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   Future<ClaimOutcome> confirmClaim(
     String userId,
     String city,
-    List<List<LatLng>> capturedPolygons,
-  ) async {
+    List<List<LatLng>> capturedPolygons, {
+    List<List<List<num?>>>? capturedMeta,
+  }) async {
     final svc = RunRecorderService.instance;
     // The captured polygon(s) are what get sent to the edge function for
     // territory evaluation.
@@ -368,6 +411,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
       outcome = await TerritoryService.instance.claimViaEdgeFunction(
         tracks,
         city,
+        tracksMeta: capturedMeta,
       );
     }
     if (outcome == null) {
@@ -430,6 +474,7 @@ class RunRecorderNotifier extends StateNotifier<RecorderState> {
   @override
   void dispose() {
     RunRecorderService.instance.onAutoClaim = null;
+    RunRecorderService.instance.onAutoClaimMeta = null;
     RunRecorderService.instance.onGateRejected = null;
     RunRecorderService.instance.ownedZoneEdgesProvider = null;
     RunRecorderService.instance.stateNotifier.removeListener(_onServiceState);

@@ -27,3 +27,19 @@ export const DP_SIMPLIFY_EPSILON_M = 10;
 // level cap of 15 it yields 15 hours, deliberately under 24 so an activated
 // shield can never span two consecutive daily play sessions.
 export const kShieldBaseHoursPerLevel = 1.0;
+
+// Speed/teleport anti-cheat thresholds for claim_territory's evaluateTrackTiming
+// gate (per-vertex timestamp check on a submitted claim ring). Reused verbatim
+// from the existing anticheat_score reputation pipeline's own inline numbers
+// (anticheat_score/index.ts) for cross-pipeline consistency - anticheat_score
+// itself is not changed to import these in this pass, it keeps its own inline
+// literals.
+//
+// Cross-referenced with lib/utils/runwar_constants.dart's mirror constants -
+// the client does not run this check itself (it is server-authoritative), but
+// the values still live here per this codebase's own convention of keeping
+// cross-referenced numbers in one shared file even when only one side reads
+// them.
+export const kMaxSustainedSpeedMps = 12.0;
+export const kTeleportDistanceM = 500;
+export const kTeleportMaxElapsedS = 5;

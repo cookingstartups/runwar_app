@@ -18,7 +18,12 @@ import { computeClaimInfluence, computeDisputeOverlapAreaSqm } from './merge_geo
 // double-count their shared area if simply added together).
 import { area as turfArea } from 'https://esm.sh/@turf/area@7';
 import { simplifyRingDouglasPeucker } from '../_shared/geometry.ts';
-import { DP_SIMPLIFY_EPSILON_M } from '../_shared/constants.ts';
+import {
+  DP_SIMPLIFY_EPSILON_M,
+  kMaxSustainedSpeedMps,
+  kTeleportDistanceM,
+  kTeleportMaxElapsedS,
+} from '../_shared/constants.ts';
 import { computeShieldCarve, kMinPostShieldClaimAreaSqm, type RingSet } from './shield_geometry.ts';
 
 // Zone-unify edge-to-edge threshold, matching kProximityTriggerM (the same
@@ -306,6 +311,54 @@ export function evaluateCapturedRingGates(
   };
 }
 
+// Genuine speed/teleport anti-cheat gate against a submitted claim ring's
+// per-vertex timestamps, complementing (not replacing) hasCorruptHop's
+// data-sanity cap above and the separate anticheat_score reputation
+// pipeline (which scores behavior across a session, not a single claim -
+// see design.md for the dedup/reuse decision). A pure, exported function
+// with no Supabase client, no auth, no network, mirroring
+// evaluateCapturedRingGates's own extraction pattern above so it is
+// directly unit-testable under Deno with no server bootstrap.
+//
+// Ring entries may be [lng, lat] (legacy, no timestamp - the check is
+// skipped entirely for that ring) or [lng, lat, alt, ts_ms] (new shape).
+export interface TrackTimingGateResult {
+  passed: boolean;
+  reason?: 'speed_violation' | 'teleport';
+  maxSpeedMps?: number; // observed, only set when passed === false
+}
+
+export function evaluateTrackTiming(ring: number[][]): TrackTimingGateResult {
+  if (ring.some((p) => p.length < 4)) {
+    return { passed: true }; // no timestamps present - skip-and-flag, see design.md section 3
+  }
+  for (let i = 1; i < ring.length; i++) {
+    const [lng1, lat1, , ts1] = ring[i - 1];
+    const [lng2, lat2, , ts2] = ring[i];
+    // A non-finite lng/lat/ts value never gets an unintentional free pass -
+    // treated identically to a non-increasing timestamp pair (teleport)
+    // rather than left to produce silently-passing NaN arithmetic below.
+    if (
+      !Number.isFinite(lng1) || !Number.isFinite(lat1) ||
+      !Number.isFinite(lng2) || !Number.isFinite(lat2) ||
+      !Number.isFinite(ts1) || !Number.isFinite(ts2)
+    ) {
+      return { passed: false, reason: 'teleport' };
+    }
+    const distM = haversineM(lat1, lng1, lat2, lng2);
+    if (ts2 <= ts1) return { passed: false, reason: 'teleport' };
+    const dtS = (ts2 - ts1) / 1000;
+    if (distM > kTeleportDistanceM && dtS < kTeleportMaxElapsedS) {
+      return { passed: false, reason: 'teleport' };
+    }
+    const speedMps = distM / dtS;
+    if (speedMps > kMaxSustainedSpeedMps) {
+      return { passed: false, reason: 'speed_violation', maxSpeedMps: speedMps };
+    }
+  }
+  return { passed: true };
+}
+
 // ---------------------------------------------------------------------------
 // The real rival-zone decide/apply loop, shield-aware. An active shield
 // diverts a rival's overlapping claim into a carve (never a full conquest,
@@ -559,8 +612,11 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
     // Data-sanity cap (NOT anti-cheat): reject a single hop far beyond any plausible
     // GPS gap so an obviously-corrupt track can't produce a garbage polygon. Real runs
     // decimate to a >=50 m point spacing and legitimate GPS dropouts routinely reach
-    // ~250 m, so this cap is deliberately generous. Real speed/teleport anti-cheat is
-    // owned by the separate anti-cheat pipeline, not by this gate.
+    // ~250 m, so this cap is deliberately generous. hasCorruptHop remains a
+    // data-sanity cap only, unrelated to timing. Genuine speed/teleport anti-cheat is
+    // now partially owned by this file too, via evaluateTrackTiming above, in
+    // addition to the separate anticheat_score reputation pipeline (which scores
+    // behavior across a session, not a single claim).
     function hasCorruptHop(c: number[][]): boolean {
       for (let i = 1; i < c.length; i++) {
         const [lng1, lat1] = c[i - 1];
@@ -581,6 +637,11 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
     // reimplemented. `track` (singular) stays the ordinary one-loop path,
     // completely unchanged.
     let coords: number[][];
+    // Set when at least one submitted ring skipped the speed/teleport check
+    // because it carried the legacy 2-tuple (no-timestamp) shape - threaded
+    // onto the final success response as speed_check: 'skipped_no_timestamps'
+    // (diagnostic only, never blocks the claim - see design.md section 7.3).
+    let speedCheckSkipped = false;
     if (Array.isArray(tracks) && tracks.length > 0) {
       const ringsRaw: number[][][] = [];
       for (const t of tracks) {
@@ -592,11 +653,21 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
         if (hasCorruptHop(c)) {
           return ok({ result: 'failed', reason: 'corrupt_track' });
         }
-        const gates = evaluateCapturedRingGates(c);
+        const timing = evaluateTrackTiming(c);
+        if (!timing.passed) {
+          return ok({ result: 'failed', reason: timing.reason });
+        }
+        if (c.some((p) => p.length < 4)) speedCheckSkipped = true;
+        // Normalize down to 2-element [lng, lat] pairs before this ring
+        // reaches evaluateCapturedRingGates, ringsRaw, or any downstream
+        // geometry/geom_json path - load-bearing per design.md section 7.2,
+        // keeps every downstream function's existing 2-tuple contract intact.
+        const c2 = c.map((p) => [p[0], p[1]]);
+        const gates = evaluateCapturedRingGates(c2);
         if (!gates.passed) {
           return ok({ result: 'failed', reason: gates.reason ?? 'too_short' });
         }
-        ringsRaw.push(c);
+        ringsRaw.push(c2);
       }
       if (ringsRaw.length === 1) {
         coords = ringsRaw[0];
@@ -633,6 +704,14 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
       if (hasCorruptHop(coords)) {
         return ok({ result: 'failed', reason: 'corrupt_track' });
       }
+      const timing = evaluateTrackTiming(coords);
+      if (!timing.passed) {
+        return ok({ result: 'failed', reason: timing.reason });
+      }
+      if (coords.some((p) => p.length < 4)) speedCheckSkipped = true;
+      // Normalize down to 2-element [lng, lat] pairs, same boundary as the
+      // multi-tracks path above - see design.md section 7.2.
+      coords = coords.map((p) => [p[0], p[1]]);
     }
 
     // Simplified (Douglas-Peucker, DP_SIMPLIFY_EPSILON_M) here, at the
@@ -841,6 +920,10 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
     const shieldBlockedField = shieldResult.shieldBlocked
       ? { shield_blocked: shieldResult.shieldBlocked }
       : {};
+    // Diagnostic only, never blocks the claim - present only when at least
+    // one submitted ring skipped the speed/teleport check for lack of
+    // per-vertex timestamps (legacy 2-tuple shape). See design.md section 7.3.
+    const speedCheckField = speedCheckSkipped ? { speed_check: 'skipped_no_timestamps' } : {};
 
     if (conqueredId) {
       return ok({
@@ -851,6 +934,7 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
         absorbed_zone_ids: absorbedZoneIds,
         zone_geom_json: zoneGeomJson,
         ...shieldBlockedField,
+        ...speedCheckField,
       });
     }
     if (disputedId) {
@@ -862,6 +946,7 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
         absorbed_zone_ids: [],
         zone_geom_json: zoneGeomJson,
         ...shieldBlockedField,
+        ...speedCheckField,
       });
     }
     return ok({
@@ -872,6 +957,7 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
       absorbed_zone_ids: absorbedZoneIds,
       zone_geom_json: zoneGeomJson,
       ...shieldBlockedField,
+      ...speedCheckField,
     });
 
   } catch (e) {
