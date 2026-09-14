@@ -29,8 +29,15 @@
 //   --execute with no --env-file silently falls back to catalog mode
 //   (parseArgs' own contract - see ops/db_verification/cli.ts).
 
-import { CHECKS, type DbCheck } from './db_verification/checks.ts';
-import { isReadOnlyQuery, parseArgs, summarize, type CheckResult } from './db_verification/cli.ts';
+import { buildCheckQuery, buildRelatedQuery, CHECKS, deriveGpsSamplesRows, type DbCheck } from './db_verification/checks.ts';
+import {
+  isReadOnlyQuery,
+  isServiceRoleToken,
+  isValidSubject,
+  parseArgs,
+  summarize,
+  type CheckResult,
+} from './db_verification/cli.ts';
 import { computeZoneMerges, type ZoneInput } from '../supabase/functions/claim_territory/merge_geometry.ts';
 import { ringSetsOf } from '../supabase/functions/claim_territory/handler.ts';
 
@@ -87,6 +94,18 @@ function loadCredentials(envFile: string): Credentials {
     console.error(`missing required credential(s) in ${envFile}: ${missing.join(', ')}`);
     Deno.exit(2);
   }
+  if (!isServiceRoleToken(key!)) {
+    // Never print the key itself. An RLS-denied read and a genuinely empty
+    // result both return HTTP 200 with an empty array over PostgREST, so a
+    // non-service-role key can silently turn a denied read into a false
+    // PASS. Refuse before any check runs rather than let that happen.
+    console.error(
+      'RUNWAR_SUPABASE_SERVICE_ROLE_KEY does not decode to a service_role JWT - refusing to run. ' +
+        'A key of any other tier is subject to RLS, and an RLS-denied read is indistinguishable ' +
+        'from a genuinely empty result, which would silently report a false PASS.',
+    );
+    Deno.exit(2);
+  }
   return { url: url!.replace(/\/$/, ''), serviceRoleKey: key! };
 }
 
@@ -125,32 +144,29 @@ async function fetchRowsForCheck(
 ): Promise<unknown[]> {
   switch (check.id) {
     case 'zones-geom-exists':
-      return await restGet(
-        creds,
-        'zones',
-        `select=id,owner_id,geom&owner_id=eq.${subject}&status=eq.owned&geom=not.is.null&limit=1`,
-      );
-
     case 'zones-owner-matches':
-      return await restGet(creds, 'zones', `select=id,owner_id&owner_id=eq.${subject}`);
+    case 'runs-finalized':
+    case 'anticheat-flags-clear':
+      // The select= clause and table are built from check.columns/check.table
+      // directly - there is no second, hand-copied query string to drift.
+      return await restGet(creds, check.table, buildCheckQuery(check, subject));
 
     case 'zones-adjacent-merged': {
-      const rows = await restGet(
-        creds,
-        'zones',
-        `select=id,owner_id,geom_json,created_at,influence_level&owner_id=eq.${subject}&status=eq.owned&order=created_at`,
-      );
+      const rows = await restGet(creds, check.table, buildCheckQuery(check, subject));
       const inputs: ZoneInput[] = rows.flatMap((r) => {
         const geomRaw = r.geom_json;
         const geom = typeof geomRaw === 'string' ? JSON.parse(geomRaw) : geomRaw;
+        const id = typeof r.id === 'string' ? r.id : String(r.id);
+        const createdAt = typeof r.created_at === 'string' ? r.created_at : String(r.created_at);
+        const influenceLevel = typeof r.influence_level === 'number' ? r.influence_level : 1;
         return ringSetsOf(geom as { type?: string; coordinates?: unknown })
           .filter((rs) => rs[0] && rs[0].length >= 3)
           .map((rs) => ({
-            id: r.id as string,
+            id,
             ring: rs[0],
             holes: rs.length > 1 ? rs.slice(1) : undefined,
-            createdAt: r.created_at as string,
-            influenceLevel: (r.influence_level as number | null) ?? 1,
+            createdAt,
+            influenceLevel,
           }));
       });
       const groups = computeZoneMerges(inputs, ZONE_MERGE_THRESHOLD_M);
@@ -161,42 +177,21 @@ async function fetchRowsForCheck(
       return groups.map((g) => ({ a_id: g.survivorId, b_id: g.absorbedIds[0], owner_id: subject }));
     }
 
-    case 'runs-finalized':
-      return await restGet(
-        creds,
-        'runs',
-        `select=id,user_id,status,ended_at,finalized_at&user_id=eq.${subject}&or=(status.eq.active,ended_at.is.null,finalized_at.is.null)`,
-      );
-
     case 'gps-samples-present': {
-      const finalizedRuns = await restGet(
-        creds,
-        'runs',
-        `select=id,session_id&user_id=eq.${subject}&finalized_at=not.is.null`,
-      );
-      const missing: Array<Record<string, unknown>> = [];
+      const finalizedRuns = await restGet(creds, check.table, buildCheckQuery(check, subject)) as Array<
+        Record<string, unknown>
+      >;
+      const sampleCounts = new Map<string, number>();
       for (const run of finalizedRuns) {
         const sessionId = run.session_id;
-        if (!sessionId) {
-          missing.push({ run_id: run.id, session_id: null });
-          continue;
-        }
-        const samples = await restGet(
-          creds,
-          'gps_samples',
-          `select=id&session_id=eq.${sessionId}&limit=1`,
-        );
-        if (samples.length === 0) missing.push({ run_id: run.id, session_id: sessionId });
+        if (sessionId == null) continue;
+        const key = String(sessionId);
+        if (sampleCounts.has(key)) continue;
+        const samples = await restGet(creds, check.related!.table, buildRelatedQuery(check, key));
+        sampleCounts.set(key, samples.length);
       }
-      return missing;
+      return deriveGpsSamplesRows(finalizedRuns, sampleCounts);
     }
-
-    case 'anticheat-flags-clear':
-      return await restGet(
-        creds,
-        'anticheat_flags',
-        `select=id,user_id,flag_type,created_at&user_id=eq.${subject}`,
-      );
 
     default:
       throw new Error(`no fetch implementation wired for check "${check.id}"`);
@@ -206,6 +201,14 @@ async function fetchRowsForCheck(
 async function runExecuteMode(envFile: string, subject: string | null): Promise<void> {
   if (!subject) {
     console.error('--execute requires --subject <player-id>');
+    Deno.exit(2);
+  }
+  if (!isValidSubject(subject)) {
+    // subject is interpolated directly into PostgREST filter query strings
+    // (buildCheckQuery/buildRelatedQuery). An unvalidated value could carry
+    // extra query params (e.g. "<uuid>&limit=0") and force a real FAIL into
+    // a silent PASS, so it is validated once here before any check runs.
+    console.error(`--subject must be a well-formed UUID, got: "${subject}"`);
     Deno.exit(2);
   }
   const creds = loadCredentials(envFile);

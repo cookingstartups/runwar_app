@@ -50,6 +50,42 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return { mode, envFile: mode === 'execute' ? envFile : null, subject };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/// True only for a strict, well-formed UUID. --subject is interpolated
+/// directly into PostgREST filter query strings (ops/verify_deploy.ts), so
+/// an unvalidated value like `<uuid>&limit=0` could force an affected
+/// check's GET to return zero rows regardless of real DB state, turning a
+/// real FAIL into a silent PASS.
+export function isValidSubject(subject: string): boolean {
+  return UUID_RE.test(subject);
+}
+
+/// Decodes a JWT's payload and returns its `role` claim, or null if the
+/// token is not a well-formed three-part JWT or has no string `role` claim.
+/// No network call, never logs or returns the token itself.
+export function decodeJwtRole(token: string): string | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+    const payload = JSON.parse(atob(padded));
+    return typeof payload?.role === 'string' ? payload.role : null;
+  } catch {
+    return null;
+  }
+}
+
+/// True only when the given credential decodes to a service_role JWT. A
+/// non-service-role key is silently subject to RLS, which returns HTTP 200
+/// with an empty array on denial - indistinguishable from a genuinely
+/// empty/clean result. Checking this before any check runs is what
+/// prevents an RLS-denied read from being mistaken for a clean PASS.
+export function isServiceRoleToken(token: string): boolean {
+  return decodeJwtRole(token) === 'service_role';
+}
+
 export interface CheckResult {
   id: string;
   pass: boolean;

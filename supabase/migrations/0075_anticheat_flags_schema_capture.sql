@@ -26,9 +26,9 @@ CREATE TABLE IF NOT EXISTS public.anticheat_flags (
 CREATE INDEX IF NOT EXISTS idx_anticheat_flags_user_id
   ON public.anticheat_flags (user_id);
 
-ALTER TABLE public.anticheat_flags ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS anticheat_flags_admin_only ON public.anticheat_flags;
-CREATE POLICY anticheat_flags_admin_only ON public.anticheat_flags
-  FOR SELECT
-  USING (false);
+-- No RLS/policy statement here, deliberately. This table's live RLS state
+-- could not be confirmed against the production database from this host
+-- (unlike 0062_db_only_table_schema_capture.sql, whose header records that
+-- its five tables' live state was confirmed at authoring time). Add the
+-- RLS/policy statements in a follow-up migration once the live state on
+-- anticheat_flags has actually been checked.
