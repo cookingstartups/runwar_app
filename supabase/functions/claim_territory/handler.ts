@@ -62,8 +62,8 @@ function ok(body: unknown) {
     status: 200,
   });
 }
-function err(msg: string, status = 400) {
-  return new Response(JSON.stringify({ error: msg }), {
+function err(msg: string, status = 400, extra?: Record<string, unknown>) {
+  return new Response(JSON.stringify({ error: msg, ...extra }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     status,
   });
@@ -555,6 +555,33 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
     const body = await req.json();
     const { track, tracks, city } = body;
     if (!city) return err('Missing city');
+
+    // Anti-cheat pipeline, pass 2: block a claim outright while the player has
+    // an open verification challenge. This is the FIRST database operation
+    // after auth (before the zones select, before any track/geometry parsing
+    // that could otherwise return a claim-shaped 200 {result:'failed', ...}
+    // response) so a challenged player can never slip a claim through one of
+    // those earlier early-returns instead of hitting this gate. Fails CLOSED
+    // on an RPC error (hard 500, no fallthrough) - matching the zones-select
+    // fail-closed posture below: a silent "treat as no open challenge" on a
+    // transient DB error would bypass anti-cheat enforcement for every
+    // request during the outage. See design.md's fail-open-vs-fail-closed
+    // section for the full justification.
+    const { data: openChallengeId, error: challengeCheckErr } = await supabase
+      .rpc('has_open_challenge', { p_player_id: playerId });
+    if (challengeCheckErr) {
+      return err(`Challenge check failed: ${challengeCheckErr.message}`, 500);
+    }
+    if (openChallengeId) {
+      const { error: pendingPayloadErr } = await supabase
+        .from('challenges')
+        .update({ pending_payload: { fn: 'claim_territory', args: body } })
+        .eq('id', openChallengeId);
+      if (pendingPayloadErr) {
+        return err(`Challenge payload write failed: ${pendingPayloadErr.message}`, 500);
+      }
+      return err('challenge_required', 403, { challenge_id: openChallengeId });
+    }
 
     // Data-sanity cap (NOT anti-cheat): reject a single hop far beyond any plausible
     // GPS gap so an obviously-corrupt track can't produce a garbage polygon. Real runs
