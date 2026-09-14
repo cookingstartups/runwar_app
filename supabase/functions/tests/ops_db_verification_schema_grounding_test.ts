@@ -154,3 +154,31 @@ Deno.test("every check's table and columns exist in the committed migration hist
     }
   }
 });
+
+Deno.test("every check's related sub-query table and columns exist in the committed migration history", () => {
+  // Council round-2 finding P2: the loop above only ever walked
+  // check.table/check.columns, so gps-samples-present's `related` sub-query
+  // (its gps_samples follow-up lookup) was unguarded by the same
+  // renamed-away-column and rollback-exclusion protection finding 1's fix
+  // gives check.table/check.columns. Same rules, same extraction, applied
+  // to check.related.
+  assert(CHECKS.length > 0, 'CHECKS must not be empty for this loop to check anything');
+  const schema = extractSchema();
+  const checksWithRelated = CHECKS.filter((c) => c.related);
+  assert(
+    checksWithRelated.length > 0,
+    'at least one check must declare a related sub-query for this loop to be meaningful',
+  );
+  for (const check of checksWithRelated) {
+    const related = check.related!;
+    const table = related.table.toLowerCase();
+    const known = schema.get(table);
+    assert(known, `${check.id}: related table "${related.table}" not found in any migration`);
+    for (const col of related.columns) {
+      assert(
+        known!.has(col.toLowerCase()),
+        `${check.id}: related column "${col}" not found for table "${related.table}" in any migration`,
+      );
+    }
+  }
+});
