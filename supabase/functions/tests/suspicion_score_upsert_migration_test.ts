@@ -14,44 +14,62 @@ import { assert } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 
 const MIGRATIONS_DIR = new URL('../../migrations/', import.meta.url);
 
-function findMigrationByContent(needle: string): string {
+// Anchored on the CREATE OR REPLACE FUNCTION definition itself, not a bare
+// substring, so a migration that only mentions the function name in a comment
+// (e.g. cross-referencing it from an unrelated fix) can never match. Fails
+// loudly if more than one migration defines the same function name instead
+// of silently picking whichever Deno.readDirSync happened to return first.
+function findMigrationDefiningFunction(functionName: string): string {
   const dirPath = MIGRATIONS_DIR.pathname;
+  const definitionPattern = new RegExp(
+    `create\\s+or\\s+replace\\s+function\\s+${functionName}\\b`,
+    'i',
+  );
+  const matches: { name: string; sql: string }[] = [];
   for (const entry of Deno.readDirSync(dirPath)) {
     if (!entry.isFile) continue;
     const text = Deno.readTextFileSync(dirPath + entry.name);
-    if (text.includes(needle)) return text;
+    if (definitionPattern.test(text)) matches.push({ name: entry.name, sql: text });
   }
-  throw new Error(
-    `No migration file contains "${needle}" under supabase/migrations/ - the upsert_suspicion_score function has not been created yet.`,
-  );
+  if (matches.length === 0) {
+    throw new Error(
+      `No migration file defines the ${functionName} function under supabase/migrations/ - it has not been created yet.`,
+    );
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `Multiple migration files define the ${functionName} function (${matches.map((m) => m.name).join(', ')}) - ambiguous migration set, resolve the duplicate definition before running this test.`,
+    );
+  }
+  return matches[0].sql;
 }
 
 Deno.test('a migration creates the upsert_suspicion_score function', () => {
-  const sql = findMigrationByContent('upsert_suspicion_score');
+  const sql = findMigrationDefiningFunction('upsert_suspicion_score');
   assert(/create\s+or\s+replace\s+function\s+upsert_suspicion_score/i.test(sql),
     'must define upsert_suspicion_score as a SQL function');
 });
 
 Deno.test('the function upserts score as the greatest of the existing value and this batch\'s session max', () => {
-  const sql = findMigrationByContent('upsert_suspicion_score');
+  const sql = findMigrationDefiningFunction('upsert_suspicion_score');
   assert(/greatest\(\s*suspicion_scores\.score\s*,\s*excluded\.session_max_score\s*\)/i.test(sql),
     'score must be GREATEST(existing, new) - a lifetime running max that never decreases');
 });
 
 Deno.test('the function increments flags_count rather than overwriting it', () => {
-  const sql = findMigrationByContent('upsert_suspicion_score');
+  const sql = findMigrationDefiningFunction('upsert_suspicion_score');
   assert(/flags_count\s*=\s*suspicion_scores\.flags_count\s*\+\s*excluded\.flags_count/i.test(sql),
     'flags_count must accumulate across batches, not be replaced by the latest batch\'s count');
 });
 
 Deno.test('the upsert is keyed on user_id, the table\'s only key (no separate id column)', () => {
-  const sql = findMigrationByContent('upsert_suspicion_score');
+  const sql = findMigrationDefiningFunction('upsert_suspicion_score');
   assert(/on\s+conflict\s*\(\s*user_id\s*\)/i.test(sql),
     'ON CONFLICT must target user_id - suspicion_scores has no separate id column live');
 });
 
 Deno.test('a unique constraint on user_id is added defensively so ON CONFLICT (user_id) is legal SQL', () => {
-  const sql = findMigrationByContent('upsert_suspicion_score');
+  const sql = findMigrationDefiningFunction('upsert_suspicion_score');
   assert(/add\s+constraint\s+\S*\s+unique\s*\(\s*user_id\s*\)/i.test(sql),
     'a UNIQUE constraint on user_id must be added (idempotently) since ON CONFLICT requires one to exist');
 });
