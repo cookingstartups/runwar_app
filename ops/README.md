@@ -52,3 +52,42 @@ actionable error describing the manual
 `ALTER TABLE ... DISABLE/ENABLE TRIGGER` sequence to run first, then
 re-run this script. Users with zero credit_transactions rows are
 unaffected and the step is skipped silently.
+
+## verify_deploy.ts
+
+Per-deploy DB end-state verification. A migration or edge-function deploy
+succeeding only proves the deploy step ran - it proves nothing about
+whether the database's observable end state actually looks the way the
+feature intends. Run this after any deploy that touches zones, runs,
+gps_samples, or anticheat_flags.
+
+Six read-only checks: a subject's zones have a non-null geometry and the
+right owner, no same-owner zones are left adjacent-but-unmerged, the
+subject's runs are all finalized, every finalized run has gps_samples rows,
+and no unresolved anticheat flag exists for the subject.
+
+### Catalog mode (default, credential-free)
+
+The no-flags invocation prints every check's id, target table, columns, and
+documented SELECT, reads no credential, and makes no network call:
+
+```bash
+deno run --allow-read ops/verify_deploy.ts
+```
+
+### Execute mode
+
+Requires both `--execute` and `--env-file <path>` together; `--execute`
+alone silently falls back to catalog mode rather than attempting anything.
+Credentials (`RUNWAR_SUPABASE_URL`, `RUNWAR_SUPABASE_SERVICE_ROLE_KEY`) are
+loaded from the given env file, never hardcoded, never printed:
+
+```bash
+deno run --allow-read --allow-net --allow-env ops/verify_deploy.ts \
+  --execute --env-file /path/to/credentials.env --subject <player-id>
+```
+
+Prints a PASS/FAIL line per check and exits non-zero if any check failed.
+Every check is a plain HTTP GET against the PostgREST REST endpoints - there
+is no write path anywhere in this tool, and every documented SELECT is
+re-validated as read-only before use.
