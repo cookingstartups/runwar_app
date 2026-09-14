@@ -31,7 +31,14 @@ function extractSchema(): Map<string, Set<string>> {
 
   const dirPath = MIGRATIONS_DIR.pathname;
   const files = [...Deno.readDirSync(dirPath)]
-    .filter((e) => e.isFile && e.name.endsWith('.sql'))
+    // *_rollback.sql files (e.g. 0050_rollback.sql) are manual-only undo
+    // scripts - each one's own header says "apply this file only to revert
+    // a post-N production regression" - not part of the forward sequence
+    // Supabase actually applies on deploy. Including them here would let a
+    // rollback's reverse RENAME COLUMN undo a real forward rename (e.g.
+    // 0050_rollback.sql renaming gps_samples.user_id back to player_id),
+    // which would ground the tool against the wrong, un-deployed schema.
+    .filter((e) => e.isFile && e.name.endsWith('.sql') && !/_rollback\.sql$/i.test(e.name))
     .map((e) => e.name)
     .sort();
 
@@ -89,8 +96,18 @@ function extractSchema(): Map<string, Set<string>> {
         const alterColRe = /ALTER\s+COLUMN\s+(\w+)/gi;
         while ((m = alterColRe.exec(stmt))) cols.add(m[1].toLowerCase());
 
-        const renameRe = /RENAME\s+COLUMN\s+\w+\s+TO\s+(\w+)/gi;
-        while ((m = renameRe.exec(stmt))) cols.add(m[1].toLowerCase());
+        // A RENAME COLUMN removes the old name and adds the new one - a
+        // later migration renaming a column away must make the old name
+        // stop being grounded, not just add the new one on top of it. This
+        // is what let checks.ts keep declaring gps_samples.player_id long
+        // after 0050_player_id_to_user_id_unification.sql renamed it to
+        // user_id: the old extraction only ever added names, never removed
+        // one, so a renamed-away column stayed permanently "grounded".
+        const renameRe = /RENAME\s+COLUMN\s+(\w+)\s+TO\s+(\w+)/gi;
+        while ((m = renameRe.exec(stmt))) {
+          cols.delete(m[1].toLowerCase());
+          cols.add(m[2].toLowerCase());
+        }
         continue;
       }
 
@@ -106,6 +123,20 @@ function extractSchema(): Map<string, Set<string>> {
 
 Deno.test('the catalog has checks to ground (non-empty precondition)', () => {
   assert(CHECKS.length > 0, 'CHECKS must not be empty for this test to be meaningful');
+});
+
+Deno.test('a column a later migration RENAMEs away is not grounded under its old name', () => {
+  // Regression for council finding 1: checks.ts declared gps_samples.player_id
+  // long after 0050_player_id_to_user_id_unification.sql renamed it to
+  // user_id, and this suite's own extraction never caught it because the old
+  // logic only ever added names on RENAME, never removed the old one. This
+  // asserts the extraction itself, not just the current catalog - reverting
+  // the extraction fix (but not checks.ts) must still make this fail.
+  const schema = extractSchema();
+  const gpsSamples = schema.get('gps_samples');
+  assert(gpsSamples, 'gps_samples table must be found in the migration history');
+  assert(!gpsSamples!.has('player_id'), 'gps_samples.player_id was renamed to user_id by 0050 - it must not be grounded');
+  assert(gpsSamples!.has('user_id'), 'gps_samples.user_id must be grounded (the rename target)');
 });
 
 Deno.test("every check's table and columns exist in the committed migration history", () => {

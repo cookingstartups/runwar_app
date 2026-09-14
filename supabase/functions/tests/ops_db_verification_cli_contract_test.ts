@@ -4,9 +4,7 @@
 // invocation must stay in catalog mode and never touch an env file, and
 // --execute without --env-file must silently degrade back to catalog mode
 // rather than attempt to run anything. Also pins summarize()'s verdict
-// arithmetic. Uses assertEquals throughout so the RED-phase stub (a
-// constant, input-invariant wrong shape) fails on a real value mismatch for
-// every test case.
+// arithmetic.
 //
 // Run: npx deno test --allow-read supabase/functions/tests/ops_db_verification_cli_contract_test.ts
 

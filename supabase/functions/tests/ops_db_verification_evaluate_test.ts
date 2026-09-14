@@ -4,11 +4,9 @@
 // a failing-shape fixture, derived from the real columns in
 // runwar_app/supabase/migrations (see ops_db_verification_schema_grounding_test.ts)
 // and the write shapes in supabase/functions/anticheat_score/index.ts and
-// supabase/functions/finalize_run/index.ts. Looking a check up by id throws
-// while the catalog is still empty (RED-phase stub) - that failure is
-// itself the intended RED signal for this feature not existing yet, not a
-// generic setup error, since the id is the real documented contract pinned
-// by ops_db_verification_catalog_test.ts.
+// supabase/functions/finalize_run/index.ts. findCheck() throws with a clear
+// message if a check id ever goes missing from the catalog - the id is the
+// real documented contract pinned by ops_db_verification_catalog_test.ts.
 //
 // Run: npx deno test --allow-read supabase/functions/tests/ops_db_verification_evaluate_test.ts
 
@@ -18,7 +16,7 @@ import { CHECKS } from '../../../ops/db_verification/checks.ts';
 function findCheck(id: string) {
   const check = CHECKS.find((c) => c.id === id);
   if (!check) {
-    throw new Error(`check "${id}" not found - catalog is empty until the feature is implemented`);
+    throw new Error(`check "${id}" not found in the catalog`);
   }
   return check;
 }
@@ -50,7 +48,13 @@ Deno.test('zones-adjacent-merged fails when two same-owner zones are left touchi
 
 Deno.test('runs-finalized fails when a run is stuck without a terminal status and end time', () => {
   const check = findCheck('runs-finalized');
-  assertEquals(check.evaluate([]).pass, true);
+  // Empty is a FAIL, not a vacuous PASS - a subject with zero runs at all
+  // has nothing this check has actually verified (council finding 6).
+  assertEquals(check.evaluate([]).pass, false);
+  assertEquals(
+    check.evaluate([{ id: 'r1', status: 'finished', ended_at: '2026-09-01T00:00:00Z', finalized_at: '2026-09-01T00:05:00Z' }]).pass,
+    true,
+  );
   assertEquals(
     check.evaluate([{ id: 'r1', status: 'active', ended_at: null, finalized_at: null }]).pass,
     false,

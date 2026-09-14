@@ -3,10 +3,7 @@
 // isReadOnlyQuery (ops/db_verification/cli.ts) is the only gate standing
 // between the verification tool and accidentally executing a write against
 // a live database. Every mutating and multi-statement form must be
-// rejected. Uses assertEquals (not assert/assertFalse) throughout so the
-// RED-phase stub, which returns a deliberately non-boolean placeholder,
-// fails every case on a real value mismatch rather than a truthy/falsy
-// coincidence.
+// rejected.
 //
 // Run: npx deno test --allow-read supabase/functions/tests/ops_db_verification_readonly_guard_test.ts
 
