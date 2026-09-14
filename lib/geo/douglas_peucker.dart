@@ -46,8 +46,26 @@ List<LatLng> simplifyDouglasPeucker(
   double epsilonM = kDpSimplifyEpsilonM,
 }) {
   if (points.length < 3) return points;
+  final kept = simplifyDouglasPeuckerKeptIndices(points, epsilonM: epsilonM);
+  return [for (final i in kept) points[i]];
+}
 
+/// Returns the ORIGINAL indices into [points] that the Douglas-Peucker
+/// simplification above keeps, in ascending order - `simplifyDouglasPeucker`
+/// is exactly `[for (final i in simplifyDouglasPeuckerKeptIndices(points))
+/// points[i]]`. Exposed separately so a caller holding a second array that
+/// must stay index-aligned with the simplified polygon (per-vertex timing or
+/// altitude metadata, for example) can slice that array with the same
+/// kept-index set instead of computing it against the pre-simplification
+/// vertex count, which would silently drift out of alignment the moment any
+/// vertex is dropped.
+List<int> simplifyDouglasPeuckerKeptIndices(
+  List<LatLng> points, {
+  double epsilonM = kDpSimplifyEpsilonM,
+}) {
   final n = points.length;
+  if (n < 3) return [for (var i = 0; i < n; i++) i];
+
   final centerLat =
       points.map((p) => p.latitude).reduce((a, b) => a + b) / n;
   final cosLat = math.cos(centerLat * math.pi / 180.0);
@@ -62,7 +80,7 @@ List<LatLng> simplifyDouglasPeucker(
   keep[n - 1] = true;
   _dpRecurse(proj, 0, n - 1, epsilonM, keep);
 
-  return [for (var i = 0; i < n; i++) if (keep[i]) points[i]];
+  return [for (var i = 0; i < n; i++) if (keep[i]) i];
 }
 
 void _dpRecurse(

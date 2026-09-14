@@ -21,7 +21,8 @@ import '../geo/lasso.dart'
         trackDistanceM,
         minRingBoundaryDistanceM,
         SelfIntersection;
-import '../geo/douglas_peucker.dart' show simplifyDouglasPeucker;
+import '../geo/douglas_peucker.dart'
+    show simplifyDouglasPeucker, simplifyDouglasPeuckerKeptIndices;
 import '../utils/runwar_constants.dart';
 
 enum RecorderState { idle, recording }
@@ -323,16 +324,18 @@ class RunRecorderService {
   // not a behaviour change for that path, only a signature change.
   Future<void> Function(List<List<LatLng>> capturedPolygons)? onAutoClaim;
 
-  // Additive sibling callback to onAutoClaim (design.md section 6.4): a
-  // wholly new, separate, nullable field rather than a change to
-  // onAutoClaim's own declared signature (widening it would break the 10
-  // existing test files plus run_recorder_provider.dart, which all assign it
-  // a plain one-argument closure). Carries the per-vertex
-  // [ts_ms, alt_or_minus_one] metadata for the SAME captured polygon(s) just
-  // passed to onAutoClaim, index-aligned 1:1 per vertex, invoked in the same
-  // synchronous pass as onAutoClaim, immediately after it, at both existing
-  // dispatch call sites (_scanForAutoClaim, _drainDeferredCrossings).
-  Future<void> Function(List<List<List<num>>> capturedMeta)? onAutoClaimMeta;
+  // Additive sibling callback to onAutoClaim: a wholly new, separate,
+  // nullable field rather than a change to onAutoClaim's own declared
+  // signature (widening it would break the 10 existing test files plus
+  // run_recorder_provider.dart, which all assign it a plain one-argument
+  // closure). Carries the per-vertex [ts_ms, alt] metadata for the SAME
+  // captured polygon(s) just passed to onAutoClaim, index-aligned 1:1 per
+  // vertex, invoked in the same synchronous pass as onAutoClaim, immediately
+  // after it, at both existing dispatch call sites (_scanForAutoClaim,
+  // _drainDeferredCrossings). `alt` is nullable so an unknown device
+  // altitude reaches the wire as JSON null rather than a magic sentinel that
+  // could be confused with a genuine below-sea-level reading.
+  Future<void> Function(List<List<List<num?>>> capturedMeta)? onAutoClaimMeta;
 
   // Callback invoked when an auto-claim scan silently rejects a detected loop
   // closure at the area-floor or session-elapsed gate. Set by the provider
@@ -1052,15 +1055,14 @@ class RunRecorderService {
     // path-length) evaluates the exact shape that later gets persisted, not
     // the raw GPS trail. See kDpSimplifyEpsilonM's doc comment
     // (runwar_constants.dart) for the full cross-language contract.
-    final polygon =
-        simplifyDouglasPeucker(computeCapture(
+    final captured = _computeCaptureAndMeta(
       _track,
-      1,
       captureAnchorIdx,
       hit.intersectionPoint,
       k,
       isProximityClosure: hit.isProximityClosure,
-    ));
+    );
+    final polygon = captured.polygon;
 
     final areaSqm = polygonArea(polygon) * 1e6;
 
@@ -1194,7 +1196,7 @@ class RunRecorderService {
         retryCount: 0,
       );
       _retainDeferredCrossing(polygon, k, hit.intersectingSegmentIdx, elapsedSec,
-          isProximityClosure: hit.isProximityClosure);
+          isProximityClosure: hit.isProximityClosure, meta: captured.meta);
       onGateRejected?.call(GateRejectionReason.sessionElapsed, {'elapsed_sec': elapsedSec});
       return;
     }
@@ -1225,22 +1227,52 @@ class RunRecorderService {
       cb([polygon]).catchError((_) {});
     }
     // Dispatched in the SAME synchronous pass as onAutoClaim above,
-    // immediately after it (design.md section 6.4) - computeCaptureMeta
-    // slices _trackTsMs/_trackAltM via the exact same integer index range
-    // (captureAnchorIdx..k) used to slice _track into the polygon just
-    // dispatched above, so metadata extraction is exact-index and cannot
-    // mispair with a nearby-but-different vertex.
+    // immediately after it. captured.meta was already sliced by
+    // _computeCaptureAndMeta with the exact same kept-index set used to
+    // build the (possibly simplified) polygon dispatched above, so it stays
+    // index-aligned with the actual dispatched vertex list, not the raw
+    // pre-simplification trail.
     final metaCb = onAutoClaimMeta;
     if (metaCb != null) {
-      final meta = computeCaptureMeta(
-        _trackTsMs,
-        _trackAltM,
-        captureAnchorIdx,
-        k,
-        isProximityClosure: hit.isProximityClosure,
-      );
-      metaCb([meta]).catchError((_) {});
+      metaCb([captured.meta]).catchError((_) {});
     }
+  }
+
+  /// Builds the captured polygon together with its index-aligned
+  /// [ts_ms, alt] metadata in one pass, so the two can never drift apart:
+  /// both are sliced by the SAME kept-index set the Douglas-Peucker
+  /// simplification step produces for the raw captured polygon, rather than
+  /// one being simplified while the other is computed against the
+  /// pre-simplification vertex count (a mismatch that silently disables the
+  /// server-side timing gate for any capture where simplification actually
+  /// drops a vertex - most real, non-straight-line GPS tracks).
+  ({List<LatLng> polygon, List<List<num?>> meta}) _computeCaptureAndMeta(
+    List<LatLng> trail,
+    int intersectingSegmentIdx,
+    LatLng intersectionPoint,
+    int k, {
+    required bool isProximityClosure,
+  }) {
+    final rawPolygon = computeCapture(
+      trail,
+      1,
+      intersectingSegmentIdx,
+      intersectionPoint,
+      k,
+      isProximityClosure: isProximityClosure,
+    );
+    final rawMeta = computeCaptureMeta(
+      _trackTsMs,
+      _trackAltM,
+      intersectingSegmentIdx,
+      k,
+      isProximityClosure: isProximityClosure,
+    );
+    final keptIdx = simplifyDouglasPeuckerKeptIndices(rawPolygon);
+    return (
+      polygon: [for (final i in keptIdx) rawPolygon[i]],
+      meta: [for (final i in keptIdx) rawMeta[i]],
+    );
   }
 
   /// Seconds elapsed since [start], measured on the clock domain of the fix
@@ -1284,7 +1316,7 @@ class RunRecorderService {
   /// SPEC-0143.
   void _retainDeferredCrossing(
       List<LatLng> polygon, int k, int intersectingSegmentIdx, int elapsedSec,
-      {bool isProximityClosure = false}) {
+      {bool isProximityClosure = false, List<List<num?>>? meta}) {
     if (polygon.length < 3) return; // cannot be claimed; nothing to retain
     final identity = '$intersectingSegmentIdx:$k';
     for (final d in _deferredCrossings) {
@@ -1306,6 +1338,7 @@ class RunRecorderService {
       intersectingSegmentIdx: intersectingSegmentIdx,
       detectedAtElapsedSec: elapsedSec,
       isProximityClosure: isProximityClosure,
+      meta: meta == null ? null : List<List<num?>>.unmodifiable(meta),
     ));
   }
 
@@ -1369,27 +1402,35 @@ class RunRecorderService {
       for (final group in groups) {
         onAutoClaim?.call(group).catchError((_) {});
         // Dispatched in the SAME synchronous pass, immediately after
-        // onAutoClaim (design.md section 6.4). Each polygon in `group` is
-        // the SAME object reference as one `d.polygon` in `pending` (never
-        // copied), so identity lookup pairs each polygon back to the
-        // crossing that produced it, without relying on value equality.
+        // onAutoClaim. Each polygon in `group` is the SAME object reference
+        // as one `d.polygon` in `pending` (never copied), so identity lookup
+        // pairs each polygon back to the crossing that produced it, without
+        // relying on value equality. `d.meta` was captured alongside
+        // `d.polygon` at retain time by the SAME simplification pass, so it
+        // is already index-aligned with `poly` - it is never recomputed here
+        // against a raw, unsimplified index range. A crossing retained with
+        // no metadata (or whose length no longer matches its own polygon)
+        // makes the WHOLE group fall back to the legacy no-metadata shape,
+        // never a partial per-track mix.
         final metaCb = onAutoClaimMeta;
         if (metaCb != null) {
-          final metaGroup = <List<List<num>>>[];
+          final metaGroup = <List<List<num?>>>[];
+          var metaComplete = true;
           for (final poly in group) {
             final d = pending.firstWhere(
               (e) => identical(e.polygon, poly),
               orElse: () => pending.first,
             );
-            metaGroup.add(computeCaptureMeta(
-              _trackTsMs,
-              _trackAltM,
-              d.intersectingSegmentIdx,
-              d.detectedAtTrailIndex,
-              isProximityClosure: d.isProximityClosure,
-            ));
+            final m = d.meta;
+            if (m == null || m.length != poly.length) {
+              metaComplete = false;
+              break;
+            }
+            metaGroup.add(m);
           }
-          metaCb(metaGroup).catchError((_) {});
+          if (metaComplete) {
+            metaCb(metaGroup).catchError((_) {});
+          }
         }
       }
     }
@@ -2005,6 +2046,7 @@ class _DeferredCrossing {
     required this.intersectingSegmentIdx,
     required this.detectedAtElapsedSec,
     this.isProximityClosure = false,
+    this.meta,
   });
 
   final List<LatLng> polygon;
@@ -2012,10 +2054,15 @@ class _DeferredCrossing {
   final int intersectingSegmentIdx;
   final int detectedAtElapsedSec;
   // Mirrors SelfIntersection.isProximityClosure at the moment this crossing
-  // was captured - needed by computeCaptureMeta at drain time to decide
-  // whether a synthetic (non-recorded) intersection vertex is present at the
-  // head of this crossing's polygon (design.md section 6.3).
+  // was captured - retained for callers that need to know whether a
+  // synthetic (non-recorded) intersection vertex sits at the head of this
+  // crossing's polygon.
   final bool isProximityClosure;
+  // Per-vertex [ts_ms, alt] metadata already sliced to match [polygon] 1:1,
+  // captured at the SAME time as polygon (never recomputed later against a
+  // raw, unsimplified index range) - null when no metadata callback was
+  // wired or the capturing path does not produce metadata.
+  final List<List<num?>>? meta;
   bool dispatched = false;
 
   String get identity => '$intersectingSegmentIdx:$detectedAtTrailIndex';
@@ -2023,34 +2070,42 @@ class _DeferredCrossing {
 
 /// Sibling of [computeCapture] (lasso.dart): slices the parallel
 /// [tsMs]/[altM] metadata arrays via the exact SAME integer index range
-/// (`intersectingSegmentIdx..k`) used to slice `_track` into a captured
-/// polygon, so metadata extraction is exact-index, never proximity-matched,
-/// and cannot mispair a timestamp with the wrong vertex (design.md section
-/// 6.2 decision, 6.4). Each returned entry is `[ts_ms, alt_or_minus_one]`,
-/// index-aligned 1:1 with the polygon [computeCapture] returns for the same
-/// arguments - `alt` is emitted as `-1` when the recorded altitude for that
-/// vertex is `null` (device reported none), since the wire-level `num`
-/// element cannot itself carry Dart's `null`.
+/// (`intersectingSegmentIdx..k`) used to slice `_track` into the RAW
+/// (pre-simplification) captured polygon, so metadata extraction is
+/// exact-index, never proximity-matched, and cannot mispair a timestamp with
+/// the wrong vertex. Each returned entry is `[ts_ms, alt]`, index-aligned
+/// 1:1 with the RAW polygon [computeCapture] returns for the same
+/// arguments - `alt` is `null` when the recorded altitude for that vertex is
+/// unknown, so an unknown reading can reach the wire as JSON `null` rather
+/// than a sentinel value that could be confused with a real reading.
+///
+/// This function alone does NOT stay aligned with the polygon actually
+/// dispatched to callers: that polygon is simplified after capture
+/// (Douglas-Peucker), which drops vertices. A caller that needs metadata
+/// aligned with the DISPATCHED polygon must slice this function's output by
+/// the same kept-index set the simplification step used - see
+/// [RunRecorderService._computeCaptureAndMeta], which is the only
+/// production caller and does exactly that.
 ///
 /// For the non-proximity-closure case, [computeCapture] prepends a
 /// synthetic `intersectionPoint` that has no native timestamp of its own;
 /// this assigns it the metadata of `trailPoints[intersectingSegmentIdx]` (the
 /// first REAL vertex immediately following it), a deliberate, bounded
-/// approximation - see design.md section 6.3. For the proximity-closure
-/// case no synthetic vertex exists, so no special case is needed.
-List<List<num>> computeCaptureMeta(
+/// approximation. For the proximity-closure case no synthetic vertex
+/// exists, so no special case is needed.
+List<List<num?>> computeCaptureMeta(
   List<int> tsMs,
   List<double?> altM,
   int intersectingSegmentIdx,
   int k, {
   bool isProximityClosure = false,
 }) {
-  final meta = <List<num>>[
+  final meta = <List<num?>>[
     if (!isProximityClosure)
-      [tsMs[intersectingSegmentIdx], altM[intersectingSegmentIdx] ?? -1],
+      [tsMs[intersectingSegmentIdx], altM[intersectingSegmentIdx]],
   ];
   for (int idx = intersectingSegmentIdx; idx <= k; idx++) {
-    meta.add([tsMs[idx], altM[idx] ?? -1]);
+    meta.add([tsMs[idx], altM[idx]]);
   }
   return meta;
 }

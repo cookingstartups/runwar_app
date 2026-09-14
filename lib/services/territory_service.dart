@@ -67,18 +67,19 @@ class TerritoryService {
   /// them into one contiguous shape (claim_territory/merge_geometry.ts's
   /// unionCandidateRings) instead of registering N independent claims.
   /// [tracksMeta], when supplied, carries per-vertex `[ts_ms, alt]` metadata
-  /// index-aligned to the CORRESPONDING entry of [tracks] (design.md section
-  /// 6.4/6.5) - one outer entry per track, one inner `[ts_ms, alt]` entry per
-  /// vertex of that track. Emits the 4-tuple `[lng, lat, alt, ts_ms]` shape
-  /// for a track whose metadata is present AND length-matches that track's
-  /// own (already-simplified) vertex list; a null, absent, or length-
-  /// mismatched metadata entry falls back to the legacy `[lng, lat]` 2-tuple
-  /// for that whole track - never a partial mix within one ring (design.md
-  /// section 3/10's "no metadata available" fallback contract).
+  /// index-aligned to the CORRESPONDING entry of [tracks] - one outer entry
+  /// per track, one inner `[ts_ms, alt]` entry per vertex of that track;
+  /// `alt` is nullable so an unknown device altitude reaches the wire as
+  /// JSON `null` rather than a sentinel that could be confused with a real
+  /// reading. Emits the 4-tuple `[lng, lat, alt, ts_ms]` shape for a track
+  /// whose metadata is present AND length-matches that track's own
+  /// (already-simplified) vertex list; a null, absent, or length-mismatched
+  /// metadata entry falls back to the legacy `[lng, lat]` 2-tuple for that
+  /// whole track - never a partial mix within one ring.
   Future<ClaimOutcome?> claimViaEdgeFunction(
     List<List<LatLng>> tracks,
     String city, {
-    List<List<List<num>>>? tracksMeta,
+    List<List<List<num?>>>? tracksMeta,
   }) async {
     if (!SupabaseService.instance.isConnected) return null;
     if (tracks.isEmpty) return null;
@@ -93,12 +94,12 @@ class TerritoryService {
       for (final t in tracks) simplifyDouglasPeucker(t),
     ];
 
-    List<num> coordOf(LatLng p, [List<num>? meta]) =>
+    List<num?> coordOf(LatLng p, [List<num?>? meta]) =>
         meta == null ? [p.longitude, p.latitude]
                      : [p.longitude, p.latitude, meta[1], meta[0]];
 
     Map<String, Object> lineStringOf(List<LatLng> track,
-            [List<List<num>>? meta]) =>
+            [List<List<num?>>? meta]) =>
         {
           'type': 'LineString',
           'coordinates': [
@@ -110,7 +111,7 @@ class TerritoryService {
     // Per-track metadata usable only when it length-matches the
     // corresponding (already-simplified) track - otherwise this track falls
     // back to the legacy 2-tuple shape in full, never a partial mix.
-    List<List<num>>? metaForTrack(int i) {
+    List<List<num?>>? metaForTrack(int i) {
       if (tracksMeta == null || i >= tracksMeta.length) return null;
       final m = tracksMeta[i];
       return m.length == simplifiedTracks[i].length ? m : null;
