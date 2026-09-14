@@ -37,6 +37,7 @@ import {
   parseArgs,
   summarize,
   type CheckResult,
+  type Summary,
 } from './db_verification/cli.ts';
 import { computeZoneMerges, type ZoneInput } from '../supabase/functions/claim_territory/merge_geometry.ts';
 import { ringSetsOf } from '../supabase/functions/claim_territory/handler.ts';
@@ -77,49 +78,72 @@ function loadEnvFile(path: string): Map<string, string> {
   return env;
 }
 
-interface Credentials {
+export interface Credentials {
   url: string;
   serviceRoleKey: string;
 }
 
-function loadCredentials(envFile: string): Credentials {
-  const fromFile = loadEnvFile(envFile);
-  const url = Deno.env.get('RUNWAR_SUPABASE_URL') ?? fromFile.get('RUNWAR_SUPABASE_URL');
-  const key = Deno.env.get('RUNWAR_SUPABASE_SERVICE_ROLE_KEY') ?? fromFile.get('RUNWAR_SUPABASE_SERVICE_ROLE_KEY');
+// Thrown by loadCredentials() instead of calling Deno.exit() directly, so
+// the credential logic itself stays a pure, unit-testable function - the
+// CLI entrypoint (runExecuteMode) is the only place that turns this into a
+// printed message and a process exit.
+export class CredentialError extends Error {}
+
+// Pure credential-resolution core, no file I/O and no Deno.env access of its
+// own - a process-env lookup function and an already-parsed file map are
+// passed in, so this is directly unit-testable with neither --allow-read nor
+// --allow-env. loadCredentials() below is the only caller that wires it to
+// the real filesystem and the real process environment.
+export function resolveCredentials(
+  envFile: string,
+  fromFile: Map<string, string>,
+  processEnv: (key: string) => string | undefined,
+): Credentials {
+  const url = processEnv('RUNWAR_SUPABASE_URL') ?? fromFile.get('RUNWAR_SUPABASE_URL');
+  const key = processEnv('RUNWAR_SUPABASE_SERVICE_ROLE_KEY') ?? fromFile.get('RUNWAR_SUPABASE_SERVICE_ROLE_KEY');
   const missing = [
     ['RUNWAR_SUPABASE_URL', url],
     ['RUNWAR_SUPABASE_SERVICE_ROLE_KEY', key],
   ].filter(([, v]) => !v).map(([name]) => name);
   if (missing.length > 0) {
-    console.error(`missing required credential(s) in ${envFile}: ${missing.join(', ')}`);
-    Deno.exit(2);
+    throw new CredentialError(`missing required credential(s) in ${envFile}: ${missing.join(', ')}`);
   }
   if (!isServiceRoleToken(key!)) {
     // Never print the key itself. An RLS-denied read and a genuinely empty
     // result both return HTTP 200 with an empty array over PostgREST, so a
     // non-service-role key can silently turn a denied read into a false
     // PASS. Refuse before any check runs rather than let that happen.
-    console.error(
+    throw new CredentialError(
       'RUNWAR_SUPABASE_SERVICE_ROLE_KEY does not decode to a service_role JWT - refusing to run. ' +
         'A key of any other tier is subject to RLS, and an RLS-denied read is indistinguishable ' +
         'from a genuinely empty result, which would silently report a false PASS.',
     );
-    Deno.exit(2);
   }
   return { url: url!.replace(/\/$/, ''), serviceRoleKey: key! };
 }
+
+export function loadCredentials(envFile: string): Credentials {
+  const fromFile = loadEnvFile(envFile);
+  return resolveCredentials(envFile, fromFile, (key) => Deno.env.get(key));
+}
+
+// A fetch-shaped function, injectable so the live I/O layer below can be
+// exercised with a fake in tests - no real network call, no real credential,
+// and no global monkey-patching of `fetch` itself.
+export type Fetcher = (input: string, init: RequestInit) => Promise<Response>;
 
 // ---------------------------------------------------------------------------
 // Read-only PostgREST GET helper. Only ever issues a GET - no method is ever
 // passed, so there is no write path reachable through this function.
 // ---------------------------------------------------------------------------
 
-async function restGet(
+export async function restGet(
   creds: Credentials,
   table: string,
   query: string,
+  fetcher: Fetcher = fetch,
 ): Promise<Array<Record<string, unknown>>> {
-  const res = await fetch(`${creds.url}/rest/v1/${table}?${query}`, {
+  const res = await fetcher(`${creds.url}/rest/v1/${table}?${query}`, {
     method: 'GET',
     headers: {
       apikey: creds.serviceRoleKey,
@@ -137,10 +161,11 @@ async function restGet(
 // Per-check row fetch. Every branch is a plain GET; no check ever mutates.
 // ---------------------------------------------------------------------------
 
-async function fetchRowsForCheck(
+export async function fetchRowsForCheck(
   check: DbCheck,
   creds: Credentials,
   subject: string,
+  fetcher: Fetcher = fetch,
 ): Promise<unknown[]> {
   switch (check.id) {
     case 'zones-geom-exists':
@@ -149,10 +174,10 @@ async function fetchRowsForCheck(
     case 'anticheat-flags-clear':
       // The select= clause and table are built from check.columns/check.table
       // directly - there is no second, hand-copied query string to drift.
-      return await restGet(creds, check.table, buildCheckQuery(check, subject));
+      return await restGet(creds, check.table, buildCheckQuery(check, subject), fetcher);
 
     case 'zones-adjacent-merged': {
-      const rows = await restGet(creds, check.table, buildCheckQuery(check, subject));
+      const rows = await restGet(creds, check.table, buildCheckQuery(check, subject), fetcher);
       const inputs: ZoneInput[] = rows.flatMap((r) => {
         const geomRaw = r.geom_json;
         const geom = typeof geomRaw === 'string' ? JSON.parse(geomRaw) : geomRaw;
@@ -178,7 +203,7 @@ async function fetchRowsForCheck(
     }
 
     case 'gps-samples-present': {
-      const finalizedRuns = await restGet(creds, check.table, buildCheckQuery(check, subject)) as Array<
+      const finalizedRuns = await restGet(creds, check.table, buildCheckQuery(check, subject), fetcher) as Array<
         Record<string, unknown>
       >;
       const sampleCounts = new Map<string, number>();
@@ -187,7 +212,7 @@ async function fetchRowsForCheck(
         if (sessionId == null) continue;
         const key = String(sessionId);
         if (sampleCounts.has(key)) continue;
-        const samples = await restGet(creds, check.related!.table, buildRelatedQuery(check, key));
+        const samples = await restGet(creds, check.related!.table, buildRelatedQuery(check, key), fetcher);
         sampleCounts.set(key, samples.length);
       }
       return deriveGpsSamplesRows(finalizedRuns, sampleCounts);
@@ -198,7 +223,24 @@ async function fetchRowsForCheck(
   }
 }
 
-async function runExecuteMode(envFile: string, subject: string | null): Promise<void> {
+export interface ExecuteModeResult {
+  results: CheckResult[];
+  summary: Summary;
+}
+
+// Runs every check and returns the aggregated results - it never prints and
+// never calls Deno.exit() itself, so it is directly callable from a test
+// with an injected fetcher. main() is the only caller that turns the
+// returned summary into console output and a process exit code.
+export async function runExecuteMode(
+  envFile: string,
+  subject: string | null,
+  fetcher: Fetcher = fetch,
+  // Defaults to the real filesystem+env-backed loader; a test injects a
+  // fake resolver instead so no real file or environment variable is ever
+  // touched (see resolveCredentials()).
+  loadCreds: (envFile: string) => Credentials = loadCredentials,
+): Promise<ExecuteModeResult> {
   if (!subject) {
     console.error('--execute requires --subject <player-id>');
     Deno.exit(2);
@@ -211,7 +253,17 @@ async function runExecuteMode(envFile: string, subject: string | null): Promise<
     console.error(`--subject must be a well-formed UUID, got: "${subject}"`);
     Deno.exit(2);
   }
-  const creds = loadCredentials(envFile);
+
+  let creds: Credentials;
+  try {
+    creds = loadCreds(envFile);
+  } catch (e) {
+    if (e instanceof CredentialError) {
+      console.error(e.message);
+      Deno.exit(2);
+    }
+    throw e;
+  }
 
   const results: CheckResult[] = [];
   for (const check of CHECKS) {
@@ -224,7 +276,7 @@ async function runExecuteMode(envFile: string, subject: string | null): Promise<
       throw new Error(`refusing to run "${check.id}": its documented sql is not a single read-only SELECT`);
     }
     try {
-      const rows = await fetchRowsForCheck(check, creds, subject);
+      const rows = await fetchRowsForCheck(check, creds, subject, fetcher);
       const { pass, detail } = check.evaluate(rows);
       results.push({ id: check.id, pass, detail });
     } catch (e) {
@@ -233,9 +285,7 @@ async function runExecuteMode(envFile: string, subject: string | null): Promise<
   }
 
   const summary = summarize(results);
-  for (const line of summary.lines) console.log(line);
-  console.log(`\n${summary.verdict}: ${summary.passed} passed, ${summary.failed} failed`);
-  if (summary.verdict !== 'PASS') Deno.exit(1);
+  return { results, summary };
 }
 
 async function main(): Promise<void> {
@@ -244,7 +294,10 @@ async function main(): Promise<void> {
     printCatalog();
     return;
   }
-  await runExecuteMode(parsed.envFile!, parsed.subject);
+  const { summary } = await runExecuteMode(parsed.envFile!, parsed.subject);
+  for (const line of summary.lines) console.log(line);
+  console.log(`\n${summary.verdict}: ${summary.passed} passed, ${summary.failed} failed`);
+  if (summary.verdict !== 'PASS') Deno.exit(1);
 }
 
 if (import.meta.main) {
