@@ -250,3 +250,40 @@ Deno.test('the open-challenge branch returns the 403 response rather than fallin
   assert(/return\s+(new Response\(|err\()/.test(backWindow),
     'the challenge_required response must be directly returned (return new Response(...) or return err(...)) - constructing the Response object without the return keyword (e.g. "const resp = new Response(...)") would silently fall through to zones/claim code, and must fail this test');
 });
+
+Deno.test('a pending_payload UPDATE error on the open-challenge branch returns a fail-closed error response, not a fall-through to the 403', () => {
+  const src = readSrc();
+  const ifRegex = /if\s*\(\s*\w*[Oo]pen\w*[Cc]hallenge\w*\s*\)\s*\{/;
+  const block = extractIfBlock(src, ifRegex);
+  assertNotEquals(block, '',
+    'the if (openChallengeId) block must be present in the source - fails on unmodified/pre-implementation handler');
+
+  const errVarMatch = /error\s*:\s*(\w*[Pp]ending\w*[Pp]ayload\w*[Ee]rr\w*)/.exec(block);
+  assert(errVarMatch !== null,
+    'the pending_payload UPDATE must destructure an error variable (e.g. pendingPayloadErr)');
+  const errVar = errVarMatch[1];
+
+  const ifPendingRegex = new RegExp(`if\\s*\\(\\s*${errVar}\\s*\\)\\s*\\{?`);
+  const ifPendingMatch = ifPendingRegex.exec(block);
+  assert(ifPendingMatch !== null,
+    `the block must check if (${errVar}) after the pending_payload UPDATE`);
+
+  // Fail-closed shape: the branch must return err(...) immediately, matching
+  // this handler's own convention - a bare "return;" or a fail-open
+  // fall-through into the 403 challenge_required build below must not
+  // satisfy this.
+  const afterIf = block.slice(ifPendingMatch.index, ifPendingMatch.index + 200);
+  assert(/return\s+err\(/.test(afterIf),
+    'a pending_payload UPDATE error must return err(...) immediately (fail closed) - a fail-open branch that falls through to the 403 challenge_required response, or a bare "return;", must fail this test');
+  assert(/\b500\b/.test(afterIf),
+    'the fail-closed pending_payload error response must use a 500 status, matching this handler\'s hard-fail convention for a security-gate write error');
+
+  // Ordering: the pendingPayloadErr fail-closed return must occur BEFORE the
+  // challenge_required 403 construction in source order - not merely appear
+  // somewhere in the block - so the 403 body is unreachable whenever
+  // pendingPayloadErr is set.
+  const crIdx = block.indexOf('challenge_required');
+  assert(crIdx !== -1, 'challenge_required must appear inside the open-challenge block');
+  assert(ifPendingMatch.index < crIdx,
+    'the pendingPayloadErr fail-closed check must occur before the challenge_required 403 response is constructed, so a write error cannot fall through into the 403 body');
+});
