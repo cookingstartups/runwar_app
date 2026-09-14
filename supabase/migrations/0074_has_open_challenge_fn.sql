@@ -25,4 +25,5 @@ $$;
 -- Called only by claim_territory's service-role client - no player ever
 -- calls this directly, so no auth.uid() gate is needed inside the body,
 -- matching the upsert_suspicion_score precedent (0063).
+REVOKE ALL    ON FUNCTION has_open_challenge(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION has_open_challenge(uuid) TO service_role;
