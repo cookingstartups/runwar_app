@@ -62,8 +62,8 @@ function ok(body: unknown) {
     status: 200,
   });
 }
-function err(msg: string, status = 400) {
-  return new Response(JSON.stringify({ error: msg }), {
+function err(msg: string, status = 400, extra?: Record<string, unknown>) {
+  return new Response(JSON.stringify({ error: msg, ...extra }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     status,
   });
@@ -580,10 +580,7 @@ export async function handleClaimTerritoryRequest(req: Request): Promise<Respons
       if (pendingPayloadErr) {
         return err(`Challenge payload write failed: ${pendingPayloadErr.message}`, 500);
       }
-      return new Response(
-        JSON.stringify({ error: 'challenge_required', challenge_id: openChallengeId }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 },
-      );
+      return err('challenge_required', 403, { challenge_id: openChallengeId });
     }
 
     // Data-sanity cap (NOT anti-cheat): reject a single hop far beyond any plausible
